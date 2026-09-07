@@ -68,6 +68,10 @@ On any other machine (needs only Node and git, no Stockfish, no claude CLI):
 
 Keep imports and analysis on the analysing machine; other clones view games, read explanations, and do drills.
 
-## Hosted version
+## Hosted version (read-only mirror)
 
-The frontend is static and talks to `/api/*` only, so a Netlify build can later swap in a browser-side engine (Stockfish WASM) and an API-key LLM client without touching the views. See BRIEFING.md.
+The app deploys to Netlify as a password-protected, read-only mirror for the player: static frontend plus the same Express app as one serverless function, game data bundled into each deploy, drill/guess state in a Supabase table (`chess_kv`) since functions have no disk. Analysis never runs on the web; games are imported and analysed locally, then:
+
+    npm run publish-web   # push data repo, sync hosted drills, deploy to Netlify
+
+Secrets live in `.env.web` (gitignored): `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `APP_PASSWORD`. On the server, `APP_PASSWORD` enables the login wall (90-day cookie), `READONLY_DATA=1` blocks all game mutations while keeping drills and guessing writable, and `DATA_DIR=data` points at the bundled files. Locally none of these are set, so nothing changes.

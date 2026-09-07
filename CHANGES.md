@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-09-07 (hosted read-only mirror on Netlify)
+
+- The app now deploys to Netlify as a password-protected mirror for Kai (https://chess-analyzer-kai.netlify.app): static frontend on the CDN, the same Express app as one serverless function, game data bundled into each deploy, drill/guess state in Supabase (one jsonb row, table chess_kv) behind the existing drill mutation lock.
+- New server/auth.js: single-password login (APP_PASSWORD env), constant-time compare, HMAC-signed 90-day cookie, per-IP attempt limiting, Bearer support for scripts. Inactive when the env var is unset, so local use is unchanged. Frontend shows a login overlay on any 401.
+- Read-only mode (READONLY_DATA env): every non-GET game route returns 405 except login, drill reviews, guesses, and quick evals; settings are forced to manual/no-auto-explain; the UI hides import, analyse, delete, colour, and name controls and explains the mirror.
+- Publishing: `npm run publish-web` pushes the data repo, derives the hosted drill store from local games (Supabase-backed syncAllDrills), assembles web-dist (public/ plus vendored chessground and chess.js), and deploys via netlify-cli. Secrets in gitignored .env.web.
+- store.js drill IO routes to Supabase when SUPABASE_URL is set; module roots tolerate CJS bundling (import.meta.url absent in the function bundle).
+
 ## 2026-09-07 (editable names, and the rest of the code-improve report)
 
 - Player names on a game can be edited (✎ names in the game view, `POST /api/games/:id/names`): fixes wrong or inconsistent PGN spellings so colour detection and scouting dossiers match; drill labels refresh; the game id stays as imported so re-imports still dedupe.

@@ -8,6 +8,7 @@ const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 export async function gameView(root, id, startPly) {
   let { game } = await api.game(id);
   const { settings } = await api.settings();
+  const { readonly } = await api.status();
   const state = { ply: 0, tab: 'moments', moment: null, guess: null, preview: null };
 
   const h = game.headers;
@@ -81,7 +82,9 @@ export async function gameView(root, id, startPly) {
   // --- actions -------------------------------------------------------------------
   const actions = root.querySelector('#actions');
   function renderActions() {
-    actions.innerHTML = `
+    actions.innerHTML = readonly ? `
+      ${player ? `<span class="chip ${player}">played ${player}</span>` : ''}
+      <span class="chip status-${game.status}">${game.status}</span>` : `
       ${!player ? `<span>I played <button class="small" data-color="white">White</button> <button class="small" data-color="black">Black</button></span>` : `<span class="chip ${player}">played ${player}</span>`}
       ${player && !game.analysis ? `<button class="small primary" data-act="analyse">Analyse</button>` : ''}
       ${game.analysis ? `<button class="small" data-act="reanalyse" title="Re-run the engine (clears explanations)">Re-analyse</button>` : ''}
@@ -283,6 +286,7 @@ export async function gameView(root, id, startPly) {
   }
 
   function renderNoExplanation(ply) {
+    if (readonly) return '<div class="explanation muted">No explanation yet. It will appear on the next publish from the home machine.</div>';
     if (settings.llmProvider === 'manual') {
       return `<div class="explanation">
         <p class="muted">Manual LLM mode. Copy the prompt into Claude (or any assistant), then paste the JSON answer below.</p>

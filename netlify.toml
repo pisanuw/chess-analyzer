@@ -1,0 +1,15 @@
+# Hosted read-only mirror: static frontend + the Express app as one function.
+# Deployed from the analysing machine with scripts/publish-web.sh (no CI build).
+[build]
+  publish = "web-dist"
+
+[functions]
+  node_bundler = "esbuild"
+
+[functions.api]
+  included_files = ["data/games/*.json", "data/patterns.json", "data/prepsheets.json"]
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/api/:splat"
+  status = 200

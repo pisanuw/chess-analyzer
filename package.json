@@ -10,13 +10,21 @@
     "test": "node --test 'test/*.test.js'",
     "pull-data": "git -C data pull --rebase",
     "push-data": "git -C data add -A && (git -C data diff --cached --quiet || git -C data commit -m sync) && git -C data push",
-    "sync": "npm run pull-data && npm start"
+    "sync": "npm run pull-data && npm start",
+    "publish-web": "bash scripts/publish-web.sh"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pisanuw/chess-analyzer.git"
   },
-  "keywords": ["chess", "stockfish", "analysis", "claude", "training", "drills"],
+  "keywords": [
+    "chess",
+    "stockfish",
+    "analysis",
+    "claude",
+    "training",
+    "drills"
+  ],
   "author": "Yusuf Pisan",
   "license": "MIT",
   "bugs": {
@@ -27,7 +35,8 @@
   "dependencies": {
     "chess.js": "^1.4.0",
     "chessground": "^9.2.1",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "serverless-http": "^4.0.0"
   },
   "engines": {
     "node": ">=20"

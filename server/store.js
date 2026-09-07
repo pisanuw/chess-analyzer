@@ -3,7 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = import.meta.url ? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..') : process.cwd();
 export const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
 const GAMES_DIR = path.join(DATA_DIR, 'games');
 
@@ -54,7 +54,9 @@ function writeJson(file, value) {
 
 export async function getSettings() {
   const saved = await readJson(path.join(DATA_DIR, 'settings.json'), {});
-  return { ...DEFAULT_SETTINGS, ...saved };
+  const s = { ...DEFAULT_SETTINGS, ...saved };
+  if (process.env.READONLY_DATA) { s.llmProvider = 'manual'; s.autoExplain = false; }
+  return s;
 }
 
 export async function saveSettings(patch) {
@@ -121,8 +123,23 @@ export async function deleteGame(id) {
   await fs.rm(path.join(GAMES_DIR, id + '.json'), { force: true });
 }
 
+// Drill/guess state is per machine. The hosted copy has no persistent disk, so
+// when SUPABASE_URL is set the whole store lives as one jsonb row in Supabase
+// (table chess_kv); our drill mutation lock already serializes access.
+const sb = () => process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
+  ? { url: process.env.SUPABASE_URL, headers: { apikey: process.env.SUPABASE_SERVICE_KEY, authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`, 'content-type': 'application/json' } }
+  : null;
+
 export async function getDrills() {
-  const store = await readJson(path.join(DATA_DIR, 'drills.json'), { drills: [] });
+  const s = sb();
+  let store;
+  if (s) {
+    const r = await fetch(`${s.url}/rest/v1/chess_kv?key=eq.drills&select=value`, { headers: s.headers });
+    if (!r.ok) throw new Error(`drill store read failed (${r.status})`);
+    store = (await r.json())[0]?.value || { drills: [] };
+  } else {
+    store = await readJson(path.join(DATA_DIR, 'drills.json'), { drills: [] });
+  }
   store.guesses = store.guesses || {}; // guess-first attempts, keyed gameId:ply
   return store;
 }
@@ -146,6 +163,16 @@ export async function savePatternNotes(notes) {
 }
 
 export async function saveDrills(value) {
+  const s = sb();
+  if (s) {
+    const r = await fetch(`${s.url}/rest/v1/chess_kv`, {
+      method: 'POST',
+      headers: { ...s.headers, prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify([{ key: 'drills', value }]),
+    });
+    if (!r.ok) throw new Error(`drill store write failed (${r.status})`);
+    return value;
+  }
   await writeJson(path.join(DATA_DIR, 'drills.json'), value);
   return value;
 }

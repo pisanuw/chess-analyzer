@@ -16,7 +16,7 @@ export async function gamesView(root) {
     ${!status.engineOk && (pendingAnalysis || !games.length) ? `<div class="card" style="border-color: var(--critical)"><b>Stockfish not found.</b> Install it (<code>brew install stockfish</code>) or set the path in <a href="#/settings">Settings</a>.</div>` : ''}
     ${settings.llmProvider === 'claude-cli' && !status.claude.ok && pendingExplanations ? `<div class="card" style="border-color: var(--warning); margin-top: 10px"><b>claude CLI not found.</b> Explanations will fail until it is installed, or switch the LLM provider to manual in <a href="#/settings">Settings</a>.</div>` : ''}
     ${!settings.playerNames.length && !games.length ? `<div class="card" style="margin-top: 10px">Set the player's name in <a href="#/settings">Settings</a> so imported games get the right colour automatically.</div>` : ''}
-    <div class="card" style="margin-top: 12px">
+    ${status.readonly ? '<div class="card" style="margin-top: 12px"><small class="muted">Read-only mirror: games are imported and analysed on the home machine, then published here. Drills and guessing work normally.</small></div>' : `<div class="card" style="margin-top: 12px">
       <h3 style="margin-top:0">Import PGN</h3>
       <div class="import-area">
         <textarea id="pgn" placeholder="Paste one or more games in PGN format, or choose a .pgn file"></textarea>
@@ -31,11 +31,11 @@ export async function gamesView(root) {
           <small>Player: ${settings.playerNames.length ? esc(settings.playerNames.join(', ')) : 'not set'}. Engine depth ${settings.engineDepth}, explanations via ${esc(settings.llmProvider)}.</small>
         </div>
       </div>
-    </div>
+    </div>`}
     <div class="row" style="margin: 18px 0 8px; justify-content: space-between">
       <h2 style="margin:0">${games.length} game${games.length === 1 ? '' : 's'}</h2>
       <div class="row">
-        <button id="analyse-all" class="small">Analyse and explain everything pending</button>
+        ${status.readonly ? '' : '<button id="analyse-all" class="small">Analyse and explain everything pending</button>'}
       </div>
     </div>
     <div class="card" style="padding:0" id="list"></div>
@@ -62,14 +62,14 @@ export async function gamesView(root) {
           <td>${esc(g.black)}${g.blackElo ? ` <small>(${esc(g.blackElo)})</small>` : ''}</td>
           <td>${esc(g.result)}</td>
           <td><small>${esc(g.event)}${g.round ? ' R' + esc(g.round) : ''}</small></td>
-          <td>${g.playerColor ? `<span class="chip ${g.playerColor}">${g.playerColor}</span>` : `<span data-stop>I played <button class="small" data-color="white">White</button> <button class="small" data-color="black">Black</button></span>`}</td>
+          <td>${g.playerColor ? `<span class="chip ${g.playerColor}">${g.playerColor}</span>` : (status.readonly ? '' : `<span data-stop>I played <button class="small" data-color="white">White</button> <button class="small" data-color="black">Black</button></span>`)}</td>
           <td><span class="chip status-${g.status}">${g.status}${g.status === 'analysed' && g.explained ? ` (${g.explained}/${g.moments} explained)` : ''}</span>${g.purpose === 'scout' ? ` <span class="chip" title="Scouting ${esc(g.subject)}">scout</span>` : ''}</td>
           <td class="num">${g.accuracy != null ? g.accuracy + '%' : ''}</td>
           <td class="num">${g.moments != null ? `${g.moments}${g.blunders ? ` <span class="chip blunder">${g.blunders}??</span>` : ''}${g.mistakes ? ` <span class="chip mistake">${g.mistakes}?</span>` : ''}` : ''}</td>
-          <td data-stop style="white-space:nowrap">
+          <td data-stop style="white-space:nowrap">${status.readonly ? '' : `
             ${g.playerColor && g.status === 'imported' ? '<button class="small" data-act="analyse">Analyse</button>' : ''}
             ${g.status === 'analysed' && g.moments > g.explained ? '<button class="small" data-act="explain">Explain</button>' : ''}
-            <button class="small" data-act="delete" title="Delete">✕</button>
+            <button class="small" data-act="delete" title="Delete">✕</button>`}
           </td>
         </tr>`).join('')}
       </tbody></table>`;
@@ -107,7 +107,7 @@ export async function gamesView(root) {
     location.hash = `#/game/${id}`;
   });
 
-  root.querySelector('#pgnfile').addEventListener('change', async e => {
+  root.querySelector('#pgnfile')?.addEventListener('change', async e => {
     const texts = await Promise.all([...e.target.files].map(f => f.text()));
     root.querySelector('#pgn').value = texts.join('\n\n');
     updateNameSuggestions();
@@ -131,7 +131,7 @@ export async function gamesView(root) {
     root.querySelector('#subject-names').innerHTML = names.map(n => `<option value="${esc(n)}"></option>`).join('');
     return names;
   };
-  root.querySelector('#pgn').addEventListener('input', updateNameSuggestions);
+  root.querySelector('#pgn')?.addEventListener('input', updateNameSuggestions);
 
   root.querySelectorAll('input[name="gpurpose"]').forEach(el => el.addEventListener('change', () => {
     const scout = root.querySelector('input[name="gpurpose"]:checked').value === 'scout';
@@ -143,7 +143,7 @@ export async function gamesView(root) {
     }
   }));
 
-  root.querySelector('#import').addEventListener('click', async () => {
+  root.querySelector('#import')?.addEventListener('click', async () => {
     const pgn = root.querySelector('#pgn').value.trim();
     if (!pgn) return toast('Paste a PGN or choose a file first', true);
     const purpose = root.querySelector('input[name="gpurpose"]:checked').value;
@@ -158,7 +158,7 @@ export async function gamesView(root) {
     } catch (err) { toast(err.message, true); }
   });
 
-  root.querySelector('#analyse-all').addEventListener('click', async () => {
+  root.querySelector('#analyse-all')?.addEventListener('click', async () => {
     try {
       const r = await api.analyseAll();
       toast(`${r.queued.length} job${r.queued.length === 1 ? '' : 's'} queued`);

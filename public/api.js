@@ -6,8 +6,33 @@ async function req(method, url, body) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && url !== '/api/login') showLogin();
   if (!res.ok) throw new Error(data.error || `${method} ${url} failed (${res.status})`);
   return data;
+}
+
+/** Password overlay for the hosted copy; shown on any 401. */
+export function showLogin() {
+  if (document.getElementById('login-overlay')) return;
+  const div = document.createElement('div');
+  div.id = 'login-overlay';
+  div.style.cssText = 'position:fixed;inset:0;background:rgba(10,10,14,.92);display:flex;align-items:center;justify-content:center;z-index:100';
+  div.innerHTML = `<form style="display:flex;flex-direction:column;gap:10px;align-items:center">
+    <div style="font-size:42px">♞</div>
+    <input type="password" id="login-pw" placeholder="Password" autocomplete="current-password" style="padding:8px 10px;font-size:16px">
+    <button class="primary" style="padding:8px 18px">Enter</button>
+    <p id="login-err" style="color:#e66;min-height:1em;margin:0"></p>
+  </form>`;
+  document.body.appendChild(div);
+  const input = div.querySelector('#login-pw');
+  input.focus();
+  div.querySelector('form').addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      await req('POST', '/api/login', { password: input.value });
+      location.reload();
+    } catch (err) { div.querySelector('#login-err').textContent = err.message; }
+  });
 }
 
 export const api = {

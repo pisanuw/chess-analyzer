@@ -13,11 +13,26 @@ import { buildRepertoire } from './repertoire.js';
 import { scoreToCp } from './analyze.js';
 import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess } from './drills.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, patternSynthesisPrompt, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
+import { authMiddleware, loginRoute } from './auth.js';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// import.meta.url is undefined when bundled to CJS (Netlify function); there,
+// static assets come from the CDN and DATA_DIR from the environment, so cwd is fine.
+const ROOT = import.meta.url ? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..') : process.cwd();
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 app.use(express.text({ limit: '20mb', type: ['application/x-chess-pgn', 'text/plain'] }));
+
+app.use(authMiddleware);
+app.post('/api/login', loginRoute);
+
+// Read-only mirror (hosted copy): game data is managed on the analysing machine
+// and published; only training state (drill reviews, guesses) is writable.
+const READONLY = !!process.env.READONLY_DATA;
+const RO_ALLOW = [/^\/api\/login$/, /^\/api\/drills\/[^/]+\/review$/, /^\/api\/games\/[a-f0-9]{12}\/moments\/\d+\/(guess|eval)$/];
+app.use((req, res, next) => {
+  if (!READONLY || req.method === 'GET' || RO_ALLOW.some(re => re.test(req.path))) return next();
+  res.status(405).json({ error: 'read-only mirror: manage games on the analysing machine, then publish' });
+});
 
 app.use('/vendor/chessground', express.static(path.join(ROOT, 'node_modules/chessground/dist')));
 app.use('/vendor/chessground/assets', express.static(path.join(ROOT, 'node_modules/chessground/assets')));
@@ -44,7 +59,7 @@ app.get('/api/status', wrap(async (req, res) => {
   const settings = await getSettings();
   const enginePath = findStockfish(settings.enginePath);
   const claude = settings.llmProvider === 'claude-cli' ? await checkClaudeCli() : { ok: true, skipped: true };
-  res.json({ enginePath, engineOk: !!enginePath, claude, dataDir: DATA_DIR, categories: CATEGORIES });
+  res.json({ enginePath, engineOk: !!enginePath, claude, dataDir: DATA_DIR, categories: CATEGORIES, readonly: READONLY });
 }));
 
 app.get('/api/settings', wrap(async (req, res) => res.json({ settings: await getSettings(), defaults: DEFAULT_SETTINGS })));
