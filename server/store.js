@@ -115,6 +115,15 @@ export async function getDrills() {
   return store;
 }
 
+export async function getPrepSheets() {
+  return readJson(path.join(DATA_DIR, 'prepsheets.json'), {});
+}
+
+export async function savePrepSheets(sheets) {
+  await writeJson(path.join(DATA_DIR, 'prepsheets.json'), sheets);
+  return sheets;
+}
+
 export async function getPatternNotes() {
   return readJson(path.join(DATA_DIR, 'patterns.json'), {});
 }

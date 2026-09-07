@@ -31,6 +31,7 @@ export const api = {
   repertoire: () => req('GET', '/api/repertoire'),
   scoutSubjects: () => req('GET', '/api/scout'),
   scout: subject => req('GET', `/api/scout/${encodeURIComponent(subject)}`),
+  prepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet`),
   patterns: () => req('GET', '/api/patterns'),
   synthesizePattern: pattern => req('POST', '/api/patterns/synthesize', { pattern }),
   drills: () => req('GET', '/api/drills'),

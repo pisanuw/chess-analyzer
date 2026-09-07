@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-07 (opponent scouting, phase 3: exploitation explanations and prep sheets)
+
+- Scout games get their own explanation prompts: what the subject's move gets wrong and, concretely, how to punish it, including the engine lines from AFTER the mistake; the key question becomes the cue that signals the weakness is in play. Same schema shape as regular explanations, so storage, game view, and drills display them unchanged. The manual copy/paste prompt endpoint serves the scout framing too.
+- Scout game summaries describe how the subject played and what to exploit.
+- Preparation sheets: one LLM call over the whole dossier (categories, phases, patterns, repertoire with prep-end markers, clock behaviour) produces overview, game plan, openings advice, and watch-fors. Stored in data/prepsheets.json (synced through the data repo), generated or refreshed from the Scouting view.
+
 ## 2026-09-07 (opponent scouting, phase 2: punish drills and flipped guess flow)
 
 - Scout games now generate "punish" drills: the position AFTER the subject's mistake with the student to move, answers checked against the next ply's already-stored engine lines (no extra engine work). Labeled "punish · vs subject" in the drills view, same ladder, tiers, and follow-ups; a mistake on a game's final move makes no drill.

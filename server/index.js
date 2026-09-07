@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Chess } from 'chess.js';
 import { parsePgnFile, detectPlayerColor } from './pgn.js';
-import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getPatternNotes, savePatternNotes, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { enqueue, listJobs, resumeInterrupted, cancelJobs } from './jobs.js';
 import { findStockfish, getEngine } from './engine.js';
 import { checkClaudeCli, complete } from './llm.js';
@@ -12,7 +12,7 @@ import { buildReport } from './report.js';
 import { buildRepertoire } from './repertoire.js';
 import { scoreToCp } from './analyze.js';
 import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess } from './drills.js';
-import { momentPrompt, systemPrompt, patternSynthesisPrompt, EXPLANATION_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
+import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, patternSynthesisPrompt, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = express();
@@ -160,7 +160,10 @@ app.get('/api/games/:id/moments/:ply/prompt', wrap(async (req, res) => {
   const ply = Number(req.params.ply);
   if (!game?.analysis || !game.analysis.moves[ply - 1]) return res.status(404).json({ error: 'not found' });
   const settings = await getSettings();
-  res.json({ system: systemPrompt(settings.playerRating), prompt: momentPrompt(game, ply), schema: EXPLANATION_SCHEMA });
+  const scout = (game.purpose || 'own') === 'scout';
+  res.json(scout
+    ? { system: scoutSystemPrompt(settings.playerRating), prompt: scoutMomentPrompt(game, ply), schema: SCOUT_EXPLANATION_SCHEMA }
+    : { system: systemPrompt(settings.playerRating), prompt: momentPrompt(game, ply), schema: EXPLANATION_SCHEMA });
 }));
 
 app.put('/api/games/:id/moments/:ply/explanation', wrap(async (req, res) => {
@@ -230,7 +233,25 @@ app.get('/api/scout/:subject', wrap(async (req, res) => {
   const report = await buildReport({ purpose: 'scout', subject });
   if (!report.games) return res.status(404).json({ error: 'no analysed games for this subject' });
   const repertoire = await buildRepertoire({ purpose: 'scout', subject });
-  res.json({ subject, report, repertoire });
+  const prepSheet = (await getPrepSheets())[subject] || null;
+  res.json({ subject, report, repertoire, prepSheet });
+}));
+
+app.post('/api/scout/:subject/prepsheet', wrap(async (req, res) => {
+  const subject = req.params.subject;
+  const report = await buildReport({ purpose: 'scout', subject });
+  if (!report.games) return res.status(404).json({ error: 'no analysed games for this subject' });
+  const repertoire = await buildRepertoire({ purpose: 'scout', subject });
+  const settings = await getSettings();
+  const { output, costUsd, model } = await complete(settings, {
+    system: scoutSystemPrompt(settings.playerRating),
+    prompt: prepSheetPrompt(subject, report, repertoire),
+    schema: PREP_SHEET_SCHEMA,
+  });
+  const sheets = await getPrepSheets();
+  sheets[subject] = { ...output, games: report.games, model, costUsd, createdAt: new Date().toISOString() };
+  await savePrepSheets(sheets);
+  res.json({ prepSheet: sheets[subject] });
 }));
 
 // --- pattern study notes -----------------------------------------------------

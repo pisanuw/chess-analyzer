@@ -3,7 +3,7 @@ import { getEngine } from './engine.js';
 import { analyseGame, summarize } from './analyze.js';
 import { getGame, saveGame, getSettings, listGames } from './store.js';
 import { complete, LlmError } from './llm.js';
-import { systemPrompt, momentPrompt, gameSummaryPrompt, EXPLANATION_SCHEMA, SUMMARY_SCHEMA } from './prompts.js';
+import { systemPrompt, momentPrompt, gameSummaryPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutGameSummaryPrompt, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA } from './prompts.js';
 import { syncDrillsForGame } from './drills.js';
 
 const jobs = new Map();
@@ -139,12 +139,15 @@ async function runExplain(job) {
   job.total = todo.length + 1;
   job.progress = 0;
   game.explanations = game.explanations || {};
-  const system = systemPrompt(settings.playerRating);
+  // Scout games get exploitation-framed prompts; the schema shape is identical.
+  const scout = (game.purpose || 'own') === 'scout';
+  const system = scout ? scoutSystemPrompt(settings.playerRating) : systemPrompt(settings.playerRating);
+  const schema = scout ? SCOUT_EXPLANATION_SCHEMA : EXPLANATION_SCHEMA;
   const known = await knownPatterns(game);
   for (const ply of todo) {
     if (job.cancelled) throw new Error('cancelled');
     job.itemStartedAt = new Date().toISOString(); // lets the UI show elapsed time on the current explanation
-    const { output, costUsd, model } = await complete(settings, { system, prompt: momentPrompt(game, ply, [...known]), schema: EXPLANATION_SCHEMA });
+    const { output, costUsd, model } = await complete(settings, { system, prompt: scout ? scoutMomentPrompt(game, ply, [...known]) : momentPrompt(game, ply, [...known]), schema });
     const entry = { ...output, model, costUsd, createdAt: new Date().toISOString() };
     game.explanations[ply] = entry; // keep the held copy current for later prompts
     await updateGame(job.gameId, g => { g.explanations = g.explanations || {}; g.explanations[ply] = entry; });
@@ -155,7 +158,7 @@ async function runExplain(job) {
   if (job.cancelled) throw new Error('cancelled');
   if (!game.gameSummary) {
     job.itemStartedAt = new Date().toISOString();
-    const { output, costUsd, model } = await complete(settings, { system, prompt: gameSummaryPrompt(game), schema: SUMMARY_SCHEMA });
+    const { output, costUsd, model } = await complete(settings, { system, prompt: scout ? scoutGameSummaryPrompt(game) : gameSummaryPrompt(game), schema: SUMMARY_SCHEMA });
     const gs = { ...output, model, costUsd, createdAt: new Date().toISOString() };
     job.costUsd += costUsd || 0;
     await updateGame(job.gameId, g => { if (!g.gameSummary) g.gameSummary = gs; });

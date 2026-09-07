@@ -35,6 +35,122 @@ export const SUMMARY_SCHEMA = {
   required: ['summary', 'lesson', 'opening_note'],
 };
 
+// Scout explanations reuse the EXPLANATION_SCHEMA field names so storage and UI
+// are identical; only the descriptions (and the prompt) change perspective.
+export const SCOUT_EXPLANATION_SCHEMA = {
+  type: 'object',
+  properties: {
+    pattern: { type: 'string', description: 'Short name for the opponent\'s recurring weakness, 2 to 6 words, reusable across their games (e.g. "Grabs pawns under attack", "Passive rook in endgames")' },
+    category: { type: 'string', enum: CATEGORIES },
+    time_pressure: { type: 'boolean', description: 'true only if the clock data makes time trouble a likely factor for the opponent' },
+    explanation: { type: 'string', description: 'One paragraph, at most 120 words, for the student preparing against this opponent: what the opponent\'s move gets wrong and, concretely, how the engine line punishes it, citing only the given lines' },
+    key_question: { type: 'string', description: 'The cue the student should watch for at the board to recognise or induce this kind of error from the opponent' },
+    concept: { type: 'string', description: 'The exploitation idea to study, one phrase' },
+  },
+  required: ['pattern', 'category', 'time_pressure', 'explanation', 'key_question', 'concept'],
+};
+
+export const PREP_SHEET_SCHEMA = {
+  type: 'object',
+  properties: {
+    overview: { type: 'string', description: 'Two to four sentences describing this opponent\'s play and main weaknesses' },
+    exploit_plan: { type: 'string', description: 'The concrete game plan to exploit them: which phases and structures to steer toward and why, one paragraph' },
+    openings_advice: { type: 'string', description: 'What to play against their repertoire, referencing their actual lines and where their preparation ends' },
+    watch_fors: { type: 'string', description: 'Three to five specific cues to watch for during the game, as one compact list in prose' },
+  },
+  required: ['overview', 'exploit_plan', 'openings_advice', 'watch_fors'],
+};
+
+export function scoutSystemPrompt(rating) {
+  return `You are a chess coach preparing a FIDE ${rating || 2000} rated student to play against a specific opponent.
+You are given the opponent's positions, the mistakes they made, and Stockfish's lines with evaluations.
+Rules:
+- Ground every claim in the engine lines provided. Do not invent variations, do not extend lines beyond what is given, and do not evaluate moves the engine did not list.
+- Frame everything for the student's benefit: what the opponent tends to get wrong and how to punish or induce it.
+- Be concrete and brief. No praise, no filler, no generic advice.
+- Plain punctuation: commas, colons, and parentheses. Never use em dashes.
+- Evaluations are from White's point of view; positive favours White.`;
+}
+
+/** Scout variant of momentPrompt: same engine grounding, exploitation framing. */
+export function scoutMomentPrompt(game, ply, knownPatterns = []) {
+  const moves = game.analysis.moves;
+  const m = moves[ply - 1];
+  const side = m.color === 'white' ? 'White' : 'Black';
+  const subject = game.subject || game.headers[side] || 'the opponent';
+  const opening = moves.slice(0, 20).map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
+  const recent = moves.slice(Math.max(0, ply - 9), ply - 1).map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
+  const lines = m.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n');
+  const next = moves[ply]; // the reply position: how the punishment starts
+  const punishLines = next?.lines?.length ? `\nEngine lines AFTER the mistake (${next.color === 'white' ? 'White' : 'Black'} to move, the punishment):\n${next.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n')}\n` : '';
+  return `You are scouting ${subject}, who played ${side} in this game: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || 'unknown event'} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.
+
+Opening moves: ${opening}
+Recent moves before the mistake: ${recent || '(start of game)'}
+
+Position before their move (FEN): ${m.fenBefore}
+Phase: ${m.phase}. Move ${m.moveNumber}, ${side} to move. Evaluation: ${formatEval(m.evalBefore)}.
+
+Engine top lines from this position (${side} to move):
+${lines}
+
+${subject} played ${m.san}. Evaluation after it: ${formatEval(m.evalAfter)}. Win-probability lost: ${m.loss} points (${m.judgment}). ${clockText(m)}
+${punishLines}
+Explain what ${m.san} gets wrong and, concretely, how the student punishes it using the lines above. Then classify the error and give the cue that signals this weakness is in play.${knownPatterns.length ? `
+
+Weakness names already recorded for ${subject} (reuse one verbatim if it fits, so their recurring weaknesses aggregate; otherwise coin a new short name):
+${knownPatterns.map(p => `- ${p}`).join('\n')}` : ''}`;
+}
+
+/** Scout variant of the game summary: how the subject plays and how to face them. */
+export function scoutGameSummaryPrompt(game) {
+  const s = game.analysis.summary;
+  const side = game.playerColor === 'white' ? 'White' : 'Black';
+  const subject = game.subject || 'the opponent';
+  const p = s[game.playerColor];
+  const moments = s.moments.map(ply => {
+    const m = game.analysis.moves[ply - 1];
+    const e = game.explanations?.[ply];
+    return `- Move ${m.moveNumber}${m.color === 'white' ? '.' : '...'} ${m.san} (${m.judgment}, ${m.phase}, eval ${formatEval(m.evalBefore)} to ${formatEval(m.evalAfter)}, engine preferred ${m.bestSan})` + (e ? ` : ${e.category}, "${e.pattern}"` : '');
+  }).join('\n');
+  const allMoves = game.analysis.moves.map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
+  return `You are scouting ${subject}, who played ${side} in this game: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || ''} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.
+Their accuracy ${p.accuracy}%, average centipawn loss ${p.acpl}, ${p.inaccuracies} inaccuracies, ${p.mistakes} mistakes, ${p.blunders} blunders.
+
+Moves: ${allMoves}
+
+${subject}'s mistakes (engine-flagged):
+${moments || '- none'}
+
+Write: summary (how ${subject} handled this game and where they went wrong), lesson (the one thing the student should exploit when facing them), opening_note (what ${subject} played and whether leaving it early would help; name the opening only if confident).`;
+}
+
+/** One-page preparation sheet for a subject, from their aggregated dossier. */
+export function prepSheetPrompt(subject, report, repertoire) {
+  const cats = Object.entries(report.byCategory).filter(([k, v]) => k !== 'unexplained' && v.count).map(([k, v]) => `- ${k}: ${v.count} moments (weight ${v.weight})`).join('\n');
+  const phases = ['opening', 'middlegame', 'endgame'].map(ph => { const p = report.byPhase[ph]; return `- ${ph}: accuracy ${p.accuracy ?? 'n/a'}%, ${p.momentsPer100 ?? 'n/a'} moments per 100 moves`; }).join('\n');
+  const pats = report.patterns.slice(0, 10).map(p => `- "${p.pattern}" (${p.count}x)`).join('\n');
+  const lines = repertoire.map(l => `- as ${l.color}: ${l.line.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ')}${l.eco ? ` (${l.eco})` : ''}, ${l.count} game${l.count === 1 ? '' : 's'}, scored ${l.scorePct ?? '?'}%${l.prepEndsPly ? `, on their own from move ${Math.ceil(l.prepEndsPly / 2)}` : ''}`).join('\n');
+  const time = report.timeManagement ? `Clock behaviour: ${report.timeManagement.comfortBlunders} mistakes with over 5 minutes left, ${report.timeManagement.underTwoMinMoments} mistakes under 2 minutes, ${report.timeManagement.fastMoments} failed snap-moves.` : 'No clock data.';
+  return `Preparation dossier for the opponent ${subject}, from ${report.games} engine-analysed game${report.games === 1 ? '' : 's'}.
+
+Their errors by type:
+${cats || '- none recorded'}
+
+Their errors by phase:
+${phases}
+
+Their recurring weaknesses (named from explained moments):
+${pats || '- none yet'}
+
+Their repertoire:
+${lines || '- unknown'}
+
+${time}
+
+Write the preparation sheet for a student about to face ${subject}: overview, exploit_plan, openings_advice, watch_fors. Use only the data above; do not invent openings, lines, or tendencies that are not supported by it.`;
+}
+
 export const PATTERN_SYNTH_SCHEMA = {
   type: 'object',
   properties: {

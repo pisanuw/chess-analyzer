@@ -103,3 +103,19 @@ test('final-move mistakes make no punish drill; scout guesses seed punish drills
   const d = (await getDrills()).drills.find(x => x.gameId === 'dddddddddd01');
   assert.equal(d.kind, 'punish');
 });
+
+test('prompt endpoint serves the scout framing for scout games', async () => {
+  const r = await (await fetch(base + '/api/games/bbbbbbbbbb01/moments/1/prompt')).json();
+  assert.ok(r.prompt.includes('Karpov, A'));
+  assert.ok(r.system.includes('preparing'), 'system prompt prepares the student, not the mover');
+  assert.deepEqual(Object.keys(r.schema.properties), ['pattern', 'category', 'time_pressure', 'explanation', 'key_question', 'concept']);
+});
+
+test('prep sheet endpoint: 404 unknown subject, clean error in manual mode', async () => {
+  await fetch(base + '/api/settings', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ llmProvider: 'manual' }) });
+  const missing = await fetch(base + '/api/scout/Nobody/prepsheet', { method: 'POST' });
+  assert.equal(missing.status, 404);
+  const manual = await fetch(base + '/api/scout/' + encodeURIComponent('Karpov, A') + '/prepsheet', { method: 'POST' });
+  assert.equal(manual.status, 500);
+  assert.match((await manual.json()).error, /manual/);
+});

@@ -12,6 +12,7 @@ Everything runs on your machine. Games stay in a local `data/` folder. The only 
 4. **Guess first**: in the game view, a critical moment opens as a puzzle. Play your move on the board, then see the engine lines and the explanation.
 5. **Weakness report**: across all analysed games, moments by error category (weighted by severity), by phase, by colour, accuracy over time, recurring pattern names, and concepts to study.
 6. **Drills**: mistakes and blunders become spaced-repetition positions (1, 3, 7, 14, 30, 60 day ladder). Correct means the engine's best move or any top line within 0.30 of it.
+7. **Opponent scouting**: import an opponent's games ("Scout an opponent" on the import card) to get a per-opponent dossier: their error types, phases, clock behaviour, repertoire with "prep ends" markers, recurring weaknesses, and an LLM prep sheet. Their mistakes become "punish" drills: the position after their error, you find the refutation. Scout games never mix into your own weakness report or drills.
 
 ## Requirements
 

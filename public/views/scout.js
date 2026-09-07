@@ -1,5 +1,5 @@
 // Scouting: per-opponent dossier built from their analysed games.
-import { api, esc } from '../api.js';
+import { api, esc, toast } from '../api.js';
 import { barChart } from '../charts.js';
 import { CATEGORY_LABEL } from './report.js';
 
@@ -26,7 +26,7 @@ async function renderDossier(el, subject) {
     el.innerHTML = `<div class="empty">${esc(err.message)}. Games may still be in the analysis queue.</div>`;
     return;
   }
-  const { report: r, repertoire } = data;
+  const { report: r, repertoire, prepSheet } = data;
   const j = r.totalJudged;
   const catLabel = c => CATEGORY_LABEL[c] || c;
   const fmtLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
@@ -74,7 +74,24 @@ async function renderDossier(el, subject) {
           <td>${p.moments.slice(0, 6).map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${m.moveNumber}${m.color === 'white' ? '.' : '...'}${esc(m.san)}</a>`).join(' ')}</td></tr>`).join('')}
       </tbody></table>
     </div>` : ''}
-    <div id="prepsheet"></div>`;
+    <div class="card" style="margin-top: 20px">
+      <h3 style="margin-top:0">Preparation sheet</h3>
+      ${prepSheet ? `
+        <p><b>Overview:</b> ${esc(prepSheet.overview)}</p>
+        <p><b>Game plan:</b> ${esc(prepSheet.exploit_plan)}</p>
+        <p><b>Openings:</b> ${esc(prepSheet.openings_advice)}</p>
+        <p><b>Watch for:</b> ${esc(prepSheet.watch_fors)}</p>
+        <p class="muted"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.</small></p>` : `
+        <p class="muted">One page: their weaknesses, the game plan against them, and what to watch for.</p>`}
+      <button class="small" id="gen-prep">${prepSheet ? 'Regenerate' : 'Generate'} prep sheet (about a minute)</button>
+    </div>`;
+
+  el.querySelector('#gen-prep').onclick = async e => {
+    const b = e.target;
+    b.disabled = true; b.textContent = 'Generating…';
+    try { await api.prepSheet(subject); await renderDossier(el, subject); }
+    catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Generate prep sheet (about a minute)'; }
+  };
 
   const cats = Object.entries(r.byCategory).filter(([, v]) => v.count > 0).sort((a, b) => b[1].weight - a[1].weight)
     .map(([k, v]) => ({ key: k, label: catLabel(k), value: v.weight, sub: `${v.count} moment${v.count === 1 ? '' : 's'}`, dim: k === 'unexplained', moments: v.moments }));
