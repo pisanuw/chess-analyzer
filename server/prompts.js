@@ -1,5 +1,13 @@
 // Prompt construction for the explanation step. Everything the model sees is engine-grounded.
 import { formatEval } from './analyze.js';
+import { parseTimeControl } from './pgn.js';
+
+const sanLine = ms => ms.map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
+
+const conceptsBlock = concepts => concepts?.length ? `
+
+Concept names already used for this player (reuse one verbatim if it fits, so study topics aggregate; otherwise coin a new short phrase):
+${concepts.map(c => `- ${c}`).join('\n')}` : '';
 
 export const CATEGORIES = [
   'tactics-allowed',    // overlooked the opponent's tactic or threat
@@ -73,13 +81,13 @@ Rules:
 }
 
 /** Scout variant of momentPrompt: same engine grounding, exploitation framing. */
-export function scoutMomentPrompt(game, ply, knownPatterns = []) {
+export function scoutMomentPrompt(game, ply, knownPatterns = [], knownConcepts = []) {
   const moves = game.analysis.moves;
   const m = moves[ply - 1];
   const side = m.color === 'white' ? 'White' : 'Black';
   const subject = game.subject || game.headers[side] || 'the opponent';
-  const opening = moves.slice(0, 20).map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
-  const recent = moves.slice(Math.max(0, ply - 9), ply - 1).map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
+  const opening = sanLine(moves.slice(0, 20));
+  const recent = sanLine(moves.slice(Math.max(0, ply - 9), ply - 1));
   const lines = m.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n');
   const next = moves[ply]; // the reply position: how the punishment starts
   const punishLines = next?.lines?.length ? `\nEngine lines AFTER the mistake (${next.color === 'white' ? 'White' : 'Black'} to move, the punishment):\n${next.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n')}\n` : '';
@@ -94,12 +102,12 @@ Phase: ${m.phase}. Move ${m.moveNumber}, ${side} to move. Evaluation: ${formatEv
 Engine top lines from this position (${side} to move):
 ${lines}
 
-${subject} played ${m.san}. Evaluation after it: ${formatEval(m.evalAfter)}. Win-probability lost: ${m.loss} points (${m.judgment}). ${clockText(m)}
+${subject} played ${m.san}. Evaluation after it: ${formatEval(m.evalAfter)}. Win-probability lost: ${m.loss} points (${m.judgment}). ${clockText(m, game)}
 ${punishLines}
 Explain what ${m.san} gets wrong and, concretely, how the student punishes it using the lines above. Then classify the error and give the cue that signals this weakness is in play.${knownPatterns.length ? `
 
 Weakness names already recorded for ${subject} (reuse one verbatim if it fits, so their recurring weaknesses aggregate; otherwise coin a new short name):
-${knownPatterns.map(p => `- ${p}`).join('\n')}` : ''}`;
+${knownPatterns.map(p => `- ${p}`).join('\n')}` : ''}${conceptsBlock(knownConcepts)}`;
 }
 
 /** Scout variant of the game summary: how the subject plays and how to face them. */
@@ -113,7 +121,7 @@ export function scoutGameSummaryPrompt(game) {
     const e = game.explanations?.[ply];
     return `- Move ${m.moveNumber}${m.color === 'white' ? '.' : '...'} ${m.san} (${m.judgment}, ${m.phase}, eval ${formatEval(m.evalBefore)} to ${formatEval(m.evalAfter)}, engine preferred ${m.bestSan})` + (e ? ` : ${e.category}, "${e.pattern}"` : '');
   }).join('\n');
-  const allMoves = game.analysis.moves.map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
+  const allMoves = sanLine(game.analysis.moves);
   return `You are scouting ${subject}, who played ${side} in this game: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || ''} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.
 Their accuracy ${p.accuracy}%, average centipawn loss ${p.acpl}, ${p.inaccuracies} inaccuracies, ${p.mistakes} mistakes, ${p.blunders} blunders.
 
@@ -182,20 +190,27 @@ Rules:
 - Evaluations are from White's point of view; positive favours White.`;
 }
 
-function clockText(m) {
+function clockText(m, game) {
   if (m.clock == null) return '';
   const mins = Math.floor(m.clock / 60), secs = m.clock % 60;
-  return `Clock after the move: ${mins}:${String(secs).padStart(2, '0')} remaining.`;
+  const base = `Clock after the move: ${mins}:${String(secs).padStart(2, '0')} remaining.`;
+  // Deterministic time-spent, so time_pressure is not guessed from one number.
+  const tc = parseTimeControl(game?.headers?.TimeControl);
+  const prev = game?.analysis?.moves.slice(0, m.ply - 1).reverse().find(x => x.color === m.color && x.clock != null);
+  const from = prev ? prev.clock : tc?.base;
+  if (from == null) return base;
+  const spent = Math.max(0, from - m.clock + (tc?.inc || 0));
+  return `${base} Time spent on this move: about ${spent} seconds.`;
 }
 
 /** Build the user prompt for one critical moment. `knownPatterns` are pattern names already used for this player. */
-export function momentPrompt(game, ply, knownPatterns = []) {
+export function momentPrompt(game, ply, knownPatterns = [], knownConcepts = []) {
   const moves = game.analysis.moves;
   const m = moves[ply - 1];
   const side = m.color === 'white' ? 'White' : 'Black';
   const playerName = game.headers[side] || side;
-  const opening = moves.slice(0, 20).map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
-  const recent = moves.slice(Math.max(0, ply - 9), ply - 1).map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
+  const opening = sanLine(moves.slice(0, 20));
+  const recent = sanLine(moves.slice(Math.max(0, ply - 9), ply - 1));
   const lines = m.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n');
   const playedRank = m.playedRank ? `This was the engine's line number ${m.playedRank}.` : 'This move is not among the engine\'s top lines.';
   const nextMove = moves[ply]; // opponent's reply
@@ -213,12 +228,12 @@ ${lines}
 
 Move played by ${side}: ${m.san}. Evaluation after it: ${formatEval(m.evalAfter)}. ${playedRank}
 ${nextMove ? `The opponent replied ${nextMove.san}.` : ''}
-Win-probability lost by this move: ${m.loss} points (${m.judgment}). ${clockText(m)}
+Win-probability lost by this move: ${m.loss} points (${m.judgment}). ${clockText(m, game)}
 
 Explain why ${m.san} is classified as ${m.judgment === 'inaccuracy' ? 'an' : 'a'} ${m.judgment} and what the engine's first choice ${m.bestSan} achieves instead, using only the lines above. Then classify the error.${knownPatterns.length ? `
 
 Pattern names already in this player's library (reuse one verbatim if it fits, so recurring weaknesses aggregate; otherwise coin a new short name):
-${knownPatterns.map(p => `- ${p}`).join('\n')}` : ''}`;
+${knownPatterns.map(p => `- ${p}`).join('\n')}` : ''}${conceptsBlock(knownConcepts)}`;
 }
 
 export function gameSummaryPrompt(game) {
@@ -231,7 +246,7 @@ export function gameSummaryPrompt(game) {
     const e = game.explanations?.[ply];
     return `- Move ${m.moveNumber}${m.color === 'white' ? '.' : '...'} ${m.san} (${m.judgment}, ${m.phase}, eval ${formatEval(m.evalBefore)} to ${formatEval(m.evalAfter)}, engine preferred ${m.bestSan})` + (e ? ` : ${e.category}, "${e.pattern}"` : '');
   }).join('\n');
-  const allMoves = game.analysis.moves.map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
+  const allMoves = sanLine(game.analysis.moves);
   return `Game: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || ''} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.
 The player being coached had ${side}. Accuracy ${p.accuracy}%, average centipawn loss ${p.acpl}, ${p.inaccuracies} inaccuracies, ${p.mistakes} mistakes, ${p.blunders} blunders.
 Phase accuracy: ${['opening', 'middlegame', 'endgame'].map(ph => p.byPhase[ph] ? `${ph} ${p.byPhase[ph].accuracy}%` : `${ph} n/a`).join(', ')}.

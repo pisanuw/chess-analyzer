@@ -37,10 +37,10 @@ for (let i = 0; i < count; i++) {
     if (clocks[stm] < 0) clocks[stm] = 5;
     moves.push(`${stm === 'w' ? Math.ceil(chess.history().length / 2) + '. ' : ''}${mv.san} {[%clk ${fmtClock(clocks[stm])}]}`);
   }
+  // Games cut off by the ply cap keep '*' rather than being mislabelled draws.
   let result = '*';
   if (chess.isCheckmate()) result = chess.turn() === 'w' ? '0-1' : '1-0';
   else if (chess.isDraw()) result = '1/2-1/2';
-  else result = '1/2-1/2';
   const white = playerIsWhite ? 'Pisan, Test' : `Opponent ${i + 1}`;
   const black = playerIsWhite ? `Opponent ${i + 1}` : 'Pisan, Test';
   out.push(`[Event "Sample Open"]

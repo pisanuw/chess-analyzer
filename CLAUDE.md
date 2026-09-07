@@ -4,11 +4,11 @@ Guidance for Claude Code when working in this repo. Read BRIEFING.md for the cur
 
 ## What this is
 
-Local web app: Node 22 / Express 5 backend, vanilla ES-module frontend (no build step), Stockfish over UCI, explanations through the local `claude` CLI. See README.md.
+Local web app: Node 20+ (developed on 22) / Express 5 backend, vanilla ES-module frontend (no build step), Stockfish over UCI, explanations through the local `claude` CLI. See README.md.
 
 ## Conventions
 
-- Push directly to `main`.
+- Push directly to `main`. Commit messages: a descriptive summary line, body explaining what and why. Run `npm test` before committing.
 - No em dashes in prose, UI copy, or prompts. Use commas, colons, or parentheses.
 - Keep it a single `npm start` app with no build step. No bundler, no framework, no TypeScript.
 - Frontend must keep talking to the backend only through `public/api.js` so a hosted build can swap the backend later.

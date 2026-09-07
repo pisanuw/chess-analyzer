@@ -1,5 +1,5 @@
 // Scouting: per-opponent dossier built from their analysed games.
-import { api, esc, toast } from '../api.js';
+import { api, esc, toast, movePrefix } from '../api.js';
 import { barChart } from '../charts.js';
 import { CATEGORY_LABEL } from './report.js';
 
@@ -71,7 +71,7 @@ async function renderDossier(el, subject) {
       <h3 style="margin-top:0">Their recurring patterns</h3>
       <table><thead><tr><th>Pattern</th><th class="num">Count</th><th>Where</th></tr></thead><tbody>
         ${r.patterns.slice(0, 15).map(p => `<tr><td>${esc(p.pattern)}</td><td class="num">${p.count}</td>
-          <td>${p.moments.slice(0, 6).map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${m.moveNumber}${m.color === 'white' ? '.' : '...'}${esc(m.san)}</a>`).join(' ')}</td></tr>`).join('')}
+          <td>${p.moments.slice(0, 6).map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${movePrefix(m)}${esc(m.san)}</a>`).join(' ')}</td></tr>`).join('')}
       </tbody></table>
     </div>` : ''}
     <div class="card" style="margin-top: 20px">
@@ -97,7 +97,7 @@ async function renderDossier(el, subject) {
     .map(([k, v]) => ({ key: k, label: catLabel(k), value: v.weight, sub: `${v.count} moment${v.count === 1 ? '' : 's'}`, dim: k === 'unexplained', moments: v.moments }));
   barChart(el.querySelector('#scout-cat'), cats, {
     onClick: it => {
-      el.querySelector('#scout-cat-list').innerHTML = `<b>${esc(it.label)}</b><ul style="margin:6px 0; padding-left: 18px">${it.moments.map(m => `<li><a href="#/game/${m.gameId}/${m.ply}">${m.moveNumber}${m.color === 'white' ? '.' : '...'}${esc(m.san)}</a> <span class="chip ${m.judgment}">${m.judgment}</span> <small>${esc(m.label)}</small></li>`).join('')}</ul>`;
+      el.querySelector('#scout-cat-list').innerHTML = `<b>${esc(it.label)}</b><ul style="margin:6px 0; padding-left: 18px">${it.moments.map(m => `<li><a href="#/game/${m.gameId}/${m.ply}">${movePrefix(m)}${esc(m.san)}</a> <span class="chip ${m.judgment}">${m.judgment}</span> <small>${esc(m.label)}</small></li>`).join('')}</ul>`;
     },
   });
 }

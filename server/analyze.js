@@ -3,6 +3,9 @@ import { Chess } from 'chess.js';
 
 const MATE_CP = 10000;
 
+/** Sign that converts a side-to-move value to White's perspective (and back). */
+const stmSign = stm => (stm === 'white' ? 1 : -1);
+
 /** Convert a UCI score (side-to-move perspective) to centipawns; mates map to +/- (MATE_CP - plies). */
 export function scoreToCp(line) {
   if (!line) return 0;
@@ -68,7 +71,7 @@ export function formatEval(cpForWhite) {
 function terminalCp(fen) {
   const chess = new Chess(fen);
   if (chess.isCheckmate()) return -MATE_CP;
-  if (chess.isStalemate() || chess.isInsufficientMaterial() || chess.isThreefoldRepetition()) return 0;
+  if (chess.isStalemate() || chess.isInsufficientMaterial()) return 0; // repetition is invisible from a bare FEN
   return null;
 }
 
@@ -106,16 +109,16 @@ export async function analyseGame(engine, game, settings, onProgress) {
   const moves = game.moves.map((m, i) => {
     const before = positions[i];
     const after = positions[i + 1];
-    const sign = m.color === 'white' ? 1 : -1;
-    const evalBeforeW = before.cp * (before.stm === 'white' ? 1 : -1); // white perspective
-    const evalAfterW = after.cp * (after.stm === 'white' ? 1 : -1);
+    const sign = stmSign(m.color);
+    const evalBeforeW = before.cp * stmSign(before.stm); // white perspective
+    const evalAfterW = after.cp * stmSign(after.stm);
     const wpBefore = winProb(evalBeforeW * sign); // mover perspective
     const wpAfter = winProb(evalAfterW * sign);
     const loss = Math.max(0, wpBefore - wpAfter);
     const cpLoss = Math.max(0, Math.min(1000, (evalBeforeW - evalAfterW) * sign));
     const lines = before.lines.map(l => ({
       multipv: l.multipv,
-      cp: scoreToCp(l) * (before.stm === 'white' ? 1 : -1), // white perspective
+      cp: scoreToCp(l) * stmSign(before.stm), // white perspective
       mate: l.mate,
       uci: l.pv[0],
       san: pvToSan(m.fenBefore, l.pv, 8),
@@ -142,7 +145,7 @@ export async function analyseGame(engine, game, settings, onProgress) {
 
   const finalEval = positions[positions.length - 1];
   const summary = summarize(moves, player, threshold);
-  summary.finalEval = finalEval.cp * (finalEval.stm === 'white' ? 1 : -1);
+  summary.finalEval = finalEval.cp * stmSign(finalEval.stm);
   summary.engine = engine.name;
   summary.depth = depth;
   summary.multipv = multipv;
@@ -150,21 +153,20 @@ export async function analyseGame(engine, game, settings, onProgress) {
 }
 
 export function summarize(moves, player, threshold) {
+  const avg = (ms, f) => ms.reduce((s, m) => s + f(m), 0) / ms.length;
+  const acplOf = ms => Math.round(avg(ms, m => m.cpLoss));
+  const accuracyOf = ms => +avg(ms, m => m.accuracy).toFixed(1);
   const forColor = color => {
     const ms = moves.filter(m => m.color === color);
     const byPhase = {};
     for (const phase of ['opening', 'middlegame', 'endgame']) {
       const pm = ms.filter(m => m.phase === phase);
-      byPhase[phase] = pm.length ? {
-        moves: pm.length,
-        acpl: Math.round(pm.reduce((s, m) => s + m.cpLoss, 0) / pm.length),
-        accuracy: +(pm.reduce((s, m) => s + m.accuracy, 0) / pm.length).toFixed(1),
-      } : null;
+      byPhase[phase] = pm.length ? { moves: pm.length, acpl: acplOf(pm), accuracy: accuracyOf(pm) } : null;
     }
     return {
       moves: ms.length,
-      acpl: ms.length ? Math.round(ms.reduce((s, m) => s + m.cpLoss, 0) / ms.length) : 0,
-      accuracy: ms.length ? +(ms.reduce((s, m) => s + m.accuracy, 0) / ms.length).toFixed(1) : 0,
+      acpl: ms.length ? acplOf(ms) : 0,
+      accuracy: ms.length ? accuracyOf(ms) : 0,
       inaccuracies: ms.filter(m => m.judgment === 'inaccuracy').length,
       mistakes: ms.filter(m => m.judgment === 'mistake').length,
       blunders: ms.filter(m => m.judgment === 'blunder').length,

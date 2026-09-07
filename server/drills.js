@@ -4,6 +4,16 @@ import { getDrills, saveDrills, getSettings, listGames, getGame } from './store.
 const LADDER_DAYS = [1, 3, 7, 14, 30, 60];
 const DAY = 86400000;
 
+// All drill-store mutations run through one chain: the store is a single JSON
+// file read-modified-written whole, so concurrent mutations (job sync vs a
+// review vs a delete) would silently drop each other's changes otherwise.
+let chain = Promise.resolve();
+function locked(fn) {
+  const p = chain.then(fn, fn);
+  chain = p.then(() => {}, () => {});
+  return p;
+}
+
 export function drillId(gameId, ply) {
   return `${gameId}:${ply}`;
 }
@@ -88,7 +98,11 @@ function makePunishDrill(game, ply, tier, existing) {
 /** Create or refresh drills for a game's critical moments: every moment becomes a
  * drill, tiered 'core' at or above the drill threshold, 'sharpen' below it.
  * Own games drill the player's mistakes; scout games drill their punishment. */
-export async function syncDrillsForGame(game, settings) {
+export function syncDrillsForGame(game, settings) {
+  return locked(() => syncGameUnlocked(game, settings));
+}
+
+async function syncGameUnlocked(game, settings) {
   const store = await getDrills();
   const byId = new Map(store.drills.map(d => [d.id, d]));
   const threshold = settings.drillThreshold ?? 20;
@@ -108,7 +122,11 @@ export async function syncDrillsForGame(game, settings) {
 /** Record a guess-first attempt from the game view (per-machine, like reviews).
  * A correct first-try guess starts the drill higher up the ladder: the player
  * already knows this one, so it should not come back tomorrow. */
-export async function recordGuess(game, ply, uci, correct, settings) {
+export function recordGuess(game, ply, uci, correct, settings) {
+  return locked(() => recordGuessUnlocked(game, ply, uci, correct, settings));
+}
+
+async function recordGuessUnlocked(game, ply, uci, correct, settings) {
   const store = await getDrills();
   const key = drillId(game.id, ply);
   const prior = store.guesses[key] || [];
@@ -137,33 +155,41 @@ export async function recordGuess(game, ply, uci, correct, settings) {
  * Runs at startup: drills.json is per-machine (never synced between clones), so
  * each machine derives its own drill ladder from the shared game files while
  * keeping its local review history. */
-export async function syncAllDrills() {
-  const settings = await getSettings();
-  const ids = new Set();
-  for (const entry of await listGames()) {
-    ids.add(entry.id);
-    if (entry.status !== 'analysed' && entry.status !== 'explained') continue;
-    const game = await getGame(entry.id);
-    if (game?.analysis) await syncDrillsForGame(game, settings);
-  }
-  const store = await getDrills();
-  const kept = store.drills.filter(d => ids.has(d.gameId));
-  if (kept.length !== store.drills.length) {
-    store.drills = kept;
-    await saveDrills(store);
-  }
+export function syncAllDrills() {
+  return locked(async () => {
+    const settings = await getSettings();
+    const ids = new Set();
+    for (const entry of await listGames()) {
+      ids.add(entry.id);
+      if (entry.status !== 'analysed' && entry.status !== 'explained') continue;
+      const game = await getGame(entry.id);
+      if (game?.analysis) await syncGameUnlocked(game, settings);
+    }
+    const store = await getDrills();
+    const kept = store.drills.filter(d => ids.has(d.gameId));
+    if (kept.length !== store.drills.length) {
+      store.drills = kept;
+      await saveDrills(store);
+    }
+  });
 }
 
-export async function removeDrillsForGame(gameId) {
-  const store = await getDrills();
-  store.drills = store.drills.filter(d => d.gameId !== gameId);
-  await saveDrills(store);
+export function removeDrillsForGame(gameId) {
+  return locked(async () => {
+    const store = await getDrills();
+    store.drills = store.drills.filter(d => d.gameId !== gameId);
+    await saveDrills(store);
+  });
 }
 
 /** Record a review. grade: 'again' | 'good' | 'easy'. A failed drill stays due
  * today (retried at the end of the session); the ladder only advances after a
  * same-day pass. */
-export async function reviewDrill(id, grade, correct) {
+export function reviewDrill(id, grade, correct) {
+  return locked(() => reviewUnlocked(id, grade, correct));
+}
+
+async function reviewUnlocked(id, grade, correct) {
   const store = await getDrills();
   const d = store.drills.find(x => x.id === id);
   if (!d) throw new Error('drill not found');
@@ -180,12 +206,19 @@ export async function reviewDrill(id, grade, correct) {
   return d;
 }
 
-/** Due drills, core tier first, then near-miss sharpeners. */
+/** Due drills, core tier first, then near-miss sharpeners. Consecutive drills
+ * from the same game are spread apart so one game's context cannot prime the
+ * answers to its own next positions. */
 export async function dueDrills(limit = 20) {
   const store = await getDrills();
   const now = Date.now();
   const rank = d => (d.tier === 'sharpen' ? 1 : 0);
   const due = store.drills.filter(d => Date.parse(d.due) <= now)
     .sort((a, b) => rank(a) - rank(b) || Date.parse(a.due) - Date.parse(b.due));
+  for (let i = 1; i < due.length; i++) {
+    if (due[i].gameId !== due[i - 1].gameId) continue;
+    const j = due.findIndex((d, k) => k > i && d.gameId !== due[i].gameId && rank(d) === rank(due[i]));
+    if (j > i) [due[i], due[j]] = [due[j], due[i]];
+  }
   return { due: due.slice(0, limit), total: store.drills.length, dueCount: due.length };
 }

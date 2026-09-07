@@ -35,11 +35,21 @@ async function readJson(file, fallback) {
   }
 }
 
-async function writeJson(file, value) {
-  await ensureDirs();
-  const tmp = file + '.tmp';
-  await fs.writeFile(tmp, JSON.stringify(value, null, 2));
-  await fs.rename(tmp, file);
+// Writes to the same file are serialized and use a unique tmp path, so two
+// concurrent saves (job step vs HTTP route) can never splice or race a rename.
+let tmpSeq = 0;
+const writeQueues = new Map();
+function writeJson(file, value) {
+  const prev = writeQueues.get(file) || Promise.resolve();
+  const next = prev.catch(() => {}).then(async () => {
+    await ensureDirs();
+    const tmp = `${file}.${process.pid}.${++tmpSeq}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(value, null, 2));
+    await fs.rename(tmp, file);
+  });
+  writeQueues.set(file, next);
+  next.catch(() => {}).finally(() => { if (writeQueues.get(file) === next) writeQueues.delete(file); });
+  return next;
 }
 
 export async function getSettings() {
@@ -94,8 +104,10 @@ export function gameIndexEntry(g) {
   };
 }
 
+const isValidId = id => /^[a-f0-9]{12}$/.test(id);
+
 export async function getGame(id) {
-  if (!/^[a-f0-9]{12}$/.test(id)) return null;
+  if (!isValidId(id)) return null;
   return readJson(path.join(GAMES_DIR, id + '.json'), null);
 }
 
@@ -105,7 +117,7 @@ export async function saveGame(game) {
 }
 
 export async function deleteGame(id) {
-  if (!/^[a-f0-9]{12}$/.test(id)) return;
+  if (!isValidId(id)) return;
   await fs.rm(path.join(GAMES_DIR, id + '.json'), { force: true });
 }
 

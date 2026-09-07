@@ -11,17 +11,18 @@ let seq = 0;
 let running = false;
 const pending = [];
 
+const isActive = j => j.status === 'queued' || j.status === 'running';
+
 export function listJobs() {
   // Cap only finished jobs: active ones must always be visible, or the UI shows
   // a long queue with no running progress bar (the runner is the oldest job).
   const all = [...jobs.values()].sort((a, b) => b.id - a.id);
-  const isActive = j => j.status === 'queued' || j.status === 'running';
   return all.filter(isActive).concat(all.filter(j => !isActive(j)).slice(0, 50)).sort((a, b) => b.id - a.id);
 }
 
 export function enqueue(kind, gameId) {
   const dup = [...jobs.values()].find(j => j.gameId === gameId && j.kind === kind
-    && (j.status === 'queued' || (j.status === 'running' && !j.cancelled)));
+    && isActive(j) && !(j.status === 'running' && j.cancelled));
   if (dup) return dup;
   const job = { id: ++seq, kind, gameId, status: 'queued', progress: 0, total: 0, stage: '', error: null, createdAt: new Date().toISOString(), costUsd: 0 };
   jobs.set(job.id, job);
@@ -91,6 +92,9 @@ async function pump() {
       }
     }
     job.finishedAt = new Date().toISOString();
+    // Keep memory bounded on a long-running server: cap finished-job history.
+    const finished = [...jobs.values()].filter(j => !isActive(j)).sort((a, b) => a.id - b.id);
+    for (const j of finished.slice(0, Math.max(0, finished.length - 200))) jobs.delete(j.id);
   }
   running = false;
 }
@@ -147,11 +151,13 @@ async function runExplain(job) {
   for (const ply of todo) {
     if (job.cancelled) throw new Error('cancelled');
     job.itemStartedAt = new Date().toISOString(); // lets the UI show elapsed time on the current explanation
-    const { output, costUsd, model } = await complete(settings, { system, prompt: scout ? scoutMomentPrompt(game, ply, [...known]) : momentPrompt(game, ply, [...known]), schema });
+    const args = [game, ply, [...known.patterns], [...known.concepts]];
+    const { output, costUsd, model } = await complete(settings, { system, prompt: scout ? scoutMomentPrompt(...args) : momentPrompt(...args), schema });
     const entry = { ...output, model, costUsd, createdAt: new Date().toISOString() };
     game.explanations[ply] = entry; // keep the held copy current for later prompts
     await updateGame(job.gameId, g => { g.explanations = g.explanations || {}; g.explanations[ply] = entry; });
-    if (output.pattern) known.add(output.pattern);
+    if (output.pattern) known.patterns.add(output.pattern);
+    if (output.concept) known.concepts.add(output.concept);
     job.costUsd += costUsd || 0;
     job.progress++;
   }
@@ -168,18 +174,19 @@ async function runExplain(job) {
   await syncDrillsForGame(done, settings); // copy fresh categories/patterns onto drills
 }
 
-/** Pattern names used so far across all games (most frequent first, capped), so the model can reuse them. */
+/** Pattern and concept names used so far (most frequent first, capped), so the
+ * model reuses them and recurring themes aggregate instead of fragmenting. */
 async function knownPatterns(currentGame) {
-  const counts = new Map();
-  const add = e => { if (e?.pattern) counts.set(e.pattern, (counts.get(e.pattern) || 0) + 1); };
+  const patterns = new Map(), concepts = new Map();
+  const add = (map, key) => { if (key) map.set(key, (map.get(key) || 0) + 1); };
   for (const entry of await listGames()) {
     if (!entry.explained) continue;
     // Pattern libraries do not mix: the player's own patterns stay separate from
     // each scouted subject's patterns.
     if (entry.purpose !== (currentGame.purpose || 'own') || entry.subject !== (currentGame.subject || null)) continue;
     const g = entry.id === currentGame.id ? currentGame : await getGame(entry.id);
-    for (const e of Object.values(g?.explanations || {})) add(e);
+    for (const e of Object.values(g?.explanations || {})) { add(patterns, e?.pattern); add(concepts, e?.concept); }
   }
-  const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([p]) => p).slice(0, 40);
-  return new Set(sorted);
+  const top = (map, n) => new Set([...map.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k).slice(0, n));
+  return { patterns: top(patterns, 40), concepts: top(concepts, 25) };
 }

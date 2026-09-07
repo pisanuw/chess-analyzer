@@ -1,5 +1,5 @@
 // Weakness report across all analysed games.
-import { api, esc, toast } from '../api.js';
+import { api, esc, toast, movePrefix } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 
 export const CATEGORY_LABEL = {
@@ -82,6 +82,14 @@ export async function reportView(root) {
       <small>From PGN clock comments (${r.timeManagement.movesWithClock} player moves with clocks). Mistakes with plenty of time are understanding gaps, not clock problems.</small>
     </div>` : ''}
 
+    ${r.endgames?.length ? `<div class="card" style="margin-top: 20px">
+      <h3 style="margin-top:0">Recurring endgame trouble</h3>
+      <table><thead><tr><th>Material</th><th class="num">Moments</th><th>Where</th></tr></thead>
+      <tbody>${r.endgames.map(eg => `<tr><td>${esc(eg.signature)}</td><td class="num">${eg.count}</td>
+        <td>${eg.moments.map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${movePrefix(m)}${esc(m.san)}</a>`).join(' ')}</td></tr>`).join('')}</tbody></table>
+      <small>Endgame moments bucketed by material (your pieces vs theirs). A repeating signature is a study target.</small>
+    </div>` : ''}
+
     ${r.drillStats ? `<div class="card" style="margin-top: 20px">
       <h3 style="margin-top:0">Drill performance</h3>
       <p class="muted" style="margin-top:0">${r.drillStats.attempts} reviews on this machine, ${r.drillStats.rate}% correct.</p>
@@ -98,7 +106,7 @@ export async function reportView(root) {
         <h3 style="margin-top:0">Recurring patterns</h3>
         ${r.patterns.length ? `<table><thead><tr><th>Pattern</th><th class="num">Count</th><th>Type</th><th>Where</th></tr></thead><tbody>
           ${r.patterns.slice(0, 25).map(p => `<tr><td>${esc(p.pattern)}</td><td class="num">${p.count}</td><td><small>${Object.keys(p.categories).map(c => esc(CATEGORY_LABEL[c] || c)).join(', ')}</small></td>
-            <td>${p.moments.slice(0, 6).map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${m.moveNumber}${m.color === 'white' ? '.' : '...'}${esc(m.san)}</a>`).join(' ')}</td></tr>`).join('')}
+            <td>${p.moments.slice(0, 6).map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${movePrefix(m)}${esc(m.san)}</a>`).join(' ')}</td></tr>`).join('')}
         </tbody></table>` : '<div class="empty">Patterns appear once moments have been explained.</div>'}
       </div>
       <div class="card">
@@ -127,11 +135,13 @@ export async function reportView(root) {
     .map(([k, v]) => ({ key: k, label: CATEGORY_LABEL[k] || k, value: v.weight, sub: `${v.count} moment${v.count === 1 ? '' : 's'}`, dim: k === 'unexplained', moments: v.moments }));
   barChart(root.querySelector('#cat-chart'), cats, {
     onClick: it => {
-      root.querySelector('#cat-list').innerHTML = `<b>${esc(it.label)}</b><ul style="margin:6px 0; padding-left: 18px">${it.moments.map(m => `<li><a href="#/game/${m.gameId}/${m.ply}">${m.moveNumber}${m.color === 'white' ? '.' : '...'}${esc(m.san)}</a> <span class="chip ${m.judgment}">${m.judgment}</span> <small>${esc(m.label)}${m.date ? ', ' + esc(m.date) : ''}${m.pattern ? ' · ' + esc(m.pattern) : ''}</small></li>`).join('')}</ul>`;
+      root.querySelector('#cat-list').innerHTML = `<b>${esc(it.label)}</b><ul style="margin:6px 0; padding-left: 18px">${it.moments.map(m => `<li><a href="#/game/${m.gameId}/${m.ply}">${movePrefix(m)}${esc(m.san)}</a> <span class="chip ${m.judgment}">${m.judgment}</span> <small>${esc(m.label)}${m.date ? ', ' + esc(m.date) : ''}${m.pattern ? ' · ' + esc(m.pattern) : ''}</small></li>`).join('')}</ul>`;
     },
   });
 
   lineChart(root.querySelector('#trend'), r.timeline.map(t => ({ x: t.date ? t.date.slice(2) : '?', y: t.accuracy, sub: `${t.label} (${t.result}), ${t.moments} moments`, gameId: t.gameId })), {
-    yMin: 50, yMax: 100, format: v => v + '%', onClick: p => { location.hash = `#/game/${p.gameId}`; },
+    // Never clip a rough game below the axis.
+    yMin: Math.min(50, ...r.timeline.map(t => Math.floor(t.accuracy / 10) * 10)),
+    yMax: 100, format: v => v + '%', onClick: p => { location.hash = `#/game/${p.gameId}`; },
   });
 }

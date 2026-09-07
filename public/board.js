@@ -12,11 +12,17 @@ export function legalDests(fen) {
   return { dests, turn: chess.turn() === 'w' ? 'white' : 'black', inCheck: chess.inCheck() };
 }
 
-/** Apply a move (orig, dest) to a FEN; auto-promotes to queen. Returns { san, uci, fen } or null. */
+/** Apply a move (orig, dest) to a FEN; asks which piece on promotion. Returns { san, uci, fen } or null. */
 export function applyMove(fen, orig, dest) {
   const chess = new Chess(fen);
   try {
-    const m = chess.move({ from: orig, to: dest, promotion: 'q' });
+    let promotion = 'q';
+    const piece = chess.get(orig);
+    if (piece?.type === 'p' && (dest[1] === '8' || dest[1] === '1')) {
+      const ans = (window.prompt('Promote to: q, r, b, or n', 'q') || 'q').trim().toLowerCase();
+      if (ans.length === 1 && 'qrbn'.includes(ans)) promotion = ans;
+    }
+    const m = chess.move({ from: orig, to: dest, promotion });
     if (!m) return null;
     return { san: m.san, uci: m.from + m.to + (m.promotion || ''), fen: chess.fen() };
   } catch { return null; }
@@ -73,7 +79,7 @@ export class Board {
       turnColor: turn,
       check: inCheck,
       lastMove: lastMove ? [lastMove.slice(0, 2), lastMove.slice(2, 4)] : undefined,
-      movable: { color: movableFor && movableFor === turn ? movableFor : undefined, dests: movableFor && movableFor === turn ? dests : new Map() },
+      movable: { color: movableFor === turn ? movableFor : undefined, dests: movableFor === turn ? dests : new Map() },
       drawable: { autoShapes: shapes },
     });
   }

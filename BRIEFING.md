@@ -2,9 +2,9 @@
 
 Current state of chess-analyzer and what to do next. Keep this short and current.
 
-## Status (2026-09-06)
+## Status (2026-09-07)
 
-v0.1.0, first working version. Built and tested in a sandbox with Stockfish 17.1 and claude CLI 2.1.263 against three generated sample games; the full pipeline (import, engine analysis, explanations, game summary, report, drills, guess-first UI) works end to end. Not yet run on Yusuf's Mac or with real tournament games.
+v0.1.x, in daily use on Yusuf's Mac with Kai's real tournament games. Since v0.1.0: robustness pass (engine crash-proofing, job/HTTP write safety, corrupt-file tolerance), restart-resuming queue with live depth progress, family sync via the private chess-analyzer-data repo (drills and settings stay per machine), training upgrades (same-session drill retries, honest grading, sharpener tier, multi-move drills, guess seeding, off-list engine evals, per-category trends, time management, pattern synthesis, repertoire view), opponent scouting (dossiers, punish drills, exploitation explanations, prep sheets, opponents auto-derived from own games), editable player names, and a 42-test suite (`npm test`).
 
 ## Purpose
 
@@ -29,8 +29,9 @@ Help a FIDE ~2000 player (Yusuf's son) improve: the engine finds the critical mo
 
 ## Next steps, in order
 
-1. Run on the real machine with real games; tune the threshold and prompt wording from what the son finds useful.
+1. Tune thresholds and prompt wording from what Kai finds useful in real use.
 2. Lichess and chess.com username import (both public APIs return PGN with clocks).
-3. Opening repertoire view: group games by first 8 to 10 moves, show where results and accuracy drop, so prep targets the actual repertoire.
-4. Hosted build: `public/` unchanged, `api.js` swapped for a browser backend (Stockfish WASM worker plus Anthropic API client with a user-pasted key). Ask before adding anything that uses an API key.
-5. Export the weakness report as a one-page PDF or markdown for a human coach.
+3. Per-drill ease (SM-2/FSRS-lite) fitted from the stored `reviews[]` history, replacing the fixed ladder; wait until a few weeks of review data exists.
+4. Tablebase check for 7-man-or-fewer drill positions so endgame correctness means "keeps the theoretical result", not "within 30cp" (needs the lichess tablebase API or local syzygy files; weigh against the everything-runs-locally principle).
+5. Export the weakness report or a scouting prep sheet as one-page markdown/PDF for a human coach.
+6. Hosted build: `public/` unchanged, `api.js` swapped for a browser backend (Stockfish WASM worker plus Anthropic API client with a user-pasted key). Ask before adding anything that uses an API key.

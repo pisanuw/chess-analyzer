@@ -19,6 +19,7 @@ export const api = {
   importPgn: (pgn, analyse = true, purpose = 'own', subject = '') => req('POST', '/api/games/import', { pgn, analyse, purpose, subject }),
   deleteGame: id => req('DELETE', `/api/games/${id}`),
   setPlayer: (id, color, analyse = true) => req('POST', `/api/games/${id}/player`, { color, analyse }),
+  setNames: (id, white, black, subject) => req('POST', `/api/games/${id}/names`, { white, black, ...(subject !== undefined ? { subject } : {}) }),
   analyse: (id, force = false) => req('POST', `/api/games/${id}/analyse`, { force }),
   explain: id => req('POST', `/api/games/${id}/explain`, {}),
   analyseAll: () => req('POST', '/api/games/analyse-all', {}),
@@ -48,8 +49,13 @@ export function formatEval(cp) {
   return (cp >= 0 ? '+' : '') + (cp / 100).toFixed(2);
 }
 
+/** "12." for White moves, "12..." for Black. */
+export function movePrefix(m) {
+  return `${m.moveNumber}${m.color === 'white' ? '.' : '...'}`;
+}
+
 export function moveLabel(m) {
-  return `${m.moveNumber}${m.color === 'white' ? '.' : '...'} ${m.san}`;
+  return `${movePrefix(m)} ${m.san}`;
 }
 
 export const JUDGE_MARK = { blunder: '??', mistake: '?', inaccuracy: '?!', good: '', best: '' };

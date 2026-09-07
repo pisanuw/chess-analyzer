@@ -1,7 +1,10 @@
 // Aggregate weakness report across all analysed games.
 import { getGame, listGames, getDrills } from './store.js';
 import { gamesForSubject } from './subjects.js';
+import { parseTimeControl } from './pgn.js';
 import { CATEGORIES } from './prompts.js';
+
+export { parseTimeControl };
 
 const WEIGHT = { inaccuracy: 1, mistake: 2, blunder: 3 };
 
@@ -17,8 +20,9 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
   }
 
   const byCategory = Object.fromEntries([...CATEGORIES, 'unexplained'].map(c => [c, { count: 0, weight: 0, moments: [] }]));
-  const byPhase = { opening: { moves: 0, cpl: 0, acc: 0, moments: 0, weight: 0 }, middlegame: { moves: 0, cpl: 0, acc: 0, moments: 0, weight: 0 }, endgame: { moves: 0, cpl: 0, acc: 0, moments: 0, weight: 0 } };
-  const byColor = { white: { games: 0, acc: 0, moments: 0, score: 0 }, black: { games: 0, acc: 0, moments: 0, score: 0 } };
+  const byPhase = Object.fromEntries(['opening', 'middlegame', 'endgame'].map(p => [p, { moves: 0, cpl: 0, acc: 0, moments: 0, weight: 0 }]));
+  const byColor = Object.fromEntries(['white', 'black'].map(c => [c, { games: 0, acc: 0, moments: 0, score: 0, scored: 0 }]));
+  const endgames = new Map(); // material signature -> recurring endgame trouble spots
   const patterns = new Map();
   const concepts = new Map();
   const timeline = [];
@@ -33,7 +37,7 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     byColor[color].games++;
     byColor[color].acc += p.accuracy;
     byColor[color].moments += g.analysis.summary.moments.length;
-    if (score != null) byColor[color].score += score;
+    if (score != null) { byColor[color].score += score; byColor[color].scored++; }
     for (const m of g.analysis.moves) {
       if (!m.isPlayer) continue;
       const ph = byPhase[m.phase];
@@ -83,6 +87,13 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
       byCategory[cat].count++;
       byCategory[cat].weight += w;
       byCategory[cat].moments.push(ref);
+      if (m.phase === 'endgame') {
+        const sig = materialSignature(m.fenBefore, m.color);
+        const eg = endgames.get(sig) || { signature: sig, count: 0, weight: 0, moments: [] };
+        eg.count++; eg.weight += w;
+        if (eg.moments.length < 6) eg.moments.push(ref);
+        endgames.set(sig, eg);
+      }
       if (e) {
         if (e.time_pressure) timePressure++;
         const key = normalizeKey(e.pattern);
@@ -107,8 +118,9 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
   }
   for (const c of Object.values(byColor)) {
     c.accuracy = c.games ? +(c.acc / c.games).toFixed(1) : null;
-    c.scorePct = c.games ? +((c.score / c.games) * 100).toFixed(0) : null;
-    delete c.acc; delete c.score;
+    // Score over games with a known result only; '*' games are not losses.
+    c.scorePct = c.scored ? +((c.score / c.scored) * 100).toFixed(0) : null;
+    delete c.acc; delete c.score; delete c.scored;
   }
 
   // Per-category trend: recent window vs earlier games, weighted moments per game.
@@ -178,14 +190,22 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     categoryTrend,
     drillStats,
     timeManagement,
+    endgames: [...endgames.values()].sort((a, b) => b.weight - a.weight).slice(0, 10),
   };
 }
 
-/** Parse a PGN TimeControl header like "5400+30" or "600" into { base, inc } seconds. */
-export function parseTimeControl(tc) {
-  const m = (tc || '').match(/^(\d+)(?:\+(\d+))?$/);
-  if (!m) return null;
-  return { base: Number(m[1]), inc: Number(m[2] || 0) };
+/** Compact material signature from the mover's perspective, e.g. "R+3P vs R+2P". */
+export function materialSignature(fen, moverColor) {
+  const board = fen.split(' ')[0];
+  const side = chars => {
+    const counts = {};
+    for (const c of chars) counts[c.toUpperCase()] = (counts[c.toUpperCase()] || 0) + 1;
+    const pieces = ['Q', 'R', 'B', 'N'].flatMap(p => Array(counts[p] || 0).fill(p)).join('');
+    return (pieces || 'K') + (counts.P ? `+${counts.P}P` : '');
+  };
+  const white = side(board.replace(/[^QRBNP]/g, ''));
+  const black = side(board.replace(/[^qrbnp]/g, ''));
+  return moverColor === 'white' ? `${white} vs ${black}` : `${black} vs ${white}`;
 }
 
 function resultScore(result, color) {

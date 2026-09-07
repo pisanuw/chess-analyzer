@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { tempData, makeGame, writeGame } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
-const { buildReport, parseTimeControl } = await import('../server/report.js');
+const { buildReport, parseTimeControl, materialSignature } = await import('../server/report.js');
 const { buildRepertoire } = await import('../server/repertoire.js');
 
 const dir = process.env.DATA_DIR;
@@ -49,6 +49,26 @@ test('buildReport aggregates categories, trend, and time management', async () =
 
   // No drill reviews on this machine yet.
   assert.equal(r.drillStats, null);
+});
+
+test('unknown results are excluded from the score, not counted as losses', async () => {
+  writeGame(dir, makeGame({ id: 'cccccccccc99', date: '2026.03.01', result: '*', moments: [] , plies: 2 }));
+  const r = await buildReport();
+  // 11 wins (1-0 as white) with known results; the '*' game must not dilute.
+  assert.equal(r.byColor.white.scorePct, 100);
+});
+
+test('materialSignature is from the mover\'s perspective', () => {
+  assert.equal(materialSignature('8/R3k3/8/P3K3/4P3/8/8/7r b - - 4 55', 'black'), 'R vs R+2P');
+  assert.equal(materialSignature('8/R3k3/8/P3K3/4P3/8/8/7r w - - 4 55', 'white'), 'R+2P vs R');
+});
+
+test('endgame moments are bucketed by material in the report', async () => {
+  writeGame(dir, makeGame({ id: 'dddddddddd99', date: '2026.03.02', moments: [{ ply: 1, loss: 25, phase: 'endgame' }], plies: 2 }));
+  const r = await buildReport();
+  assert.ok(r.endgames.length >= 1);
+  assert.equal(r.endgames[0].count, 1);
+  assert.ok(r.endgames[0].signature.includes(' vs '));
 });
 
 test('buildRepertoire groups lines and marks where prep ends', async () => {

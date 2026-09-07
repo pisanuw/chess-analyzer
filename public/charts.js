@@ -1,5 +1,7 @@
 // Small SVG charts: horizontal bars, a single-series line, and the game eval graph. No dependencies.
-import { esc, formatEval } from './api.js';
+import { esc, formatEval, movePrefix } from './api.js';
+
+const flaggedJudgment = j => j === 'inaccuracy' || j === 'mistake' || j === 'blunder';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -111,7 +113,7 @@ export function evalGraph(container, moves, { currentPly = 0, onSelect = null } 
   svg.appendChild(svgEl('path', { d, class: 'line' }));
   svg.appendChild(svgEl('line', { x1: pad, y1: ys(50), x2: W - pad, y2: ys(50), class: 'axis' }));
   for (const m of moves) {
-    if (m.isPlayer && ['inaccuracy', 'mistake', 'blunder'].includes(m.judgment)) {
+    if (m.isPlayer && flaggedJudgment(m.judgment)) {
       svg.appendChild(svgEl('circle', { cx: xs(m.ply), cy: ys(wpWhite(m)), r: m.judgment === 'inaccuracy' ? 3 : 4.5, class: 'dot flagged' }));
     }
   }
@@ -126,7 +128,7 @@ export function evalGraph(container, moves, { currentPly = 0, onSelect = null } 
   hit.addEventListener('mousemove', e => {
     const m = moves[plyAt(e) - 1];
     const r = container.getBoundingClientRect();
-    tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${m.moveNumber}${m.color === 'white' ? '.' : '...'} ${esc(m.san)}</b> ${esc(formatEval(m.evalAfter))}${m.judgment !== 'best' && m.judgment !== 'good' ? ' (' + m.judgment + ')' : ''}`);
+    tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${movePrefix(m)} ${esc(m.san)}</b> ${esc(formatEval(m.evalAfter))}${flaggedJudgment(m.judgment) ? ' (' + m.judgment + ')' : ''}`);
   });
   hit.addEventListener('mouseleave', () => tip.hide());
   if (onSelect) hit.addEventListener('click', e => onSelect(plyAt(e)));

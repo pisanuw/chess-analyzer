@@ -67,6 +67,18 @@ test('drill review flow over HTTP', async () => {
   assert.equal(due.due.length, 1, 'failed drill is due again immediately');
 });
 
+test('player names can be edited; empty names rejected', async () => {
+  const games = (await req('GET', '/api/games')).data.games;
+  const id = games.find(g => g.white === 'Kai Pisan').id;
+  const r = await req('POST', `/api/games/${id}/names`, { white: 'Pisan, Kai', black: 'Bilych, Oleksii' });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.game.headers.White, 'Pisan, Kai');
+  const after = (await req('GET', '/api/games')).data.games.find(g => g.id === id);
+  assert.equal(after.black, 'Bilych, Oleksii');
+  assert.equal((await req('POST', `/api/games/${id}/names`, { white: '', black: 'x' })).status, 400);
+  assert.equal((await req('POST', '/api/games/aaaaaaaaaa99/names', { white: 'a', black: 'b' })).status, 404);
+});
+
 test('report and repertoire endpoints respond', async () => {
   const rep = await req('GET', '/api/report');
   assert.equal(rep.status, 200);

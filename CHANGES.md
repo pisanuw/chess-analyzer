@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-09-07 (editable names, and the rest of the code-improve report)
+
+- Player names on a game can be edited (✎ names in the game view, `POST /api/games/:id/names`): fixes wrong or inconsistent PGN spellings so colour detection and scouting dossiers match; drill labels refresh; the game id stays as imported so re-imports still dedupe.
+- Concurrency: writes to the same data file are serialized with unique tmp paths, and all drill-store mutations run through one lock, so a review can no longer be lost to a concurrent sync or delete.
+- Fixes from the review backlog: clocks stay per-move when a position repeats (order-based matching instead of FEN-keyed); score percentages exclude unknown results instead of counting them as losses; analyse-all no longer queues guaranteed-to-fail explain jobs in manual mode; sample games cut off by the ply cap keep "*"; finished jobs are pruned so the map cannot grow forever; the impossible threefold check on a bare FEN is gone; setPlayer/analyse-all/job-refresh handlers surface errors instead of silently rejecting; promotions ask which piece instead of forcing a queen; the accuracy trend no longer clips games below 50%.
+- Training touches: due drills from the same game are spread apart; the model is given the player's existing concept names so study topics aggregate; from the second review a drill shows its key question before the move; explanation prompts state deterministic time-spent per move; the report buckets recurring endgame trouble by material signature.
+- Simplification pass across server and views (shared helpers for move prefixes, SAN lines, side signs, averages, id checks; game.js line walking now uses board.js walkSans; dead code removed).
+- Housekeeping: README status line, CLAUDE.md version and commit conventions, GitHub repo description and topics. CODE-IMPROVE-REPORT.md is fully implemented and removed; the few deliberately deferred ideas (per-drill ease, tablebase checks) moved to BRIEFING.md next steps.
+
 ## 2026-09-07 (scouting includes opponents from your own games)
 
 - Every opponent from the player's own analysed games now appears in Scouting automatically: their side of each game is flipped on the fly from stored per-move analysis (both colours are already engine-evaluated), so no re-analysis is needed. Dossiers merge these with any scout-imported games of the same name. Own games contribute engine data (their mistakes, accuracy, phases, clocks, repertoire); error categories and patterns still come from explained scout imports. No punish drills are created from own games: a missed punishment is already one of the player's own drills.

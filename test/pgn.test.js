@@ -29,6 +29,18 @@ test('splitPgn separates multiple games', () => {
   assert.equal(parsePgnFile(two).length, 2);
 });
 
+test('clocks stay per-move even when a position repeats', () => {
+  const rep = `[White "A"]
+[Black "B"]
+[Result "1/2-1/2"]
+
+1. Nf3 {[%clk 0:59:00]} Nf6 {[%clk 0:58:00]} 2. Ng1 {[%clk 0:57:00]} Ng8 {[%clk 0:56:00]} 3. Nf3 {[%clk 0:55:00]} Nf6 {[%clk 0:54:00]} 1/2-1/2`;
+  const g = parseGame(rep);
+  // Positions after 3.Nf3 / 3...Nf6 repeat 1.Nf3 / 1...Nf6; a FEN-keyed map
+  // would give the early moves the late clocks.
+  assert.deepEqual(g.moves.map(m => m.clock), [3540, 3480, 3420, 3360, 3300, 3240]);
+});
+
 test('parseClock handles H:MM:SS and rejects junk', () => {
   assert.equal(parseClock('[%clk 0:05:12]'), 312);
   assert.equal(parseClock('[%clk 1:00:00.9]'), 3600);

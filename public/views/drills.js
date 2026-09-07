@@ -46,6 +46,9 @@ export async function drillsView(root) {
     board = new Board(el.querySelector('#dboard'), { orientation: drill.sideToMove, onMove });
     board.set(drill.fen, { movableFor: drill.sideToMove });
     renderPanel();
+    // From the second review on, surface the key question BEFORE the move: the
+    // goal is training the thinking habit, not recall of a memorised answer.
+    if (drill.reviews?.length) loadGame();
   }
 
   function loadGame() {
@@ -129,8 +132,10 @@ export async function drillsView(root) {
     const punish = d.kind === 'punish';
     const chips = `<span class="chip ${d.judgment}">${d.judgment}${punish ? '' : ' in the game'}</span>${punish ? ` <span class="chip">punish</span> <span class="chip">vs ${esc(d.subject || '?')}</span>` : ''}${d.tier === 'sharpen' ? ' <span class="chip">sharpener</span>' : ''}${d.category ? ` <span class="chip cat">${esc(d.category)}</span>` : ''}`;
     if (state.status === 'guessing') {
+      const hint = d.reviews?.length ? state.game?.explanations?.[d.ply]?.key_question : null;
       p.innerHTML = `<div class="guess"><b>${punish ? `${esc(d.subject || 'The opponent')} just played ${esc(d.mistakeSan)}. ${side} to move: find the punishment.` : `${side} to move. Find the best move.`}</b>
         <p class="muted">Drill ${idx + 1} of ${due.length}. ${chips}</p>
+        ${hint ? `<div class="kq">Ask yourself: ${esc(hint)}</div>` : ''}
         <button class="small" id="giveup">Show answer</button></div>`;
       p.querySelector('#giveup').onclick = () => { board.set(d.fen, { shapes: lineShapes(d.lines, d.playedUci) }); reveal({ correct: false, text: `Engine: ${d.bestSan}.`, followUps: 0, foundSans: [] }); };
       return;

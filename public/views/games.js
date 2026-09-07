@@ -44,7 +44,7 @@ export async function gamesView(root) {
   const list = root.querySelector('#list');
   let sortAsc = false;
   let filter = 'all'; // 'all' | 'own' | a subject name
-  const byDate = (a, b) => (b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt);
+  const byDate = (a, b) => ((b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt)) * (sortAsc ? -1 : 1);
   const render = () => {
     if (!games.length) { list.innerHTML = '<div class="empty">No games yet. Import a PGN above.</div>'; return; }
     const subjects = [...new Set(games.filter(g => g.purpose === 'scout').map(g => g.subject))];
@@ -53,7 +53,6 @@ export async function gamesView(root) {
         `<button class="small${filter === v ? ' primary' : ''}" data-filter="${esc(v)}">${esc(label)}</button>`).join('')}
     </div>` : '';
     const rows = [...games].filter(g => filter === 'all' || (filter === 'own' ? g.purpose !== 'scout' : g.subject === filter)).sort(byDate);
-    if (sortAsc) rows.reverse();
     list.innerHTML = filterBar + `<table>
       <thead><tr><th data-sort style="cursor:pointer" title="Toggle date order">Date ${sortAsc ? '↑' : '↓'}</th><th>White</th><th>Black</th><th>Result</th><th>Event</th><th>Played</th><th>Status</th><th class="num">Accuracy</th><th class="num">Moments</th><th></th></tr></thead>
       <tbody>${rows.map(g => `
@@ -89,8 +88,10 @@ export async function gamesView(root) {
     const btn = e.target.closest('button');
     if (btn?.dataset.color) {
       e.stopPropagation();
-      await api.setPlayer(id, btn.dataset.color, true);
-      toast('Colour set, analysis queued');
+      try {
+        await api.setPlayer(id, btn.dataset.color, true);
+        toast('Colour set, analysis queued');
+      } catch (err) { toast(err.message, true); }
       return refresh();
     }
     if (btn?.dataset.act) {
@@ -158,12 +159,14 @@ export async function gamesView(root) {
   });
 
   root.querySelector('#analyse-all').addEventListener('click', async () => {
-    const r = await api.analyseAll();
-    toast(`${r.queued.length} job${r.queued.length === 1 ? '' : 's'} queued`);
+    try {
+      const r = await api.analyseAll();
+      toast(`${r.queued.length} job${r.queued.length === 1 ? '' : 's'} queued`);
+    } catch (err) { toast(err.message, true); }
   });
 
   const { jobEvents } = await import('../app.js');
-  const onFinished = () => refresh();
+  const onFinished = () => refresh().catch(() => {}); // a failed poll refresh is not fatal
   jobEvents.addEventListener('finished', onFinished);
   return { destroy: () => jobEvents.removeEventListener('finished', onFinished) };
 }

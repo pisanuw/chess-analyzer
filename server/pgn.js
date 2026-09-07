@@ -30,6 +30,13 @@ export function parseClock(comment) {
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
+/** Parse a PGN TimeControl header like "5400+30" or "600" into { base, inc } seconds. */
+export function parseTimeControl(tc) {
+  const m = (tc || '').match(/^(\d+)(?:\+(\d+))?$/);
+  if (!m) return null;
+  return { base: Number(m[1]), inc: Number(m[2] || 0) };
+}
+
 /**
  * Parse a single PGN game into { headers, moves[], pgn, id }.
  * Each move: { ply, moveNumber, color, san, uci, fenBefore, fenAfter, clock }.
@@ -40,6 +47,12 @@ export function parseGame(pgnText) {
   const headers = chess.getHeaders ? chess.getHeaders() : chess.header();
   const comments = new Map(chess.getComments().map(c => [c.fen, c.comment]));
   const history = chess.history({ verbose: true });
+  // Clocks in order of appearance: the FEN-keyed comment map miscounts when a
+  // position repeats, so prefer positional matching when every move has a clock.
+  const movetext = pgnText.replace(/^\s*\[[^\]]*\]\s*$/gm, '');
+  const ordered = [...movetext.matchAll(/\[%clk\s+(\d+):(\d\d):(\d\d)(?:\.\d+)?\]/g)]
+    .map(m => Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]));
+  const clockAt = i => (ordered.length === history.length ? ordered[i] : parseClock(comments.get(history[i].after)));
   const moves = history.map((m, i) => ({
     ply: i + 1,
     moveNumber: Math.floor(i / 2) + 1,
@@ -48,7 +61,7 @@ export function parseGame(pgnText) {
     uci: m.from + m.to + (m.promotion || ''),
     fenBefore: m.before,
     fenAfter: m.after,
-    clock: parseClock(comments.get(m.after)),
+    clock: clockAt(i),
   }));
   const id = createHash('sha1')
     .update([headers.White, headers.Black, headers.Date, headers.Round, ...moves.map(m => m.san)].join('|'))

@@ -1,5 +1,7 @@
 # Chess Analyzer
 
+Status: v0.1.x, in active daily use; analysis pipeline, drills, reports, family sync, and opponent scouting all working end to end.
+
 A local web app for a serious club player (built for a FIDE ~2000 player): Stockfish finds the moments where a game went wrong, a coach model explains why in terms the player can act on, and the results accumulate into a weakness profile and a drill deck built from the player's own mistakes.
 
 Everything runs on your machine. Games stay in a local `data/` folder. The only thing that leaves is the text of each critical moment, sent to the `claude` CLI (your Claude subscription, no API key).

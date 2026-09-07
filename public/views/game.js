@@ -1,6 +1,6 @@
 // Single game: board, eval graph, moves, critical moments with guess-first reveal, summary.
-import { api, esc, toast, formatEval, moveLabel, JUDGE_MARK } from '../api.js';
-import { Board, applyMove, walkLine, lineShapes } from '../board.js';
+import { api, esc, toast, formatEval, moveLabel, movePrefix, JUDGE_MARK } from '../api.js';
+import { Board, applyMove, walkSans, lineShapes } from '../board.js';
 import { evalGraph } from '../charts.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -86,6 +86,7 @@ export async function gameView(root, id, startPly) {
       ${player && !game.analysis ? `<button class="small primary" data-act="analyse">Analyse</button>` : ''}
       ${game.analysis ? `<button class="small" data-act="reanalyse" title="Re-run the engine (clears explanations)">Re-analyse</button>` : ''}
       ${game.analysis && settings.llmProvider !== 'manual' && game.analysis.summary.moments.some(p => !game.explanations?.[p]) ? `<button class="small primary" data-act="explain">Explain moments</button>` : ''}
+      <button class="small" data-act="names" title="Fix player names (they must match settings/scout names for detection)">✎ names</button>
       <span class="chip status-${game.status}">${game.status}</span>`;
   }
   renderActions();
@@ -96,6 +97,15 @@ export async function gameView(root, id, startPly) {
       if (b.dataset.act === 'analyse') { await api.analyse(id); toast('Analysis queued'); }
       if (b.dataset.act === 'reanalyse') { if (confirm('Re-run engine analysis? Explanations for this game will be cleared.')) { await api.analyse(id, true); toast('Re-analysis queued'); } }
       if (b.dataset.act === 'explain') { await api.explain(id); toast('Explanations queued'); }
+      if (b.dataset.act === 'names') {
+        const white = prompt('White player name', h.White || ''); if (white == null) return;
+        const black = prompt('Black player name', h.Black || ''); if (black == null) return;
+        let subject;
+        if (scout) { subject = prompt('Scouting subject (must match one of the names)', game.subject || ''); if (subject == null) return; }
+        await api.setNames(id, white.trim(), black.trim(), subject?.trim());
+        toast('Names updated');
+        location.reload(); // header, dossiers, and labels all derive from the names
+      }
     } catch (err) { toast(err.message, true); }
   });
 
@@ -241,7 +251,7 @@ export async function gameView(root, id, startPly) {
     const side = t.color === 'white' ? 'White' : 'Black';
     if (g.status === 'guessing') {
       return `<div class="guess">
-        <div class="row" style="justify-content: space-between"><b>${scout ? `${esc(game.subject || 'They')} played ${esc(moveLabel(m))} <span class="chip ${m.judgment}">${m.judgment}</span>. ${side} to move: find the punishment.` : `${esc(moveLabel(m).replace(m.san, '').trim())} ${side} to move. Find the best move.`}</b>
+        <div class="row" style="justify-content: space-between"><b>${scout ? `${esc(game.subject || 'They')} played ${esc(moveLabel(m))} <span class="chip ${m.judgment}">${m.judgment}</span>. ${side} to move: find the punishment.` : `${esc(movePrefix(m))} ${side} to move. Find the best move.`}</b>
           <span><button class="small" data-g="reveal">Show answer</button> <button class="small" data-g="close">Close</button></span></div>
         <p class="muted">Play your move on the board. Eval here: ${formatEval(scout ? m.evalAfter : m.evalBefore)}${m.clock != null ? ` · clock ${fmtClock(m.clock)}` : ''}</p>
       </div>`;
@@ -295,8 +305,7 @@ export async function gameView(root, id, startPly) {
       const san = e.target.closest('.san[data-line]');
       if (san) {
         const line = t.lines[Number(san.dataset.line)];
-        const steps = walkLine(t.fenBefore, uciLine(t, line));
-        const step = steps[Number(san.dataset.idx)];
+        const step = walkSans(t.fenBefore, line.san)[Number(san.dataset.idx)];
         if (step) showPreview(step.fen, step.uci);
         return;
       }
@@ -323,17 +332,6 @@ export async function gameView(root, id, startPly) {
     });
   }
 
-  function uciLine(m, line) {
-    // Rebuild the UCI sequence for a line from its SAN list (server stored only the first UCI move).
-    const steps = [];
-    let fen = m.fenBefore;
-    for (const san of line.san) {
-      const r = sanToUci(fen, san); if (!r) break;
-      steps.push(r.uci); fen = r.fen;
-    }
-    return steps;
-  }
-
   // --- refresh on job completion -----------------------------------------------------
   async function rerender() {
     ({ game } = await api.game(id));
@@ -344,7 +342,7 @@ export async function gameView(root, id, startPly) {
     showPly(state.ply);
   }
   const { jobEvents } = await import('../app.js');
-  const onFinished = e => { if (e.detail.some(j => j.gameId === id)) rerender(); };
+  const onFinished = e => { if (e.detail.some(j => j.gameId === id)) rerender().catch(() => {}); };
   jobEvents.addEventListener('finished', onFinished);
 
   // --- initial render -------------------------------------------------------------
@@ -358,13 +356,4 @@ export async function gameView(root, id, startPly) {
 
 function fmtClock(s) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
-
-import { Chess } from '/vendor/chess.js/chess.js';
-function sanToUci(fen, san) {
-  try {
-    const c = new Chess(fen);
-    const m = c.move(san);
-    return m ? { uci: m.from + m.to + (m.promotion || ''), fen: c.fen() } : null;
-  } catch { return null; }
 }

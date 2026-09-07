@@ -31,6 +31,9 @@ const NUMERIC_LIMITS = {
   engineThreads: [0, 64], engineHash: [16, 8192], momentThreshold: [1, 100], drillThreshold: [1, 100],
 };
 
+// Explanations and the game summary depend on analysis and colour; clear together.
+const clearExplanations = g => { g.explanations = {}; g.gameSummary = null; };
+
 const wrap = fn => (req, res) => fn(req, res).catch(err => {
   console.error(err);
   res.status(err.status || 500).json({ error: err.message });
@@ -115,8 +118,7 @@ app.post('/api/games/:id/player', wrap(async (req, res) => {
     const settings = await getSettings();
     game.analysis.moves.forEach(m => { m.isPlayer = m.color === color; });
     game.analysis.summary = { ...game.analysis.summary, ...summarize(game.analysis.moves, color, settings.momentThreshold) };
-    game.explanations = {};
-    game.gameSummary = null;
+    clearExplanations(game);
     game.status = 'analysed';
     await removeDrillsForGame(game.id);
     await syncDrillsForGame(game, settings);
@@ -126,13 +128,33 @@ app.post('/api/games/:id/player', wrap(async (req, res) => {
   res.json({ game });
 }));
 
+// Fix wrong or inconsistent player names (PGN headers vary in spelling); the
+// game id stays as imported, so re-importing the same PGN is still a no-op.
+app.post('/api/games/:id/names', wrap(async (req, res) => {
+  const game = await getGame(req.params.id);
+  if (!game) return res.status(404).json({ error: 'not found' });
+  const white = String(req.body?.white ?? '').trim();
+  const black = String(req.body?.black ?? '').trim();
+  if (!white || !black) return res.status(400).json({ error: 'both names are required' });
+  game.headers.White = white;
+  game.headers.Black = black;
+  if (game.purpose === 'scout' && 'subject' in (req.body || {})) {
+    const subject = String(req.body.subject || '').trim();
+    if (!subject) return res.status(400).json({ error: 'scout games need a subject' });
+    game.subject = subject;
+  }
+  await saveGame(game);
+  if (game.analysis) await syncDrillsForGame(game, await getSettings()); // refresh drill labels
+  res.json({ game });
+}));
+
 app.post('/api/games/:id/analyse', wrap(async (req, res) => {
   const game = await getGame(req.params.id);
   if (!game) return res.status(404).json({ error: 'not found' });
   if (!game.playerColor) return res.status(400).json({ error: 'set the player colour first' });
   if (req.body?.force) {
     cancelJobs(game.id); // a live job would restore the wiped analysis and shadow the re-run
-    game.analysis = null; game.explanations = {}; game.gameSummary = null; game.status = 'imported'; await saveGame(game);
+    game.analysis = null; clearExplanations(game); game.status = 'imported'; await saveGame(game);
   }
   res.json({ job: enqueue('analyse', game.id) });
 }));
@@ -145,11 +167,13 @@ app.post('/api/games/:id/explain', wrap(async (req, res) => {
 
 app.post('/api/games/analyse-all', wrap(async (req, res) => {
   const games = await listGames();
+  const settings = await getSettings();
   const queued = [];
   for (const g of games) {
     if (!g.playerColor) continue;
     if (g.status === 'imported' || g.status === 'analysing') queued.push(enqueue('analyse', g.id).id);
-    else if (g.status === 'analysed' && req.body?.explain !== false) queued.push(enqueue('explain', g.id).id);
+    // In manual mode an explain job can only fail; do not queue guaranteed failures.
+    else if (g.status === 'analysed' && req.body?.explain !== false && settings.llmProvider !== 'manual') queued.push(enqueue('explain', g.id).id);
   }
   res.json({ queued });
 }));
