@@ -93,7 +93,9 @@ export async function analyseGame(engine, game, settings, onProgress) {
     if (term !== null) {
       result = { bestmove: null, lines: [], cp: term };
     } else {
-      const r = await engine.analyse(fen, { depth, multipv });
+      // Third onProgress arg = current search depth within position i; those calls
+      // come from the engine's stdout handler and must not throw (see jobs.js).
+      const r = await engine.analyse(fen, { depth, multipv, onDepth: onProgress ? d => onProgress(i, total, d) : null });
       result = { bestmove: r.bestmove, lines: r.lines, cp: scoreToCp(r.lines[0]) };
     }
     result.stm = fen.split(' ')[1] === 'w' ? 'white' : 'black';

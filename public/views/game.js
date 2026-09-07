@@ -199,7 +199,20 @@ export async function gameView(root, id, startPly) {
       const diff = ((m.lines[0].cp - m.lines[rank].cp) * sign) / 100;
       g.verdict = { good: diff <= 0.3, text: `${res.san}: engine line ${rank + 1} (${formatEval(m.lines[rank].cp)}, ${diff.toFixed(2)} behind ${m.lines[0].san[0]}).` };
     } else if (res.uci === m.uci) g.verdict = { good: false, text: `${res.san}: that is the move played in the game, which the engine marks as ${m.judgment === 'inaccuracy' ? 'an' : 'a'} ${m.judgment}.` };
-    else g.verdict = { good: false, text: `${res.san}: not among the engine's top ${m.lines.length} lines.` };
+    else {
+      const verdict = g.verdict = { good: false, text: `${res.san}: not among the engine's top ${m.lines.length} lines. Checking with the engine…` };
+      // Quick engine eval so an off-list guess gets a real answer (best effort).
+      api.evalMove(id, g.ply, res.uci).then(r => {
+        verdict.good = r.diff <= 0.3;
+        verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (m.color === 'white' ? 1 : -1))}, ${r.diff.toFixed(2)} behind the best move.${verdict.good ? ' Playable.' : ''}`;
+        if (state.guess?.verdict === verdict) renderPanel();
+      }).catch(() => {
+        verdict.text = `${res.san}: not among the engine's top ${m.lines.length} lines.`;
+        if (state.guess?.verdict === verdict) renderPanel();
+      });
+    }
+    // Record the attempt: correct first-try guesses start this drill higher up the ladder.
+    api.guess(id, g.ply, res.uci, g.verdict.good).catch(() => {});
     renderPanel();
     showPreview(res.fen, res.uci);
     board.shapes(lineShapes(m.lines, m.uci));

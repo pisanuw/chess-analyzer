@@ -3,6 +3,7 @@ import { api, esc, toast } from './api.js';
 import { gamesView } from './views/games.js';
 import { gameView } from './views/game.js';
 import { reportView } from './views/report.js';
+import { repertoireView } from './views/repertoire.js';
 import { drillsView } from './views/drills.js';
 import { settingsView } from './views/settings.js';
 
@@ -13,6 +14,7 @@ const routes = [
   { re: /^#\/games$/, name: 'games', view: gamesView },
   { re: /^#\/game\/([a-f0-9]{12})(?:\/(\d+))?$/, name: 'games', view: gameView },
   { re: /^#\/report$/, name: 'report', view: reportView },
+  { re: /^#\/repertoire$/, name: 'repertoire', view: repertoireView },
   { re: /^#\/drills$/, name: 'drills', view: drillsView },
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
 ];
@@ -53,11 +55,19 @@ async function pollJobs() {
     const { jobs } = await api.jobs();
     const active = jobs.filter(j => j.status === 'running' || j.status === 'queued');
     const running = active.filter(j => j.status === 'running');
-    jobsEl.innerHTML = running.map(j => `
+    jobsEl.innerHTML = running.map(j => {
+      // Sub-position detail so slow searches don't look like a stall: current
+      // engine depth while analysing, elapsed seconds on the current explanation.
+      const detail = j.stage === 'explain'
+        ? (j.itemStartedAt ? ` · ${Math.max(0, Math.round((Date.now() - Date.parse(j.itemStartedAt)) / 1000))}s` : '')
+        : (j.depth ? ` · depth ${j.depth}/${j.depthTarget || '?'}` : '');
+      const frac = j.total ? (j.progress + (j.depth && j.depthTarget ? Math.min(1, j.depth / j.depthTarget) : 0)) / j.total : 0;
+      return `
       <span class="job" title="${esc(j.kind)} ${esc(j.gameId)}">
-        ${j.stage === 'explain' ? 'Explaining' : 'Analysing'} ${j.total ? `${j.progress}/${j.total}` : ''}
-        <span class="bar"><i style="width:${j.total ? Math.round((j.progress / j.total) * 100) : 0}%"></i></span>
-      </span>`).join('') + (active.length > running.length ? `<span class="muted">${active.length - running.length} queued</span>` : '');
+        ${j.stage === 'explain' ? 'Explaining' : 'Analysing'} ${j.total ? `${j.progress}/${j.total}` : ''}${detail}
+        <span class="bar"><i style="width:${Math.round(frac * 100)}%"></i></span>
+      </span>`;
+    }).join('') + (active.length > running.length ? `<span class="muted">${active.length - running.length} queued</span>` : '');
     const nowActive = new Set(active.map(j => j.id));
     const finished = [...lastActive].filter(id => !nowActive.has(id));
     if (finished.length) {

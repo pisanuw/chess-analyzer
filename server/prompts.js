@@ -35,6 +35,26 @@ export const SUMMARY_SCHEMA = {
   required: ['summary', 'lesson', 'opening_note'],
 };
 
+export const PATTERN_SYNTH_SCHEMA = {
+  type: 'object',
+  properties: {
+    rule: { type: 'string', description: 'The general principle the player keeps violating, one or two sentences, transferable to new positions' },
+    triggers: { type: 'string', description: 'The concrete board or clock cues that should alert the player the pattern is in play, one or two sentences' },
+    advice: { type: 'string', description: 'One practical habit or check to apply before moving, one sentence' },
+  },
+  required: ['rule', 'triggers', 'advice'],
+};
+
+/** Synthesize a recurring pattern from its instances into one transferable lesson. */
+export function patternSynthesisPrompt(pattern, instances) {
+  const list = instances.map((x, i) => `${i + 1}. ${x.label}${x.date ? ', ' + x.date : ''}: played ${x.san} (${x.judgment}), engine preferred ${x.bestSan}. Position: ${x.fen}. Coach note: ${x.explanation} Key question: ${x.key_question}`).join('\n');
+  return `The player has repeatedly shown the pattern "${pattern}". The instances, each already explained from engine analysis:
+
+${list}
+
+Synthesize what these instances have in common into one transferable lesson for this player. Use only the instances above: do not invent positions, variations, or evaluations. Return: rule (the principle the player keeps violating), triggers (the cues that should alert them), advice (one habit to apply before moving).`;
+}
+
 export function systemPrompt(rating) {
   return `You are a chess coach explaining Stockfish analysis to a FIDE ${rating || 2000} rated player.
 You are given a position (FEN), the move that was played, and the engine's top lines with evaluations.

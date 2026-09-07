@@ -2,6 +2,20 @@
 
 Newest first.
 
+## 2026-09-07 (training effectiveness: high-value items from CODE-IMPROVE-REPORT)
+
+- Drills: a missed drill comes back at the end of the same session (ladder advances only after a same-day pass); wrong answers can only be graded Again; near-miss moments (below the mistake threshold) become lower-priority "sharpener" drills served after the core deck; drills carry the moment's category and pattern (chips in the drill view, copied when explanations finish).
+- Multi-move drills: after a correct first move the opponent's reply from the engine line is played automatically and you must find the follow-up, up to two moves deep.
+- Guess-first attempts in the game view are recorded (per machine, alongside drill state): a correct first-try guess starts that drill at step 2 of the ladder instead of tomorrow, and a missed guess creates a drill even below the drill threshold.
+- Off-list guesses get a real answer: a quick engine probe (depth 12, 2s cap) evaluates moves outside the stored MultiPV lines in both the game view and drills, instead of "not among the engine's top lines".
+- Report: "Are the weaknesses shrinking?" per-category trend (recent games vs earlier, shown from 8 games); time management from PGN clocks (mistakes with over 5 minutes left, moments under 2 minutes, moves after 10 seconds of thought or less, think-time on errors vs other moves); drill performance by phase and category from local review history; pattern study notes, one LLM-synthesized transferable lesson per recurring pattern.
+- New Repertoire view: analysed games grouped by colour and first 8 plies with score, accuracy, and a "prep ends" marker (first opening move off the engine's list or losing 10+ win-probability points), linking straight to that move.
+- Test suite: `npm test` (node:test, no new dependencies) covers analysis math, PGN parsing, drill scheduling and seeding, report aggregation, and the HTTP API (25 tests). server/index.js now exports the app and only listens when run directly.
+
+## 2026-09-06 (live progress detail)
+
+- The header progress now shows movement within a position, not just per position: "Analysing 130/134 · depth 14/18" with the bar filling fractionally as the engine deepens, and "Explaining 3/7 · 42s" with elapsed seconds on the current LLM call. At depth 18 a position takes 10-15 seconds, which used to look like a stall between ticks.
+
 ## 2026-09-06 (family sync via private data repo)
 
 - `data/` is now its own private git repo (github.com/pisanuw/chess-analyzer-data) so games, analysis, and explanations can be shared with anyone who has repo access, with no hosting and no API keys. `drills.json` and `settings.json` stay per-machine (data/.gitignore): each clone derives its drill ladder from the synced games at startup (`syncAllDrills()`, which also prunes drills for deleted games), so review history is local and can never conflict.

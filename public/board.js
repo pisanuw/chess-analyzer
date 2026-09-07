@@ -22,6 +22,20 @@ export function applyMove(fen, orig, dest) {
   } catch { return null; }
 }
 
+/** Walk a SAN line from a FEN; returns [{ san, uci, fen }], stopping at the first illegal move. */
+export function walkSans(fen, sans) {
+  const chess = new Chess(fen);
+  const out = [];
+  for (const san of sans) {
+    try {
+      const m = chess.move(san);
+      if (!m) break;
+      out.push({ san: m.san, uci: m.from + m.to + (m.promotion || ''), fen: chess.fen() });
+    } catch { break; }
+  }
+  return out;
+}
+
 /** Walk a UCI line from a FEN; returns [{ san, uci, fen }]. */
 export function walkLine(fen, uciMoves) {
   const chess = new Chess(fen);

@@ -108,7 +108,18 @@ export async function deleteGame(id) {
 }
 
 export async function getDrills() {
-  return readJson(path.join(DATA_DIR, 'drills.json'), { drills: [] });
+  const store = await readJson(path.join(DATA_DIR, 'drills.json'), { drills: [] });
+  store.guesses = store.guesses || {}; // guess-first attempts, keyed gameId:ply
+  return store;
+}
+
+export async function getPatternNotes() {
+  return readJson(path.join(DATA_DIR, 'patterns.json'), {});
+}
+
+export async function savePatternNotes(notes) {
+  await writeJson(path.join(DATA_DIR, 'patterns.json'), notes);
+  return notes;
 }
 
 export async function saveDrills(value) {

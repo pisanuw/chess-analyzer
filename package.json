@@ -7,6 +7,7 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "samples": "node scripts/make-samples.js 3 > samples/sample-games.pgn",
+    "test": "node --test 'test/*.test.js'",
     "pull-data": "git -C data pull --rebase",
     "push-data": "git -C data add -A && (git -C data diff --cached --quiet || git -C data commit -m sync) && git -C data push",
     "sync": "npm run pull-data && npm start"

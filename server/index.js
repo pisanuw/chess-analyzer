@@ -1,15 +1,18 @@
 // Express server: static frontend + JSON API. Runs locally; nothing leaves the machine except claude CLI calls.
 import express from 'express';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { Chess } from 'chess.js';
 import { parsePgnFile, detectPlayerColor } from './pgn.js';
-import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getPatternNotes, savePatternNotes, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { enqueue, listJobs, resumeInterrupted, cancelJobs } from './jobs.js';
-import { findStockfish } from './engine.js';
-import { checkClaudeCli } from './llm.js';
+import { findStockfish, getEngine } from './engine.js';
+import { checkClaudeCli, complete } from './llm.js';
 import { buildReport } from './report.js';
-import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame, syncAllDrills } from './drills.js';
-import { momentPrompt, systemPrompt, EXPLANATION_SCHEMA, CATEGORIES } from './prompts.js';
+import { buildRepertoire } from './repertoire.js';
+import { scoreToCp } from './analyze.js';
+import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess } from './drills.js';
+import { momentPrompt, systemPrompt, patternSynthesisPrompt, EXPLANATION_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const app = express();
@@ -169,9 +172,69 @@ app.put('/api/games/:id/moments/:ply/explanation', wrap(async (req, res) => {
   res.json({ game });
 }));
 
+// Guess-first attempts: recorded per machine (drill store), seeds and boosts drills.
+app.post('/api/games/:id/moments/:ply/guess', wrap(async (req, res) => {
+  const game = await getGame(req.params.id);
+  const ply = Number(req.params.ply);
+  if (!game?.analysis || !game.analysis.summary.moments.includes(ply)) return res.status(404).json({ error: 'not a moment' });
+  const settings = await getSettings();
+  const result = await recordGuess(game, ply, String(req.body?.uci || ''), !!req.body?.correct, settings);
+  res.json(result);
+}));
+
+// Quick engine evaluation of a move the stored MultiPV lines do not cover.
+app.post('/api/games/:id/moments/:ply/eval', wrap(async (req, res) => {
+  const game = await getGame(req.params.id);
+  const ply = Number(req.params.ply);
+  const m = game?.analysis?.moves[ply - 1];
+  if (!m) return res.status(404).json({ error: 'not found' });
+  const uci = String(req.body?.uci || '');
+  const chess = new Chess(m.fenBefore);
+  let mv;
+  try { mv = chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] }); } catch { mv = null; }
+  if (!mv) return res.status(400).json({ error: 'illegal move' });
+  const settings = await getSettings();
+  const engine = await getEngine(settings);
+  const r = await engine.analyse(chess.fen(), { depth: 12, multipv: 1, movetimeMs: 2000 });
+  const sign = m.color === 'white' ? 1 : -1;
+  const moverCp = -scoreToCp(r.lines[0]); // reply eval is from the opponent's perspective
+  const bestCp = (m.lines[0]?.cp ?? m.evalBefore) * sign;
+  res.json({ san: mv.san, cp: moverCp, bestCp, diff: +((bestCp - moverCp) / 100).toFixed(2) });
+}));
+
 // --- jobs, report, drills ----------------------------------------------------
 app.get('/api/jobs', (req, res) => res.json({ jobs: listJobs() }));
 app.get('/api/report', wrap(async (req, res) => res.json({ report: await buildReport() })));
+app.get('/api/repertoire', wrap(async (req, res) => res.json({ repertoire: await buildRepertoire() })));
+
+// --- pattern study notes -----------------------------------------------------
+app.get('/api/patterns', wrap(async (req, res) => res.json({ notes: await getPatternNotes() })));
+app.post('/api/patterns/synthesize', wrap(async (req, res) => {
+  const name = String(req.body?.pattern || '').trim();
+  if (!name) return res.status(400).json({ error: 'pattern required' });
+  const settings = await getSettings();
+  const report = await buildReport();
+  const key = name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const pat = report.patterns.find(p => p.pattern.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() === key);
+  if (!pat) return res.status(404).json({ error: 'pattern not found' });
+  const instances = [];
+  for (const ref of pat.moments.slice(0, 8)) {
+    const g = await getGame(ref.gameId);
+    const m = g?.analysis?.moves[ref.ply - 1];
+    const e = g?.explanations?.[ref.ply];
+    if (m && e) instances.push({ label: ref.label, date: ref.date, fen: m.fenBefore, san: m.san, bestSan: m.bestSan, judgment: m.judgment, explanation: e.explanation, key_question: e.key_question });
+  }
+  if (instances.length < 2) return res.status(400).json({ error: 'need at least 2 explained instances' });
+  const { output, costUsd, model } = await complete(settings, {
+    system: systemPrompt(settings.playerRating),
+    prompt: patternSynthesisPrompt(pat.pattern, instances),
+    schema: PATTERN_SYNTH_SCHEMA,
+  });
+  const notes = await getPatternNotes();
+  notes[key] = { pattern: pat.pattern, ...output, count: pat.count, model, costUsd, createdAt: new Date().toISOString() };
+  await savePatternNotes(notes);
+  res.json({ note: notes[key] });
+}));
 app.get('/api/drills', wrap(async (req, res) => res.json(await dueDrills(Number(req.query.limit) || 20))));
 app.post('/api/drills/:id/review', wrap(async (req, res) => {
   res.json({ drill: await reviewDrill(req.params.id, req.body?.grade || 'good', req.body?.correct) });
@@ -179,9 +242,14 @@ app.post('/api/drills/:id/review', wrap(async (req, res) => {
 
 app.get(/^\/(?!api|vendor).*/, (req, res) => res.sendFile(path.join(ROOT, 'public/index.html')));
 
+export { app };
+
+// Listen only when run directly; tests import { app } and listen on an ephemeral port.
 const PORT = Number(process.env.PORT) || 3210;
-app.listen(PORT, '127.0.0.1', () => {
-  console.log(`chess-analyzer running at http://localhost:${PORT}  (data: ${DATA_DIR})`);
-  syncAllDrills().catch(err => console.error(`drill sync failed: ${err.message}`));
-  resumeInterrupted().catch(err => console.error(`resume failed: ${err.message}`));
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  app.listen(PORT, process.env.HOST || '127.0.0.1', () => {
+    console.log(`chess-analyzer running at http://localhost:${PORT}  (data: ${DATA_DIR})`);
+    syncAllDrills().catch(err => console.error(`drill sync failed: ${err.message}`));
+    resumeInterrupted().catch(err => console.error(`resume failed: ${err.message}`));
+  });
+}

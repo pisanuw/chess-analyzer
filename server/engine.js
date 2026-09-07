@@ -92,15 +92,18 @@ export class Engine {
    * Analyse one position. Returns { lines: [{ multipv, cp, mate, pv: [uci...] }], bestmove }.
    * Scores are from the side-to-move perspective (UCI convention).
    */
-  analyse(fen, { depth = 18, multipv = 3, movetimeMs = 120000 } = {}) {
+  analyse(fen, { depth = 18, multipv = 3, movetimeMs = 120000, onDepth = null } = {}) {
     const run = async () => {
       this.send(`setoption name MultiPV value ${multipv}`);
       this.send(`position fen ${fen}`);
       const lines = new Map();
+      let lastDepth = 0;
       const onInfo = line => {
         if (!line.startsWith('info') || !line.includes(' pv ') || !line.includes(' score ')) return;
         const mpv = Number((line.match(/ multipv (\d+)/) || [])[1] || 1);
         const d = Number((line.match(/ depth (\d+)/) || [])[1] || 0);
+        // Live sub-position progress; runs inside the stdout handler, so it must never throw.
+        if (onDepth && mpv === 1 && d > lastDepth) { lastDepth = d; try { onDepth(d); } catch {} }
         const cpM = line.match(/ score cp (-?\d+)/);
         const mateM = line.match(/ score mate (-?\d+)/);
         const pv = line.split(' pv ')[1].trim().split(/\s+/);

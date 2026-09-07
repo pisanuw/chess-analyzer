@@ -45,6 +45,7 @@ server/        Express API, engine wrapper, analysis, prompts, LLM provider, rep
 public/        Static frontend (vanilla JS modules, chessground board, hand-rolled SVG charts)
 scripts/       make-samples.js
 samples/       sample PGN
+test/          unit and API tests, run with: npm test
 data/          created at runtime (gitignored): settings.json, drills.json, games/<id>.json
 ```
 

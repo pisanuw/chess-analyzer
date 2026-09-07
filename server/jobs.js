@@ -102,10 +102,13 @@ async function runAnalyse(job) {
   if (!game.playerColor) throw new Error('player colour not set for this game');
   job.stage = 'engine';
   job.total = game.moves.length + 1;
+  job.depthTarget = settings.engineDepth || 18;
   const engine = await getEngine(settings);
   await updateGame(job.gameId, g => { g.status = 'analysing'; g.lastError = null; });
-  const { moves, summary } = await analyseGame(engine, game, settings, (done, total) => {
+  const { moves, summary } = await analyseGame(engine, game, settings, (done, total, depth) => {
     job.progress = done; job.total = total;
+    if (depth !== undefined) { job.depth = depth; return; } // live update from the engine's stdout handler: must not throw
+    job.depth = null;
     if (job.cancelled) throw new Error('cancelled');
   });
   if (job.cancelled) throw new Error('cancelled');
@@ -140,6 +143,7 @@ async function runExplain(job) {
   const known = await knownPatterns(game);
   for (const ply of todo) {
     if (job.cancelled) throw new Error('cancelled');
+    job.itemStartedAt = new Date().toISOString(); // lets the UI show elapsed time on the current explanation
     const { output, costUsd, model } = await complete(settings, { system, prompt: momentPrompt(game, ply, [...known]), schema: EXPLANATION_SCHEMA });
     const entry = { ...output, model, costUsd, createdAt: new Date().toISOString() };
     game.explanations[ply] = entry; // keep the held copy current for later prompts
@@ -150,13 +154,15 @@ async function runExplain(job) {
   }
   if (job.cancelled) throw new Error('cancelled');
   if (!game.gameSummary) {
+    job.itemStartedAt = new Date().toISOString();
     const { output, costUsd, model } = await complete(settings, { system, prompt: gameSummaryPrompt(game), schema: SUMMARY_SCHEMA });
     const gs = { ...output, model, costUsd, createdAt: new Date().toISOString() };
     job.costUsd += costUsd || 0;
     await updateGame(job.gameId, g => { if (!g.gameSummary) g.gameSummary = gs; });
   }
   job.progress = job.total;
-  await updateGame(job.gameId, g => { g.status = 'explained'; });
+  const done = await updateGame(job.gameId, g => { g.status = 'explained'; });
+  await syncDrillsForGame(done, settings); // copy fresh categories/patterns onto drills
 }
 
 /** Pattern names used so far across all games (most frequent first, capped), so the model can reuse them. */

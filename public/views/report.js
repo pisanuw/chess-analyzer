@@ -1,5 +1,5 @@
 // Weakness report across all analysed games.
-import { api, esc } from '../api.js';
+import { api, esc, toast } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 
 const CATEGORY_LABEL = {
@@ -14,8 +14,12 @@ const CATEGORY_LABEL = {
   'unexplained': 'Not yet explained',
 };
 
+const catLabel = c => CATEGORY_LABEL[c] || c;
+const fmtSecs = s => s == null ? '–' : s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
+
 export async function reportView(root) {
   const { report: r } = await api.report();
+  const { notes } = await api.patterns().catch(() => ({ notes: {} }));
   if (!r.games) {
     root.innerHTML = '<h1>Weakness report</h1><div class="empty">No analysed games yet. Import and analyse games first.</div>';
     return;
@@ -57,6 +61,38 @@ export async function reportView(root) {
       <small>Chronological by PGN date. Click a point to open the game.</small>
     </div>
 
+    ${r.categoryTrend ? `<div class="card" style="margin-top: 20px">
+      <h3 style="margin-top:0">Are the weaknesses shrinking?</h3>
+      <table><thead><tr><th>Error type</th><th class="num">Earlier (per game)</th><th class="num">Recent (per game)</th><th>Trend</th></tr></thead>
+      <tbody>${r.categoryTrend.sort((a, b) => b.recentPerGame - a.recentPerGame).map(t => `
+        <tr><td>${esc(catLabel(t.category))}</td><td class="num">${t.priorPerGame}</td><td class="num">${t.recentPerGame}</td>
+        <td>${t.delta <= -0.2 ? '<span style="color: var(--good, green)">▼ improving</span>' : t.delta >= 0.2 ? '<span style="color: var(--critical)">▲ worse</span>' : '≈ flat'}</td></tr>`).join('')}
+      </tbody></table>
+      <small>Weighted moments per game, last ${r.categoryTrend[0].recentGames} games vs the ${r.categoryTrend[0].priorGames} before. Only error types with 3+ moments.</small>
+    </div>` : ''}
+
+    ${r.timeManagement ? `<div class="card" style="margin-top: 20px">
+      <h3 style="margin-top:0">Time management</h3>
+      <div class="tiles">
+        <div class="tile"><div class="v">${r.timeManagement.comfortBlunders}</div><div class="l">Mistakes with over 5 min left</div></div>
+        <div class="tile"><div class="v">${r.timeManagement.underTwoMinMoments}</div><div class="l">Moments under 2 min</div></div>
+        <div class="tile"><div class="v">${r.timeManagement.fastMoments}</div><div class="l">Moments after ≤10s thought</div></div>
+        <div class="tile"><div class="v">${fmtSecs(r.timeManagement.momentAvgSpent)} vs ${fmtSecs(r.timeManagement.otherAvgSpent)}</div><div class="l">Avg think: error moves vs others</div></div>
+      </div>
+      <small>From PGN clock comments (${r.timeManagement.movesWithClock} player moves with clocks). Mistakes with plenty of time are understanding gaps, not clock problems.</small>
+    </div>` : ''}
+
+    ${r.drillStats ? `<div class="card" style="margin-top: 20px">
+      <h3 style="margin-top:0">Drill performance</h3>
+      <p class="muted" style="margin-top:0">${r.drillStats.attempts} reviews on this machine, ${r.drillStats.rate}% correct.</p>
+      <div class="grid grid-2">
+        <table><thead><tr><th>Phase</th><th class="num">Reviews</th><th class="num">Correct</th></tr></thead>
+        <tbody>${Object.entries(r.drillStats.byPhase).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v.attempts}</td><td class="num">${Math.round((v.correct / v.attempts) * 100)}%</td></tr>`).join('')}</tbody></table>
+        <table><thead><tr><th>Error type</th><th class="num">Reviews</th><th class="num">Correct</th></tr></thead>
+        <tbody>${Object.entries(r.drillStats.byCategory).map(([k, v]) => `<tr><td>${esc(catLabel(k))}</td><td class="num">${v.attempts}</td><td class="num">${Math.round((v.correct / v.attempts) * 100)}%</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Categories appear once explained games are re-synced.</td></tr>'}</tbody></table>
+      </div>
+    </div>` : ''}
+
     <div class="grid grid-2" style="margin-top: 20px">
       <div class="card">
         <h3 style="margin-top:0">Recurring patterns</h3>
@@ -69,7 +105,23 @@ export async function reportView(root) {
         <h3 style="margin-top:0">Concepts to study</h3>
         ${r.concepts.length ? `<table><tbody>${r.concepts.map(c => `<tr><td>${esc(c.concept)}</td><td class="num">${c.count}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Appears after explanations.</div>'}
       </div>
+    </div>
+
+    <div class="card" style="margin-top: 20px" id="pattern-notes">
+      <h3 style="margin-top:0">Pattern study notes</h3>
+      <p class="muted" style="margin-top:0">One transferable lesson per recurring pattern, synthesized from all its instances.</p>
+      ${Object.values(notes).map(n => `<div class="explanation" style="margin-bottom:10px"><b>${esc(n.pattern)}</b> <span class="muted">(${n.count} instances)</span>
+        <p><b>Rule:</b> ${esc(n.rule)}</p><p><b>Watch for:</b> ${esc(n.triggers)}</p><p><b>Habit:</b> ${esc(n.advice)}</p></div>`).join('') || ''}
+      ${r.patterns.filter(p => p.count >= 2 && !notes[p.pattern.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()]).slice(0, 10).map(p =>
+        `<button class="small" data-synth="${esc(p.pattern)}" style="margin: 2px">Synthesize: ${esc(p.pattern)} (${p.count})</button>`).join('')
+        || (Object.keys(notes).length ? '' : '<div class="empty">Appears once a pattern recurs in 2+ explained moments.</div>')}
     </div>`;
+
+  root.querySelectorAll('button[data-synth]').forEach(b => b.onclick = async () => {
+    b.disabled = true; b.textContent = 'Synthesizing (about a minute)…';
+    try { await api.synthesizePattern(b.dataset.synth); location.reload(); }
+    catch (err) { b.disabled = false; b.textContent = `Synthesize: ${b.dataset.synth}`; toast(err.message, true); }
+  });
 
   const cats = Object.entries(r.byCategory).filter(([, v]) => v.count > 0).sort((a, b) => b[1].weight - a[1].weight)
     .map(([k, v]) => ({ key: k, label: CATEGORY_LABEL[k] || k, value: v.weight, sub: `${v.count} moment${v.count === 1 ? '' : 's'}`, dim: k === 'unexplained', moments: v.moments }));

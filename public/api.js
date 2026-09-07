@@ -24,8 +24,13 @@ export const api = {
   analyseAll: () => req('POST', '/api/games/analyse-all', {}),
   prompt: (id, ply) => req('GET', `/api/games/${id}/moments/${ply}/prompt`),
   saveExplanation: (id, ply, e) => req('PUT', `/api/games/${id}/moments/${ply}/explanation`, e),
+  guess: (id, ply, uci, correct) => req('POST', `/api/games/${id}/moments/${ply}/guess`, { uci, correct }),
+  evalMove: (id, ply, uci) => req('POST', `/api/games/${id}/moments/${ply}/eval`, { uci }),
   jobs: () => req('GET', '/api/jobs'),
   report: () => req('GET', '/api/report'),
+  repertoire: () => req('GET', '/api/repertoire'),
+  patterns: () => req('GET', '/api/patterns'),
+  synthesizePattern: pattern => req('POST', '/api/patterns/synthesize', { pattern }),
   drills: () => req('GET', '/api/drills'),
   reviewDrill: (id, grade, correct) => req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct }),
 };
