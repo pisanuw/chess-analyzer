@@ -81,6 +81,8 @@ export function gameIndexEntry(g) {
     eco: g.headers.ECO || '',
     plies: g.moves.length,
     playerColor: g.playerColor,
+    purpose: g.purpose || 'own',
+    subject: g.subject || null,
     status: g.status,
     importedAt: g.importedAt,
     accuracy: p ? p.accuracy : null,

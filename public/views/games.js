@@ -22,6 +22,9 @@ export async function gamesView(root) {
         <textarea id="pgn" placeholder="Paste one or more games in PGN format, or choose a .pgn file"></textarea>
         <div style="display:flex; flex-direction:column; gap:8px; min-width: 200px">
           <input type="file" id="pgnfile" accept=".pgn,text/plain" multiple>
+          <label class="check" style="margin:0"><input type="radio" name="gpurpose" value="own" checked> My games</label>
+          <label class="check" style="margin:0"><input type="radio" name="gpurpose" value="scout"> Scout an opponent</label>
+          <input type="text" id="subject" placeholder="Opponent name as in PGN headers" hidden>
           <label class="check" style="margin:0"><input type="checkbox" id="auto" checked> Analyse after import</label>
           <button class="primary" id="import">Import</button>
           <small>Player: ${settings.playerNames.length ? esc(settings.playerNames.join(', ')) : 'not set'}. Engine depth ${settings.engineDepth}, explanations via ${esc(settings.llmProvider)}.</small>
@@ -39,12 +42,18 @@ export async function gamesView(root) {
 
   const list = root.querySelector('#list');
   let sortAsc = false;
+  let filter = 'all'; // 'all' | 'own' | a subject name
   const byDate = (a, b) => (b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt);
   const render = () => {
     if (!games.length) { list.innerHTML = '<div class="empty">No games yet. Import a PGN above.</div>'; return; }
-    const rows = [...games].sort(byDate);
+    const subjects = [...new Set(games.filter(g => g.purpose === 'scout').map(g => g.subject))];
+    const filterBar = subjects.length ? `<div class="row" style="padding: 8px 10px; gap: 6px; flex-wrap: wrap">
+      ${[['all', 'All'], ['own', 'My games'], ...subjects.map(s => [s, 'Scout: ' + s])].map(([v, label]) =>
+        `<button class="small${filter === v ? ' primary' : ''}" data-filter="${esc(v)}">${esc(label)}</button>`).join('')}
+    </div>` : '';
+    const rows = [...games].filter(g => filter === 'all' || (filter === 'own' ? g.purpose !== 'scout' : g.subject === filter)).sort(byDate);
     if (sortAsc) rows.reverse();
-    list.innerHTML = `<table>
+    list.innerHTML = filterBar + `<table>
       <thead><tr><th data-sort style="cursor:pointer" title="Toggle date order">Date ${sortAsc ? '↑' : '↓'}</th><th>White</th><th>Black</th><th>Result</th><th>Event</th><th>Played</th><th>Status</th><th class="num">Accuracy</th><th class="num">Moments</th><th></th></tr></thead>
       <tbody>${rows.map(g => `
         <tr class="clickable" data-id="${g.id}">
@@ -54,7 +63,7 @@ export async function gamesView(root) {
           <td>${esc(g.result)}</td>
           <td><small>${esc(g.event)}${g.round ? ' R' + esc(g.round) : ''}</small></td>
           <td>${g.playerColor ? `<span class="chip ${g.playerColor}">${g.playerColor}</span>` : `<span data-stop>I played <button class="small" data-color="white">White</button> <button class="small" data-color="black">Black</button></span>`}</td>
-          <td><span class="chip status-${g.status}">${g.status}${g.status === 'analysed' && g.explained ? ` (${g.explained}/${g.moments} explained)` : ''}</span></td>
+          <td><span class="chip status-${g.status}">${g.status}${g.status === 'analysed' && g.explained ? ` (${g.explained}/${g.moments} explained)` : ''}</span>${g.purpose === 'scout' ? ` <span class="chip" title="Scouting ${esc(g.subject)}">scout</span>` : ''}</td>
           <td class="num">${g.accuracy != null ? g.accuracy + '%' : ''}</td>
           <td class="num">${g.moments != null ? `${g.moments}${g.blunders ? ` <span class="chip blunder">${g.blunders}??</span>` : ''}${g.mistakes ? ` <span class="chip mistake">${g.mistakes}?</span>` : ''}` : ''}</td>
           <td data-stop style="white-space:nowrap">
@@ -70,6 +79,8 @@ export async function gamesView(root) {
   const refresh = async () => { games = (await api.games()).games; render(); };
 
   list.addEventListener('click', async e => {
+    const fbtn = e.target.closest('button[data-filter]');
+    if (fbtn) { filter = fbtn.dataset.filter; return render(); }
     if (e.target.closest('th[data-sort]')) { sortAsc = !sortAsc; return render(); }
     const tr = e.target.closest('tr[data-id]');
     if (!tr) return;
@@ -99,11 +110,18 @@ export async function gamesView(root) {
     root.querySelector('#pgn').value = texts.join('\n\n');
   });
 
+  root.querySelectorAll('input[name="gpurpose"]').forEach(el => el.addEventListener('change', () => {
+    root.querySelector('#subject').hidden = root.querySelector('input[name="gpurpose"]:checked').value !== 'scout';
+  }));
+
   root.querySelector('#import').addEventListener('click', async () => {
     const pgn = root.querySelector('#pgn').value.trim();
     if (!pgn) return toast('Paste a PGN or choose a file first', true);
+    const purpose = root.querySelector('input[name="gpurpose"]:checked').value;
+    const subject = root.querySelector('#subject').value.trim();
+    if (purpose === 'scout' && !subject) return toast('Enter the opponent name to scout', true);
     try {
-      const r = await api.importPgn(pgn, root.querySelector('#auto').checked);
+      const r = await api.importPgn(pgn, root.querySelector('#auto').checked, purpose, subject);
       toast(`Imported ${r.imported.length}${r.skipped.length ? `, ${r.skipped.length} already present` : ''}${r.failed.length ? `, ${r.failed.length} failed to parse` : ''}`);
       if (r.failed.length) console.warn('Failed games', r.failed);
       root.querySelector('#pgn').value = '';

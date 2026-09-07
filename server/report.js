@@ -4,8 +4,10 @@ import { CATEGORIES } from './prompts.js';
 
 const WEIGHT = { inaccuracy: 1, mistake: 2, blunder: 3 };
 
-export async function buildReport() {
-  const index = (await listGames()).filter(g => g.status === 'analysed' || g.status === 'explained');
+/** Weakness report for the tracked player (default), or for a scouted subject. */
+export async function buildReport({ purpose = 'own', subject = null } = {}) {
+  const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained')
+    && g.purpose === purpose && (purpose === 'own' || g.subject === subject));
   const games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
 
   const byCategory = Object.fromEntries([...CATEGORIES, 'unexplained'].map(c => [c, { count: 0, weight: 0, moments: [] }]));
@@ -119,8 +121,8 @@ export async function buildReport() {
     if (!categoryTrend.length) categoryTrend = null;
   }
 
-  // Drill performance from this machine's review history.
-  const dstore = await getDrills();
+  // Drill performance from this machine's review history (the player's own drills).
+  const dstore = purpose === 'own' ? await getDrills() : { drills: [] };
   const drillByPhase = {}, drillByCategory = {};
   let drillAttempts = 0, drillCorrect = 0;
   for (const d of dstore.drills) {

@@ -4,6 +4,7 @@ import { gamesView } from './views/games.js';
 import { gameView } from './views/game.js';
 import { reportView } from './views/report.js';
 import { repertoireView } from './views/repertoire.js';
+import { scoutView } from './views/scout.js';
 import { drillsView } from './views/drills.js';
 import { settingsView } from './views/settings.js';
 
@@ -15,6 +16,7 @@ const routes = [
   { re: /^#\/game\/([a-f0-9]{12})(?:\/(\d+))?$/, name: 'games', view: gameView },
   { re: /^#\/report$/, name: 'report', view: reportView },
   { re: /^#\/repertoire$/, name: 'repertoire', view: repertoireView },
+  { re: /^#\/scout(?:\/(.*))?$/, name: 'scout', view: scoutView },
   { re: /^#\/drills$/, name: 'drills', view: drillsView },
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
 ];

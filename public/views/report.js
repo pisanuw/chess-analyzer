@@ -2,7 +2,7 @@
 import { api, esc, toast } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 
-const CATEGORY_LABEL = {
+export const CATEGORY_LABEL = {
   'tactics-allowed': 'Overlooked opponent tactic',
   'tactics-missed': 'Missed own tactic',
   'calculation': 'Miscalculated a line',

@@ -171,6 +171,9 @@ async function knownPatterns(currentGame) {
   const add = e => { if (e?.pattern) counts.set(e.pattern, (counts.get(e.pattern) || 0) + 1); };
   for (const entry of await listGames()) {
     if (!entry.explained) continue;
+    // Pattern libraries do not mix: the player's own patterns stay separate from
+    // each scouted subject's patterns.
+    if (entry.purpose !== (currentGame.purpose || 'own') || entry.subject !== (currentGame.subject || null)) continue;
     const g = entry.id === currentGame.id ? currentGame : await getGame(entry.id);
     for (const e of Object.values(g?.explanations || {})) add(e);
   }

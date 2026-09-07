@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-09-07 (opponent scouting, phase 1: tagging and dossier)
+
+- Games carry a purpose ("own" or "scout") and, for scouting, a subject: the opponent being studied. Import offers "Scout an opponent" with a name field; colour detection matches the subject instead of the player. Existing games are untouched (absent purpose = own).
+- Scout games are firewalled out of the player's weakness report, repertoire, drill deck, guess seeding, and pattern library, so opponents' mistakes can never pollute Kai's profile. Each scouted subject gets their own pattern library.
+- New Scouting view: per-opponent dossier reusing the report machinery, phrased for preparation: their error types and phases, their clock behaviour, their repertoire with "prep ends" markers, and their recurring patterns, all linking into the games.
+- Games list gains filter chips (My games / per-subject) and a scout badge.
+
 ## 2026-09-07 (training effectiveness: high-value items from CODE-IMPROVE-REPORT)
 
 - Drills: a missed drill comes back at the end of the same session (ladder advances only after a same-day pass); wrong answers can only be graded Again; near-miss moments (below the mistake threshold) become lower-priority "sharpener" drills served after the core deck; drills carry the moment's category and pattern (chips in the drill view, copied when explanations finish).

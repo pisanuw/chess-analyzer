@@ -3,8 +3,9 @@ import { getGame, listGames } from './store.js';
 
 const LINE_PLIES = 8;
 
-export async function buildRepertoire() {
-  const index = (await listGames()).filter(g => g.status === 'analysed' || g.status === 'explained');
+export async function buildRepertoire({ purpose = 'own', subject = null } = {}) {
+  const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained')
+    && g.purpose === purpose && (purpose === 'own' || g.subject === subject));
   const games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
   const lines = new Map();
   for (const g of games) {

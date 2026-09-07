@@ -46,6 +46,9 @@ function makeDrill(game, ply, tier, existing) {
 /** Create or refresh drills for a game's critical moments: every moment becomes a
  * drill, tiered 'core' at or above the drill threshold, 'sharpen' below it. */
 export async function syncDrillsForGame(game, settings) {
+  // Scout games train punishment, not the opponent's improvement; they must not
+  // put the opponent's mistakes into the player's own drill deck.
+  if ((game.purpose || 'own') === 'scout') return getDrills();
   const store = await getDrills();
   const byId = new Map(store.drills.map(d => [d.id, d]));
   const threshold = settings.drillThreshold ?? 20;
@@ -63,6 +66,7 @@ export async function syncDrillsForGame(game, settings) {
  * A correct first-try guess starts the drill higher up the ladder: the player
  * already knows this one, so it should not come back tomorrow. */
 export async function recordGuess(game, ply, uci, correct, settings) {
+  if ((game.purpose || 'own') === 'scout') return { seeded: false };
   const store = await getDrills();
   const key = drillId(game.id, ply);
   const prior = store.guesses[key] || [];

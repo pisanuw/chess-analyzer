@@ -65,6 +65,9 @@ app.get('/api/games', wrap(async (req, res) => res.json({ games: await listGames
 app.post('/api/games/import', wrap(async (req, res) => {
   const pgn = typeof req.body === 'string' ? req.body : req.body?.pgn;
   if (!pgn || !pgn.trim()) return res.status(400).json({ error: 'No PGN provided' });
+  const purpose = req.body?.purpose === 'scout' ? 'scout' : 'own';
+  const subject = String(req.body?.subject || '').trim();
+  if (purpose === 'scout' && !subject) return res.status(400).json({ error: 'scouting needs the opponent name (subject)' });
   const settings = await getSettings();
   const parsed = parsePgnFile(pgn);
   const imported = [], skipped = [], failed = [];
@@ -75,7 +78,9 @@ app.post('/api/games/import', wrap(async (req, res) => {
     if (await getGame(g.id)) { skipped.push(g.id); continue; }
     const game = {
       id: g.id, headers: g.headers, moves: g.moves, pgn: g.pgn,
-      playerColor: detectPlayerColor(g.headers, settings.playerNames),
+      // For scouting, the studied side is the subject, matched the same way as the player.
+      playerColor: detectPlayerColor(g.headers, purpose === 'scout' ? [subject] : settings.playerNames),
+      purpose, subject: purpose === 'scout' ? subject : null,
       status: 'imported', importedAt: new Date().toISOString(),
     };
     await saveGame(game);
@@ -206,6 +211,27 @@ app.post('/api/games/:id/moments/:ply/eval', wrap(async (req, res) => {
 app.get('/api/jobs', (req, res) => res.json({ jobs: listJobs() }));
 app.get('/api/report', wrap(async (req, res) => res.json({ report: await buildReport() })));
 app.get('/api/repertoire', wrap(async (req, res) => res.json({ repertoire: await buildRepertoire() })));
+
+// --- scouting ----------------------------------------------------------------
+app.get('/api/scout', wrap(async (req, res) => {
+  const subjects = new Map();
+  for (const g of await listGames()) {
+    if (g.purpose !== 'scout' || !g.subject) continue;
+    const s = subjects.get(g.subject) || { subject: g.subject, games: 0, analysed: 0 };
+    s.games++;
+    if (g.status === 'analysed' || g.status === 'explained') s.analysed++;
+    subjects.set(g.subject, s);
+  }
+  res.json({ subjects: [...subjects.values()].sort((a, b) => b.games - a.games) });
+}));
+
+app.get('/api/scout/:subject', wrap(async (req, res) => {
+  const subject = req.params.subject;
+  const report = await buildReport({ purpose: 'scout', subject });
+  if (!report.games) return res.status(404).json({ error: 'no analysed games for this subject' });
+  const repertoire = await buildRepertoire({ purpose: 'scout', subject });
+  res.json({ subject, report, repertoire });
+}));
 
 // --- pattern study notes -----------------------------------------------------
 app.get('/api/patterns', wrap(async (req, res) => res.json({ notes: await getPatternNotes() })));
