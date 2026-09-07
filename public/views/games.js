@@ -24,7 +24,8 @@ export async function gamesView(root) {
           <input type="file" id="pgnfile" accept=".pgn,text/plain" multiple>
           <label class="check" style="margin:0"><input type="radio" name="gpurpose" value="own" checked> My games</label>
           <label class="check" style="margin:0"><input type="radio" name="gpurpose" value="scout"> Scout an opponent</label>
-          <input type="text" id="subject" placeholder="Opponent name as in PGN headers" hidden>
+          <input type="text" id="subject" list="subject-names" placeholder="Opponent name as in PGN headers" hidden>
+          <datalist id="subject-names"></datalist>
           <label class="check" style="margin:0"><input type="checkbox" id="auto" checked> Analyse after import</label>
           <button class="primary" id="import">Import</button>
           <small>Player: ${settings.playerNames.length ? esc(settings.playerNames.join(', ')) : 'not set'}. Engine depth ${settings.engineDepth}, explanations via ${esc(settings.llmProvider)}.</small>
@@ -108,10 +109,37 @@ export async function gamesView(root) {
   root.querySelector('#pgnfile').addEventListener('change', async e => {
     const texts = await Promise.all([...e.target.files].map(f => f.text()));
     root.querySelector('#pgn').value = texts.join('\n\n');
+    updateNameSuggestions();
   });
 
+  // Autocomplete for the scout subject: names from the pasted PGN headers (weighted
+  // by frequency, so the studied player floats to the top of a multi-game file),
+  // plus known subjects and past opponents. The player's own names are excluded.
+  const subjectInput = root.querySelector('#subject');
+  const updateNameSuggestions = () => {
+    const counts = new Map();
+    const bump = (n, w = 1) => {
+      n = (n || '').trim();
+      if (!n || n === '?') return;
+      if (settings.playerNames.some(p => n.toLowerCase().includes(p.toLowerCase()))) return;
+      counts.set(n, (counts.get(n) || 0) + w);
+    };
+    for (const m of root.querySelector('#pgn').value.matchAll(/\[(?:White|Black)\s+"([^"]+)"\]/g)) bump(m[1], 10);
+    for (const g of games) { bump(g.subject, 5); bump(g.white); bump(g.black); }
+    const names = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([n]) => n);
+    root.querySelector('#subject-names').innerHTML = names.map(n => `<option value="${esc(n)}"></option>`).join('');
+    return names;
+  };
+  root.querySelector('#pgn').addEventListener('input', updateNameSuggestions);
+
   root.querySelectorAll('input[name="gpurpose"]').forEach(el => el.addEventListener('change', () => {
-    root.querySelector('#subject').hidden = root.querySelector('input[name="gpurpose"]:checked').value !== 'scout';
+    const scout = root.querySelector('input[name="gpurpose"]:checked').value === 'scout';
+    subjectInput.hidden = !scout;
+    if (scout) {
+      const names = updateNameSuggestions();
+      if (!subjectInput.value && root.querySelector('#pgn').value.trim()) subjectInput.value = names[0] || '';
+      subjectInput.focus();
+    }
   }));
 
   root.querySelector('#import').addEventListener('click', async () => {

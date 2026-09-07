@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-07 (scout name autocomplete)
+
+- The "Scout an opponent" name field autocompletes: suggestions come from the pasted PGN's White/Black headers (most frequent name first, which in a multi-game file is the subject), known scout subjects, and past opponents; the player's own names are excluded. Switching to scout mode with a PGN pasted prefills the best candidate.
+
 ## 2026-09-07 (opponent scouting, phase 3: exploitation explanations and prep sheets)
 
 - Scout games get their own explanation prompts: what the subject's move gets wrong and, concretely, how to punish it, including the engine lines from AFTER the mistake; the key question becomes the cue that signals the weakness is in play. Same schema shape as regular explanations, so storage, game view, and drills display them unchanged. The manual copy/paste prompt endpoint serves the scout framing too.
