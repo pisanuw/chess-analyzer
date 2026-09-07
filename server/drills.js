@@ -43,19 +43,62 @@ function makeDrill(game, ply, tier, existing) {
   };
 }
 
+/** Punish drill for a scout game: the position AFTER the subject's mistake, with
+ * the student to move. The answer lines are the next ply's stored MultiPV, so no
+ * extra engine work is needed. Returns null when the mistake ended the game. */
+function makePunishDrill(game, ply, tier, existing) {
+  const m = game.analysis.moves[ply - 1]; // the subject's mistake
+  const next = game.analysis.moves[ply];  // the reply position: student to move
+  if (!next?.lines?.length) return null;
+  const e = game.explanations?.[ply];
+  const bestCp = next.lines[0]?.cp;
+  const sign = next.color === 'white' ? 1 : -1;
+  const accepted = next.lines
+    .filter(l => bestCp != null && (bestCp - l.cp) * sign <= 30)
+    .map(l => l.uci);
+  return {
+    id: drillId(game.id, ply),
+    kind: 'punish',
+    subject: game.subject || null,
+    gameId: game.id,
+    ply,
+    fen: m.fenAfter,
+    sideToMove: next.color,
+    mistakeSan: m.san,
+    playedUci: next.uci, // what was actually played against it in the game
+    playedSan: next.san,
+    bestUci: next.bestUci,
+    bestSan: next.bestSan,
+    acceptedUci: accepted.length ? accepted : [next.bestUci].filter(Boolean),
+    lines: next.lines,
+    phase: m.phase,
+    judgment: m.judgment,
+    loss: m.loss,
+    tier,
+    category: e?.category || existing?.category || null,
+    pattern: e?.pattern || existing?.pattern || null,
+    label: `vs ${game.subject || '?'}: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}${game.headers.Date ? ', ' + game.headers.Date : ''}`,
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    due: existing?.due || new Date().toISOString(),
+    step: existing?.step ?? 0,
+    reviews: existing?.reviews || [],
+  };
+}
+
 /** Create or refresh drills for a game's critical moments: every moment becomes a
- * drill, tiered 'core' at or above the drill threshold, 'sharpen' below it. */
+ * drill, tiered 'core' at or above the drill threshold, 'sharpen' below it.
+ * Own games drill the player's mistakes; scout games drill their punishment. */
 export async function syncDrillsForGame(game, settings) {
-  // Scout games train punishment, not the opponent's improvement; they must not
-  // put the opponent's mistakes into the player's own drill deck.
-  if ((game.purpose || 'own') === 'scout') return getDrills();
   const store = await getDrills();
   const byId = new Map(store.drills.map(d => [d.id, d]));
   const threshold = settings.drillThreshold ?? 20;
+  const scout = (game.purpose || 'own') === 'scout';
   for (const ply of game.analysis.summary.moments) {
     const m = game.analysis.moves[ply - 1];
+    const tier = m.loss >= threshold ? 'core' : 'sharpen';
     const id = drillId(game.id, ply);
-    byId.set(id, makeDrill(game, ply, m.loss >= threshold ? 'core' : 'sharpen', byId.get(id)));
+    const drill = scout ? makePunishDrill(game, ply, tier, byId.get(id)) : makeDrill(game, ply, tier, byId.get(id));
+    if (drill) byId.set(id, drill);
   }
   store.drills = [...byId.values()];
   await saveDrills(store);
@@ -66,7 +109,6 @@ export async function syncDrillsForGame(game, settings) {
  * A correct first-try guess starts the drill higher up the ladder: the player
  * already knows this one, so it should not come back tomorrow. */
 export async function recordGuess(game, ply, uci, correct, settings) {
-  if ((game.purpose || 'own') === 'scout') return { seeded: false };
   const store = await getDrills();
   const key = drillId(game.id, ply);
   const prior = store.guesses[key] || [];
@@ -77,7 +119,9 @@ export async function recordGuess(game, ply, uci, correct, settings) {
   if (!drill) {
     const threshold = settings.drillThreshold ?? 20;
     const m = game.analysis.moves[ply - 1];
-    drill = makeDrill(game, ply, m.loss >= threshold ? 'core' : 'sharpen', null);
+    const tier = m.loss >= threshold ? 'core' : 'sharpen';
+    drill = (game.purpose || 'own') === 'scout' ? makePunishDrill(game, ply, tier, null) : makeDrill(game, ply, tier, null);
+    if (!drill) { await saveDrills(store); return { seeded: false }; }
     store.drills.push(drill);
     seeded = true;
   }

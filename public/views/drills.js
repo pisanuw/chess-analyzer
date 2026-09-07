@@ -100,13 +100,13 @@ export async function drillsView(root) {
     let text;
     if (res.uci === d.bestUci) text = `${res.san}: correct, the engine's first choice.`;
     else if (correct) text = `${res.san}: accepted (engine line ${rank + 1}, within 0.30 of the best move ${d.bestSan}).`;
-    else if (res.uci === d.playedUci) text = `${res.san}: that is what you played in the game (${d.judgment}). Engine: ${d.bestSan}.`;
+    else if (res.uci === d.playedUci) text = d.kind === 'punish' ? `${res.san}: that is what was played in the game, but the engine prefers ${d.bestSan}.` : `${res.san}: that is what you played in the game (${d.judgment}). Engine: ${d.bestSan}.`;
     else if (rank > 0) text = `${res.san}: engine line ${rank + 1}, but clearly worse than ${d.bestSan}.`;
     else text = `${res.san}: not among the engine's top lines. Engine: ${d.bestSan}.`;
     const verdict = { correct, text, followUps: 0, foundSans: [] };
     // Off-list move: ask the server for a quick engine eval (best effort; needs Stockfish).
     if (!correct && rank < 0 && res.uci !== d.playedUci) {
-      api.evalMove(d.gameId, d.ply, res.uci).then(r => {
+      api.evalMove(d.gameId, d.kind === 'punish' ? d.ply + 1 : d.ply, res.uci).then(r => {
         verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (d.sideToMove === 'white' ? 1 : -1))}, ${r.diff.toFixed(2)} behind ${d.bestSan}.${r.diff <= 0.3 ? ' Close enough to be playable.' : ''}`;
         if (state?.verdict === verdict) renderPanel();
       }).catch(() => {});
@@ -126,9 +126,10 @@ export async function drillsView(root) {
     const d = state.drill;
     const p = el.querySelector('#dpanel');
     const side = d.sideToMove === 'white' ? 'White' : 'Black';
-    const chips = `<span class="chip ${d.judgment}">${d.judgment} in the game</span>${d.tier === 'sharpen' ? ' <span class="chip">sharpener</span>' : ''}${d.category ? ` <span class="chip cat">${esc(d.category)}</span>` : ''}`;
+    const punish = d.kind === 'punish';
+    const chips = `<span class="chip ${d.judgment}">${d.judgment}${punish ? '' : ' in the game'}</span>${punish ? ` <span class="chip">punish</span> <span class="chip">vs ${esc(d.subject || '?')}</span>` : ''}${d.tier === 'sharpen' ? ' <span class="chip">sharpener</span>' : ''}${d.category ? ` <span class="chip cat">${esc(d.category)}</span>` : ''}`;
     if (state.status === 'guessing') {
-      p.innerHTML = `<div class="guess"><b>${side} to move. Find the best move.</b>
+      p.innerHTML = `<div class="guess"><b>${punish ? `${esc(d.subject || 'The opponent')} just played ${esc(d.mistakeSan)}. ${side} to move: find the punishment.` : `${side} to move. Find the best move.`}</b>
         <p class="muted">Drill ${idx + 1} of ${due.length}. ${chips}</p>
         <button class="small" id="giveup">Show answer</button></div>`;
       p.querySelector('#giveup').onclick = () => { board.set(d.fen, { shapes: lineShapes(d.lines, d.playedUci) }); reveal({ correct: false, text: `Engine: ${d.bestSan}.`, followUps: 0, foundSans: [] }); };

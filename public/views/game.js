@@ -44,8 +44,14 @@ export async function gameView(root, id, startPly) {
       </div>
     </div>`;
 
+  // Scout games flip the guess flow: the moment is the subject's mistake, and the
+  // student guesses the PUNISHMENT from the position after it, one ply later.
+  const scout = game.purpose === 'scout';
+  const punisher = player === 'white' ? 'black' : 'white';
+  const seat = scout ? punisher : player; // the side the person at the keyboard plays
+
   const boardEl = root.querySelector('#board');
-  const board = new Board(boardEl, { orientation: player || 'white', onMove: onUserMove });
+  const board = new Board(boardEl, { orientation: seat || 'white', onMove: onUserMove });
   const panel = root.querySelector('#panel');
   const moves = () => game.analysis ? game.analysis.moves : game.moves;
   let graph = null;
@@ -56,7 +62,8 @@ export async function gameView(root, id, startPly) {
     state.ply = Math.max(0, Math.min(game.moves.length, ply));
     state.preview = null;
     const m = state.ply ? moves()[state.ply - 1] : null;
-    const movableFor = state.guess && state.guess.status === 'guessing' && state.ply === state.guess.ply - 1 ? player : null;
+    const guessPly = state.guess ? (scout ? state.guess.ply : state.guess.ply - 1) : null;
+    const movableFor = state.guess && state.guess.status === 'guessing' && state.ply === guessPly ? seat : null;
     board.set(fenAt(state.ply), { lastMove: m?.uci, movableFor, shapes: shapes || [] });
     root.querySelector('#evaltext').textContent = m && game.analysis ? formatEval(m.evalAfter) : '';
     root.querySelector('#plytext').textContent = m ? `${moveLabel(m)}${game.analysis ? ' ' + JUDGE_MARK[m.judgment] : ''}` : 'Start';
@@ -177,10 +184,12 @@ export async function gameView(root, id, startPly) {
   // --- guess-first flow --------------------------------------------------------------
   function openMoment(ply) {
     state.moment = ply;
-    state.guess = { ply, status: 'guessing', tried: null };
+    // A scout mistake on the game's final move has no analysed reply to guess into.
+    const guessable = !scout || !!moves()[ply];
+    state.guess = { ply, status: guessable ? 'guessing' : 'revealed', tried: null, verdict: null };
     renderPanel();
-    showPly(ply - 1);
-    if (player && board.orientation !== player) board.orient(player);
+    showPly(scout ? ply : ply - 1);
+    if (seat && board.orientation !== seat) board.orient(seat);
     panel.querySelector('.guess')?.scrollIntoView({ block: 'nearest' });
   }
 
@@ -188,26 +197,32 @@ export async function gameView(root, id, startPly) {
     const g = state.guess;
     if (!g || g.status !== 'guessing') return;
     const m = moves()[g.ply - 1];
-    const res = applyMove(m.fenBefore, orig, dest);
+    // For scouting, the guess is played in the position AFTER the mistake, and is
+    // checked against the NEXT move's stored lines (the refutation).
+    const t = scout ? moves()[g.ply] : m;
+    if (!t) return;
+    const res = applyMove(t.fenBefore, orig, dest);
     if (!res) return;
     g.tried = res;
     g.status = 'revealed';
-    const rank = m.lines.findIndex(l => l.uci === res.uci);
-    const sign = m.color === 'white' ? 1 : -1;
-    if (res.uci === m.bestUci || rank === 0) g.verdict = { good: true, text: `${res.san}: the engine's first choice (${formatEval(m.lines[0]?.cp ?? m.evalBefore)}).` };
+    const rank = t.lines.findIndex(l => l.uci === res.uci);
+    const sign = t.color === 'white' ? 1 : -1;
+    if (res.uci === t.bestUci || rank === 0) g.verdict = { good: true, text: `${res.san}: the engine's first choice (${formatEval(t.lines[0]?.cp ?? t.evalBefore)}).` };
     else if (rank > 0) {
-      const diff = ((m.lines[0].cp - m.lines[rank].cp) * sign) / 100;
-      g.verdict = { good: diff <= 0.3, text: `${res.san}: engine line ${rank + 1} (${formatEval(m.lines[rank].cp)}, ${diff.toFixed(2)} behind ${m.lines[0].san[0]}).` };
-    } else if (res.uci === m.uci) g.verdict = { good: false, text: `${res.san}: that is the move played in the game, which the engine marks as ${m.judgment === 'inaccuracy' ? 'an' : 'a'} ${m.judgment}.` };
+      const diff = ((t.lines[0].cp - t.lines[rank].cp) * sign) / 100;
+      g.verdict = { good: diff <= 0.3, text: `${res.san}: engine line ${rank + 1} (${formatEval(t.lines[rank].cp)}, ${diff.toFixed(2)} behind ${t.lines[0].san[0]}).` };
+    } else if (res.uci === t.uci) g.verdict = scout
+      ? { good: false, text: `${res.san}: that is what was played in the game, but the engine found stronger: ${t.bestSan}.` }
+      : { good: false, text: `${res.san}: that is the move played in the game, which the engine marks as ${m.judgment === 'inaccuracy' ? 'an' : 'a'} ${m.judgment}.` };
     else {
-      const verdict = g.verdict = { good: false, text: `${res.san}: not among the engine's top ${m.lines.length} lines. Checking with the engine…` };
+      const verdict = g.verdict = { good: false, text: `${res.san}: not among the engine's top ${t.lines.length} lines. Checking with the engine…` };
       // Quick engine eval so an off-list guess gets a real answer (best effort).
-      api.evalMove(id, g.ply, res.uci).then(r => {
+      api.evalMove(id, scout ? g.ply + 1 : g.ply, res.uci).then(r => {
         verdict.good = r.diff <= 0.3;
-        verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (m.color === 'white' ? 1 : -1))}, ${r.diff.toFixed(2)} behind the best move.${verdict.good ? ' Playable.' : ''}`;
+        verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (t.color === 'white' ? 1 : -1))}, ${r.diff.toFixed(2)} behind the best move.${verdict.good ? ' Playable.' : ''}`;
         if (state.guess?.verdict === verdict) renderPanel();
       }).catch(() => {
-        verdict.text = `${res.san}: not among the engine's top ${m.lines.length} lines.`;
+        verdict.text = `${res.san}: not among the engine's top ${t.lines.length} lines.`;
         if (state.guess?.verdict === verdict) renderPanel();
       });
     }
@@ -215,33 +230,36 @@ export async function gameView(root, id, startPly) {
     api.guess(id, g.ply, res.uci, g.verdict.good).catch(() => {});
     renderPanel();
     showPreview(res.fen, res.uci);
-    board.shapes(lineShapes(m.lines, m.uci));
+    board.shapes(lineShapes(t.lines, scout ? t.uci : m.uci));
   }
 
   function renderGuessPanel() {
     const g = state.guess;
     const m = moves()[g.ply - 1];
+    const t = scout ? (moves()[g.ply] || m) : m; // whose fenBefore the guess plays in
     const e = game.explanations?.[g.ply];
-    const side = m.color === 'white' ? 'White' : 'Black';
+    const side = t.color === 'white' ? 'White' : 'Black';
     if (g.status === 'guessing') {
       return `<div class="guess">
-        <div class="row" style="justify-content: space-between"><b>${esc(moveLabel(m).replace(m.san, '').trim())} ${side} to move. Find the best move.</b>
+        <div class="row" style="justify-content: space-between"><b>${scout ? `${esc(game.subject || 'They')} played ${esc(moveLabel(m))} <span class="chip ${m.judgment}">${m.judgment}</span>. ${side} to move: find the punishment.` : `${esc(moveLabel(m).replace(m.san, '').trim())} ${side} to move. Find the best move.`}</b>
           <span><button class="small" data-g="reveal">Show answer</button> <button class="small" data-g="close">Close</button></span></div>
-        <p class="muted">Play your move on the board. Eval before the move: ${formatEval(m.evalBefore)}${m.clock != null ? ` · clock ${fmtClock(m.clock)}` : ''}</p>
+        <p class="muted">Play your move on the board. Eval here: ${formatEval(scout ? m.evalAfter : m.evalBefore)}${m.clock != null ? ` · clock ${fmtClock(m.clock)}` : ''}</p>
       </div>`;
     }
-    const lines = m.lines.map((l, i) => `<li class="${l.uci === m.uci ? 'played' : ''}" data-line="${i}">
+    const lines = t.lines.map((l, i) => `<li class="${l.uci === t.uci ? 'played' : ''}" data-line="${i}">
       <span class="ev">${formatEval(l.cp)}</span>
-      <span>${l.san.map((s, j) => `<span class="san" data-line="${i}" data-idx="${j}" style="cursor:pointer">${j === 0 || (m.color === 'white' ? j % 2 === 0 : j % 2 === 1) ? `<span class="muted">${m.moveNumber + Math.floor((j + (m.color === 'white' ? 0 : 1)) / 2)}.</span>` : ''}${esc(s)}</span>`).join(' ')}</span>
-      ${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === m.uci ? '<span class="chip mistake">played</span>' : ''}</li>`).join('');
+      <span>${l.san.map((s, j) => `<span class="san" data-line="${i}" data-idx="${j}" style="cursor:pointer">${j === 0 || (t.color === 'white' ? j % 2 === 0 : j % 2 === 1) ? `<span class="muted">${t.moveNumber + Math.floor((j + (t.color === 'white' ? 0 : 1)) / 2)}.</span>` : ''}${esc(s)}</span>`).join(' ')}</span>
+      ${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === t.uci ? `<span class="chip ${scout ? '' : 'mistake'}">played</span>` : ''}</li>`).join('');
     const nextPly = game.analysis.summary.moments.find(p => p > g.ply);
     return `<div class="guess">
-      <div class="row" style="justify-content: space-between"><b>${esc(moveLabel(m))} <span class="chip ${m.judgment}">${m.judgment}</span></b>
+      <div class="row" style="justify-content: space-between"><b>${scout ? `${esc(game.subject || 'They')} played ` : ''}${esc(moveLabel(m))} <span class="chip ${m.judgment}">${m.judgment}</span></b>
         <span>${nextPly ? `<button class="small" data-g="next" data-ply="${nextPly}">Next moment ▶</button>` : ''} <button class="small" data-g="close">Close</button></span></div>
       ${g.verdict ? `<div class="result ${g.verdict.good ? 'good' : 'bad'}">${esc(g.verdict.text)}</div>` : ''}
       <div class="row" style="gap:6px; margin: 6px 0">
-        <button class="small" data-g="before">Position before</button>
-        <button class="small" data-g="played">Played: ${esc(m.san)} (${formatEval(m.evalAfter)})</button>
+        <button class="small" data-g="before">${scout ? 'After their mistake' : 'Position before'}</button>
+        ${scout
+          ? (moves()[g.ply] ? `<button class="small" data-g="played">Game continued: ${esc(t.san)} (${formatEval(t.evalAfter)})</button>` : '<span class="muted">The game ended here.</span>')
+          : `<button class="small" data-g="played">Played: ${esc(m.san)} (${formatEval(m.evalAfter)})</button>`}
       </div>
       <ul class="lines">${lines}</ul>
       <p class="muted" style="font-size:13px">Click a move in a line to see it on the board. Green arrow: engine's choice. Red: the move played.</p>
@@ -271,11 +289,13 @@ export async function gameView(root, id, startPly) {
     const gp = panel.querySelector('.guess'); if (!gp) return;
     const g = state.guess;
     const m = moves()[g.ply - 1];
+    const t = scout ? (moves()[g.ply] || m) : m;
+    const guessPly = scout ? g.ply : g.ply - 1; // the ply whose position the guess plays in
     gp.addEventListener('click', async e => {
       const san = e.target.closest('.san[data-line]');
       if (san) {
-        const line = m.lines[Number(san.dataset.line)];
-        const steps = walkLine(m.fenBefore, uciLine(m, line));
+        const line = t.lines[Number(san.dataset.line)];
+        const steps = walkLine(t.fenBefore, uciLine(t, line));
         const step = steps[Number(san.dataset.idx)];
         if (step) showPreview(step.fen, step.uci);
         return;
@@ -283,10 +303,10 @@ export async function gameView(root, id, startPly) {
       const b = e.target.closest('button[data-g]'); if (!b) return;
       const act = b.dataset.g;
       if (act === 'close') { state.moment = null; state.guess = null; renderPanel(); showPly(state.ply); }
-      if (act === 'reveal') { g.status = 'revealed'; g.verdict = null; renderPanel(); showPly(g.ply - 1); board.shapes(lineShapes(m.lines, m.uci)); }
+      if (act === 'reveal') { g.status = 'revealed'; g.verdict = null; renderPanel(); showPly(guessPly); board.shapes(lineShapes(t.lines, scout ? t.uci : m.uci)); }
       if (act === 'next') openMoment(Number(b.dataset.ply));
-      if (act === 'before') { showPly(g.ply - 1); board.shapes(lineShapes(m.lines, m.uci)); }
-      if (act === 'played') { showPly(g.ply); }
+      if (act === 'before') { showPly(guessPly); board.shapes(lineShapes(t.lines, scout ? t.uci : m.uci)); }
+      if (act === 'played') { showPly(guessPly + 1); }
       if (act === 'copyprompt' || act === 'showprompt') {
         const { system, prompt } = await api.prompt(id, g.ply);
         const text = `SYSTEM:\n${system}\n\nUSER:\n${prompt}\n\nAnswer with JSON only, fields: pattern, category (one of tactics-allowed, tactics-missed, calculation, positional, opening, endgame-technique, conversion, defence), time_pressure (boolean), explanation, key_question, concept.`;

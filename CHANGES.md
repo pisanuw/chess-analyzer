@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-07 (opponent scouting, phase 2: punish drills and flipped guess flow)
+
+- Scout games now generate "punish" drills: the position AFTER the subject's mistake with the student to move, answers checked against the next ply's already-stored engine lines (no extra engine work). Labeled "punish · vs subject" in the drills view, same ladder, tiers, and follow-ups; a mistake on a game's final move makes no drill.
+- The game view's guess-first flow flips for scout games: "Karpov played 24.Ne5?, a mistake. Find the punishment." The board orients to the student's side, the guess plays in the post-mistake position, off-list guesses use the quick engine eval one ply later, and correct first-try punishments start the drill up the ladder.
+
 ## 2026-09-07 (opponent scouting, phase 1: tagging and dossier)
 
 - Games carry a purpose ("own" or "scout") and, for scouting, a subject: the opponent being studied. Import offers "Scout an opponent" with a name field; colour detection matches the subject instead of the player. Existing games are untouched (absent purpose = own).

@@ -38,14 +38,23 @@ test('own repertoire excludes scout games and vice versa', async () => {
   assert.equal(theirs.reduce((s, l) => s + l.count, 0), 2);
 });
 
-test('scout games create no drills and record no seeding guesses', async () => {
+test('scout games create punish drills from the position after the mistake', async () => {
   await syncAllDrills();
   const { drills } = await getDrills();
-  assert.ok(drills.some(d => d.gameId === 'aaaaaaaaaa01'), 'own game produces drills');
-  assert.ok(!drills.some(d => d.gameId.startsWith('bbbbbbbbbb')), 'scout games must not enter the drill deck');
+  const own = drills.find(d => d.gameId === 'aaaaaaaaaa01');
+  assert.ok(own && !own.kind, 'own game produces a normal drill');
+  const punish = drills.filter(d => d.gameId.startsWith('bbbbbbbbbb'));
+  assert.equal(punish.length, 2);
   const g = makeGame({ id: 'bbbbbbbbbb01', purpose: 'scout', subject: 'Karpov, A', moments: [{ ply: 1, loss: 35 }] });
-  const r = await recordGuess(g, 1, 'd2d4', true, { drillThreshold: 20 });
-  assert.equal(r.seeded, false);
+  for (const d of punish) {
+    assert.equal(d.kind, 'punish');
+    assert.equal(d.subject, 'Karpov, A');
+    assert.equal(d.sideToMove, 'black'); // subject played white; the student punishes as black
+    assert.equal(d.mistakeSan, 'e4');
+    assert.equal(d.fen, g.moves[0].fenAfter, 'drill starts AFTER the mistake');
+    assert.ok(d.label.startsWith('vs Karpov, A'));
+    assert.ok(d.acceptedUci.length >= 1);
+  }
 });
 
 test('scout API: subject list and dossier', async () => {
@@ -80,4 +89,17 @@ test('import tags purpose and subject, detects the subject colour', async () => 
     body: JSON.stringify({ pgn: PGN, purpose: 'scout' }),
   });
   assert.equal(noSubject.status, 400);
+});
+
+test('final-move mistakes make no punish drill; scout guesses seed punish drills', async () => {
+  writeGame(dir, makeGame({ id: 'cccccccccc01', purpose: 'scout', subject: 'Karpov, A', moments: [{ ply: 3, loss: 30 }], plies: 3 }));
+  await syncAllDrills();
+  assert.ok(!(await getDrills()).drills.some(d => d.gameId === 'cccccccccc01'), 'no reply position to drill');
+  const g = makeGame({ id: 'dddddddddd01', purpose: 'scout', subject: 'Karpov, A', moments: [{ ply: 1, loss: 30 }], plies: 4 });
+  writeGame(dir, g);
+  const r = await recordGuess(g, 1, 'd2d4', true, { drillThreshold: 20 });
+  assert.equal(r.seeded, true);
+  assert.equal(r.step, 2, 'correct first-try punishment starts up the ladder');
+  const d = (await getDrills()).drills.find(x => x.gameId === 'dddddddddd01');
+  assert.equal(d.kind, 'punish');
 });
