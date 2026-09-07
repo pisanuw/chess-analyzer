@@ -1,5 +1,5 @@
 // Drills: positions from the player's own mistakes, scheduled with a small spaced-repetition ladder.
-import { getDrills, saveDrills } from './store.js';
+import { getDrills, saveDrills, getSettings, listGames, getGame } from './store.js';
 
 const LADDER_DAYS = [1, 3, 7, 14, 30, 60];
 const DAY = 86400000;
@@ -48,6 +48,27 @@ export async function syncDrillsForGame(game, settings) {
   store.drills = [...byId.values()];
   await saveDrills(store);
   return store;
+}
+
+/** Rebuild drills from every analysed game and prune drills whose game is gone.
+ * Runs at startup: drills.json is per-machine (never synced between clones), so
+ * each machine derives its own drill ladder from the shared game files while
+ * keeping its local review history. */
+export async function syncAllDrills() {
+  const settings = await getSettings();
+  const ids = new Set();
+  for (const entry of await listGames()) {
+    ids.add(entry.id);
+    if (entry.status !== 'analysed' && entry.status !== 'explained') continue;
+    const game = await getGame(entry.id);
+    if (game?.analysis) await syncDrillsForGame(game, settings);
+  }
+  const store = await getDrills();
+  const kept = store.drills.filter(d => ids.has(d.gameId));
+  if (kept.length !== store.drills.length) {
+    store.drills = kept;
+    await saveDrills(store);
+  }
 }
 
 export async function removeDrillsForGame(gameId) {

@@ -57,7 +57,11 @@ export async function saveSettings(patch) {
 export async function listGames() {
   await ensureDirs();
   const files = (await fs.readdir(GAMES_DIR)).filter(f => f.endsWith('.json'));
-  const games = await Promise.all(files.map(f => readJson(path.join(GAMES_DIR, f), null)));
+  // One corrupt file must not take down every list-based endpoint; skip and warn.
+  const games = await Promise.all(files.map(f => readJson(path.join(GAMES_DIR, f), null).catch(err => {
+    console.error(`skipping unreadable game file ${f}: ${err.message}`);
+    return null;
+  })));
   return games.filter(Boolean).map(gameIndexEntry).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt));
 }
 

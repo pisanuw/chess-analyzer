@@ -17,9 +17,17 @@ export async function drillsView(root) {
 
   async function load() {
     if (idx >= due.length) {
+      if (due.length) {
+        // The server serves due drills in batches of 20; check for the rest.
+        ({ due, total, dueCount } = await api.drills());
+        idx = 0;
+        if (due.length) return load();
+      }
       counts.textContent = `${total} drill${total === 1 ? '' : 's'} total`;
       el.innerHTML = `<div class="card"><div class="empty">${total ? 'Nothing due right now. Come back later.' : 'No drills yet. Drills are created from mistakes and blunders when games are analysed.'}</div></div>`;
+      board?.destroy();
       board = null;
+      state = null; // stray keypresses must not re-grade the last drill
       return;
     }
     const drill = due[idx];
@@ -32,6 +40,7 @@ export async function drillsView(root) {
       </div>
       <div id="dpanel"></div>
     </div>`;
+    board?.destroy();
     board = new Board(el.querySelector('#dboard'), { orientation: drill.sideToMove, onMove });
     board.set(drill.fen, { movableFor: drill.sideToMove });
     renderPanel();
@@ -83,13 +92,17 @@ export async function drillsView(root) {
     p.querySelectorAll('button[data-grade]').forEach(b => b.onclick = () => grade(b.dataset.grade));
   }
 
+  let grading = false;
   async function grade(g) {
+    if (!state || state.status !== 'revealed' || grading) return; // no double-grades from rapid clicks/keys
+    grading = true;
     try {
       await api.reviewDrill(state.drill.id, g, state.verdict.correct);
       import('../app.js').then(m => m.updateDrillBadge());
       idx++;
       await load();
     } catch (err) { toast(err.message, true); }
+    finally { grading = false; }
   }
 
   const onKey = e => {
@@ -99,5 +112,5 @@ export async function drillsView(root) {
   };
   document.addEventListener('keydown', onKey);
   await load();
-  return { destroy: () => document.removeEventListener('keydown', onKey) };
+  return { destroy: () => { board?.destroy(); document.removeEventListener('keydown', onKey); } };
 }

@@ -1,5 +1,5 @@
 // Hash router, job polling, and shared chrome.
-import { api, esc } from './api.js';
+import { api, esc, toast } from './api.js';
 import { gamesView } from './views/games.js';
 import { gameView } from './views/game.js';
 import { reportView } from './views/report.js';
@@ -17,17 +17,24 @@ const routes = [
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
 ];
 
+let nav = 0; // navigation token: a stale async view must not clobber a newer one
+
 async function route() {
+  const token = ++nav;
   const hash = location.hash || '#/games';
   const r = routes.find(x => x.re.test(hash));
   if (!r) { location.hash = '#/games'; return; }
   const params = hash.match(r.re).slice(1);
   if (current?.destroy) current.destroy();
+  current = null;
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === r.name));
   app.innerHTML = '<div class="empty">Loading…</div>';
   try {
-    current = await r.view(app, ...params) || {};
+    const view = await r.view(app, ...params) || {};
+    if (token !== nav) { view.destroy?.(); return; }
+    current = view;
   } catch (err) {
+    if (token !== nav) return;
     app.innerHTML = `<div class="card"><b>Error:</b> ${esc(err.message)}</div>`;
     console.error(err);
   }
@@ -55,7 +62,7 @@ async function pollJobs() {
     const finished = [...lastActive].filter(id => !nowActive.has(id));
     if (finished.length) {
       const failed = jobs.filter(j => finished.includes(j.id) && j.status === 'failed');
-      for (const f of failed) import('./api.js').then(({ toast }) => toast(`Job failed: ${f.error}`, true));
+      for (const f of failed) toast(`Job failed: ${f.error}`, true);
       jobEvents.dispatchEvent(new CustomEvent('finished', { detail: jobs.filter(j => finished.includes(j.id)) }));
     }
     lastActive = nowActive;

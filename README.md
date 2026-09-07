@@ -48,6 +48,22 @@ samples/       sample PGN
 data/          created at runtime (gitignored): settings.json, drills.json, games/<id>.json
 ```
 
+## Sharing games and drills between machines
+
+`data/` can be its own private git repo (it is gitignored by this repo, so a nested repo is fine). Game files, analysis, and explanations sync through git; `drills.json` and `settings.json` are per-machine (see `data/.gitignore`), and each machine derives its own drill ladder from the synced games at startup, so drill review history stays local and never conflicts.
+
+On the machine that analyses (needs Stockfish and the claude CLI):
+
+    npm run push-data     # commit and push new games, analysis, explanations
+
+On any other machine (needs only Node and git, no Stockfish, no claude CLI):
+
+    git clone <this repo> && cd chess-analyzer && npm ci
+    git clone git@github.com:<you>/chess-analyzer-data.git data
+    npm run sync          # pull latest data, then start the app
+
+Keep imports and analysis on the analysing machine; other clones view games, read explanations, and do drills.
+
 ## Hosted version
 
 The frontend is static and talks to `/api/*` only, so a Netlify build can later swap in a browser-side engine (Stockfish WASM) and an API-key LLM client without touching the views. See BRIEFING.md.

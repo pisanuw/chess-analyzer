@@ -6,14 +6,17 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
-    "samples": "node scripts/make-samples.js 3 > samples/sample-games.pgn"
+    "samples": "node scripts/make-samples.js 3 > samples/sample-games.pgn",
+    "pull-data": "git -C data pull --rebase",
+    "push-data": "git -C data add -A && (git -C data diff --cached --quiet || git -C data commit -m sync) && git -C data push",
+    "sync": "npm run pull-data && npm start"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/pisanuw/chess-analyzer.git"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["chess", "stockfish", "analysis", "claude", "training", "drills"],
+  "author": "Yusuf Pisan",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/pisanuw/chess-analyzer/issues"

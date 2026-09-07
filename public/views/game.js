@@ -58,7 +58,7 @@ export async function gameView(root, id, startPly) {
     const m = state.ply ? moves()[state.ply - 1] : null;
     const movableFor = state.guess && state.guess.status === 'guessing' && state.ply === state.guess.ply - 1 ? player : null;
     board.set(fenAt(state.ply), { lastMove: m?.uci, movableFor, shapes: shapes || [] });
-    root.querySelector('#evaltext').textContent = m && game.analysis ? formatEval(m.evalAfter) : (game.analysis && state.ply === 0 ? '' : '');
+    root.querySelector('#evaltext').textContent = m && game.analysis ? formatEval(m.evalAfter) : '';
     root.querySelector('#plytext').textContent = m ? `${moveLabel(m)}${game.analysis ? ' ' + JUDGE_MARK[m.judgment] : ''}` : 'Start';
     if (graph) graph.setPly(state.ply);
     panel.querySelectorAll('.mv.current').forEach(el => el.classList.remove('current'));
@@ -320,7 +320,7 @@ export async function gameView(root, id, startPly) {
   if (startPly && game.analysis && game.analysis.summary.moments.includes(Number(startPly))) openMoment(Number(startPly));
   else showPly(startPly ? Number(startPly) : 0);
 
-  return { destroy: () => { document.removeEventListener('keydown', onKey); jobEvents.removeEventListener('finished', onFinished); } };
+  return { destroy: () => { board.destroy(); document.removeEventListener('keydown', onKey); jobEvents.removeEventListener('finished', onFinished); } };
 }
 
 function fmtClock(s) {

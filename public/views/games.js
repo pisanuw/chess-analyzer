@@ -6,11 +6,16 @@ export async function gamesView(root) {
   const status = await api.status();
   let games = (await api.games()).games;
 
+  // A read-only clone (viewing and drilling synced games) needs neither Stockfish
+  // nor the claude CLI; only warn when there is work those tools would do.
+  const pendingAnalysis = games.some(g => g.status === 'imported' || g.status === 'analysing');
+  const pendingExplanations = pendingAnalysis || games.some(g => g.status === 'analysed' && (g.moments ?? 0) > (g.explained ?? 0));
+
   root.innerHTML = `
     <h1>Games</h1>
-    ${!status.engineOk ? `<div class="card" style="border-color: var(--critical)"><b>Stockfish not found.</b> Install it (<code>brew install stockfish</code>) or set the path in <a href="#/settings">Settings</a>.</div>` : ''}
-    ${settings.llmProvider === 'claude-cli' && !status.claude.ok ? `<div class="card" style="border-color: var(--warning); margin-top: 10px"><b>claude CLI not found.</b> Explanations will fail until it is installed, or switch the LLM provider to manual in <a href="#/settings">Settings</a>.</div>` : ''}
-    ${!settings.playerNames.length ? `<div class="card" style="margin-top: 10px">Set the player's name in <a href="#/settings">Settings</a> so imported games get the right colour automatically.</div>` : ''}
+    ${!status.engineOk && (pendingAnalysis || !games.length) ? `<div class="card" style="border-color: var(--critical)"><b>Stockfish not found.</b> Install it (<code>brew install stockfish</code>) or set the path in <a href="#/settings">Settings</a>.</div>` : ''}
+    ${settings.llmProvider === 'claude-cli' && !status.claude.ok && pendingExplanations ? `<div class="card" style="border-color: var(--warning); margin-top: 10px"><b>claude CLI not found.</b> Explanations will fail until it is installed, or switch the LLM provider to manual in <a href="#/settings">Settings</a>.</div>` : ''}
+    ${!settings.playerNames.length && !games.length ? `<div class="card" style="margin-top: 10px">Set the player's name in <a href="#/settings">Settings</a> so imported games get the right colour automatically.</div>` : ''}
     <div class="card" style="margin-top: 12px">
       <h3 style="margin-top:0">Import PGN</h3>
       <div class="import-area">

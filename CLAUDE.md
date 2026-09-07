@@ -23,5 +23,5 @@ Local web app: Node 22 / Express 5 backend, vanilla ES-module frontend (no build
 - Win probability and accuracy use lichess's formulas; judgment thresholds are 10/20/30 win-probability points.
 - Game id = first 12 hex chars of sha1(White|Black|Date|Round|SAN moves). Re-importing the same game is a no-op.
 - Jobs are in-memory (`server/jobs.js`), processed one at a time; game JSON is written after each step so a crash loses at most the current step.
-- `data/` is gitignored and holds all user data.
+- `data/` is gitignored and holds all user data. It is also its own private git repo (github.com/pisanuw/chess-analyzer-data) for syncing between machines; `drills.json` and `settings.json` are per-machine and excluded there, and `syncAllDrills()` re-derives drills from game files at startup.
 - `claude --version` was 2.1.x when this was built; flags used: `-p`, `--output-format json`, `--tools ""`, `--no-session-persistence`, `--system-prompt`, `--json-schema`, `--model`. The parsed result is `structured_output` in the JSON envelope.

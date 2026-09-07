@@ -1,6 +1,6 @@
 // Sequential job queue: engine analysis, then LLM explanations. Progress is polled by the UI.
 import { getEngine } from './engine.js';
-import { analyseGame } from './analyze.js';
+import { analyseGame, summarize } from './analyze.js';
 import { getGame, saveGame, getSettings, listGames } from './store.js';
 import { complete, LlmError } from './llm.js';
 import { systemPrompt, momentPrompt, gameSummaryPrompt, EXPLANATION_SCHEMA, SUMMARY_SCHEMA } from './prompts.js';
@@ -20,13 +20,36 @@ export function listJobs() {
 }
 
 export function enqueue(kind, gameId) {
-  const dup = [...jobs.values()].find(j => j.gameId === gameId && j.kind === kind && (j.status === 'queued' || j.status === 'running'));
+  const dup = [...jobs.values()].find(j => j.gameId === gameId && j.kind === kind
+    && (j.status === 'queued' || (j.status === 'running' && !j.cancelled)));
   if (dup) return dup;
   const job = { id: ++seq, kind, gameId, status: 'queued', progress: 0, total: 0, stage: '', error: null, createdAt: new Date().toISOString(), costUsd: 0 };
   jobs.set(job.id, job);
   pending.push(job);
   pump();
   return job;
+}
+
+/** Cancel queued jobs for a game; a running job is flagged and stops at its
+ * next checkpoint without writing results. Used by delete and force-reanalyse
+ * so a stale in-flight job cannot resurrect or overwrite the game. */
+export function cancelJobs(gameId, kind = null) {
+  for (const j of jobs.values()) {
+    if (j.gameId !== gameId || (kind && j.kind !== kind)) continue;
+    if (j.status === 'queued') j.status = 'cancelled';
+    else if (j.status === 'running') j.cancelled = true;
+  }
+}
+
+/** Re-read the game and apply `mutate` to the fresh copy, so a job never saves
+ * a whole object it has held across minutes of awaits (that would silently undo
+ * concurrent edits, and recreate the file if the game was deleted mid-job). */
+async function updateGame(id, mutate) {
+  const g = await getGame(id);
+  if (!g) throw new Error('game deleted during job');
+  mutate(g);
+  await saveGame(g);
+  return g;
 }
 
 /** Re-queue work that was pending when the server last stopped. The queue is
@@ -53,15 +76,19 @@ async function pump() {
     try {
       if (job.kind === 'analyse') await runAnalyse(job);
       else if (job.kind === 'explain') await runExplain(job);
-      job.status = 'done';
+      job.status = job.cancelled ? 'cancelled' : 'done';
     } catch (err) {
-      job.status = 'failed';
-      job.error = err.message;
-      console.error(`[job ${job.id} ${job.kind} ${job.gameId}] ${err.message}`);
-      try {
-        const g = await getGame(job.gameId);
-        if (g) { g.lastError = err.message; await saveGame(g); }
-      } catch {}
+      if (job.cancelled) {
+        job.status = 'cancelled';
+      } else {
+        job.status = 'failed';
+        job.error = err.message;
+        console.error(`[job ${job.id} ${job.kind} ${job.gameId}] ${err.message}`);
+        try {
+          const g = await getGame(job.gameId);
+          if (g) { g.lastError = err.message; await saveGame(g); }
+        } catch {}
+      }
     }
     job.finishedAt = new Date().toISOString();
   }
@@ -76,16 +103,24 @@ async function runAnalyse(job) {
   job.stage = 'engine';
   job.total = game.moves.length + 1;
   const engine = await getEngine(settings);
-  game.status = 'analysing';
-  game.lastError = null;
-  await saveGame(game);
-  const { moves, summary } = await analyseGame(engine, game, settings, (done, total) => { job.progress = done; job.total = total; });
-  game.analysis = { moves, summary, analysedAt: new Date().toISOString() };
-  game.playerRating = settings.playerRating;
-  game.explanations = game.explanations || {};
-  game.status = 'analysed';
-  await saveGame(game);
-  await syncDrillsForGame(game, settings);
+  await updateGame(job.gameId, g => { g.status = 'analysing'; g.lastError = null; });
+  const { moves, summary } = await analyseGame(engine, game, settings, (done, total) => {
+    job.progress = done; job.total = total;
+    if (job.cancelled) throw new Error('cancelled');
+  });
+  if (job.cancelled) throw new Error('cancelled');
+  const saved = await updateGame(job.gameId, g => {
+    if (g.playerColor !== game.playerColor) {
+      // Colour changed while the engine ran; re-derive the colour-dependent bits.
+      moves.forEach(m => { m.isPlayer = m.color === g.playerColor; });
+      Object.assign(summary, summarize(moves, g.playerColor, settings.momentThreshold));
+    }
+    g.analysis = { moves, summary, analysedAt: new Date().toISOString() };
+    g.playerRating = settings.playerRating;
+    g.explanations = g.explanations || {};
+    g.status = 'analysed';
+  });
+  await syncDrillsForGame(saved, settings);
   if (settings.autoExplain && settings.llmProvider !== 'manual') {
     await runExplain(job);
   }
@@ -104,21 +139,24 @@ async function runExplain(job) {
   const system = systemPrompt(settings.playerRating);
   const known = await knownPatterns(game);
   for (const ply of todo) {
+    if (job.cancelled) throw new Error('cancelled');
     const { output, costUsd, model } = await complete(settings, { system, prompt: momentPrompt(game, ply, [...known]), schema: EXPLANATION_SCHEMA });
-    game.explanations[ply] = { ...output, model, costUsd, createdAt: new Date().toISOString() };
+    const entry = { ...output, model, costUsd, createdAt: new Date().toISOString() };
+    game.explanations[ply] = entry; // keep the held copy current for later prompts
+    await updateGame(job.gameId, g => { g.explanations = g.explanations || {}; g.explanations[ply] = entry; });
     if (output.pattern) known.add(output.pattern);
     job.costUsd += costUsd || 0;
     job.progress++;
-    await saveGame(game);
   }
+  if (job.cancelled) throw new Error('cancelled');
   if (!game.gameSummary) {
     const { output, costUsd, model } = await complete(settings, { system, prompt: gameSummaryPrompt(game), schema: SUMMARY_SCHEMA });
-    game.gameSummary = { ...output, model, costUsd, createdAt: new Date().toISOString() };
+    const gs = { ...output, model, costUsd, createdAt: new Date().toISOString() };
     job.costUsd += costUsd || 0;
+    await updateGame(job.gameId, g => { if (!g.gameSummary) g.gameSummary = gs; });
   }
   job.progress = job.total;
-  game.status = 'explained';
-  await saveGame(game);
+  await updateGame(job.gameId, g => { g.status = 'explained'; });
 }
 
 /** Pattern names used so far across all games (most frequent first, capped), so the model can reuse them. */

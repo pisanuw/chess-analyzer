@@ -64,6 +64,9 @@ export class Board {
     });
   }
 
+  /** Unbind chessground's document/window listeners; boards leak them otherwise. */
+  destroy() { this.cg.destroy(); }
+
   shapes(shapes) { this.cg.setAutoShapes(shapes); }
   orient(color) { this.cg.set({ orientation: color }); }
   flip() { this.cg.toggleOrientation(); }

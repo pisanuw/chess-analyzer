@@ -2,7 +2,7 @@
 
 Current state of chess-analyzer and what to do next. Keep this short and current.
 
-## Status (2026-09-07)
+## Status (2026-09-06)
 
 v0.1.0, first working version. Built and tested in a sandbox with Stockfish 17.1 and claude CLI 2.1.263 against three generated sample games; the full pipeline (import, engine analysis, explanations, game summary, report, drills, guess-first UI) works end to end. Not yet run on Yusuf's Mac or with real tournament games.
 

@@ -1,5 +1,5 @@
 // Minimal UCI wrapper around a Stockfish binary. One process, one search at a time.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 
@@ -15,7 +15,9 @@ const CANDIDATE_PATHS = [
 export function findStockfish(configured) {
   const candidates = configured ? [configured, ...CANDIDATE_PATHS] : CANDIDATE_PATHS;
   for (const p of candidates) {
-    if (p === 'stockfish' || existsSync(p)) return p;
+    // Bare command names must actually resolve on PATH, or "engine ok" is a lie
+    // and the spawn error becomes the failure mode.
+    if (p.includes('/') ? existsSync(p) : spawnSync('which', [p]).status === 0) return p;
   }
   return null;
 }
@@ -28,6 +30,7 @@ export class Engine {
     this.proc = null;
     this.buffer = '';
     this.listeners = [];
+    this.pending = new Set(); // reject callbacks of in-flight commands
     this.queue = Promise.resolve();
     this.name = null;
   }
@@ -44,7 +47,16 @@ export class Engine {
         if (line) for (const l of this.listeners) l(line);
       }
     });
-    this.proc.on('exit', () => { this.proc = null; });
+    // Fail in-flight commands immediately when the process dies, instead of
+    // leaving them to hit their timeouts; 'error' also fires for a bad binary
+    // path, which would otherwise crash the whole server as an unhandled event.
+    const die = err => {
+      this.proc = null;
+      for (const fail of [...this.pending]) fail(err);
+      this.pending.clear();
+    };
+    this.proc.on('error', err => die(new Error(`engine process error: ${err.message}`)));
+    this.proc.on('exit', () => die(new Error('engine process exited')));
     await this.command('uci', line => line === 'uciok', line => {
       const m = line.match(/^id name (.+)$/);
       if (m) this.name = m[1];
@@ -63,14 +75,16 @@ export class Engine {
   /** Send a command and resolve when `done(line)` is true. Collects lines through `onLine`. */
   command(cmd, done, onLine, timeoutMs = 600000) {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { cleanup(); reject(new Error(`engine timeout on: ${cmd}`)); }, timeoutMs);
+      const timer = setTimeout(() => fail(new Error(`engine timeout on: ${cmd}`)), timeoutMs);
       const listener = line => {
         if (onLine) onLine(line);
         if (done(line)) { cleanup(); resolve(line); }
       };
-      const cleanup = () => { clearTimeout(timer); this.listeners = this.listeners.filter(l => l !== listener); };
+      const cleanup = () => { clearTimeout(timer); this.pending.delete(fail); this.listeners = this.listeners.filter(l => l !== listener); };
+      const fail = err => { cleanup(); reject(err); };
+      this.pending.add(fail);
       this.listeners.push(listener);
-      this.send(cmd);
+      try { this.send(cmd); } catch (err) { fail(err); }
     });
   }
 
@@ -127,7 +141,9 @@ let shared = null;
 export async function getEngine(settings) {
   const path = findStockfish(settings.enginePath);
   if (!path) throw new Error('Stockfish not found. Install it (brew install stockfish) or set the engine path in Settings.');
-  if (shared && shared.proc && shared.path === path && shared.threads === (settings.engineThreads || shared.threads)) return shared;
+  if (shared && shared.proc && shared.path === path
+      && shared.threads === (settings.engineThreads || shared.threads)
+      && shared.hash === (settings.engineHash || shared.hash)) return shared;
   if (shared) shared.stop();
   shared = await new Engine(path, { threads: settings.engineThreads, hash: settings.engineHash }).start();
   return shared;

@@ -4,11 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsePgnFile, detectPlayerColor } from './pgn.js';
 import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
-import { enqueue, listJobs, resumeInterrupted } from './jobs.js';
+import { enqueue, listJobs, resumeInterrupted, cancelJobs } from './jobs.js';
 import { findStockfish } from './engine.js';
 import { checkClaudeCli } from './llm.js';
 import { buildReport } from './report.js';
-import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame } from './drills.js';
+import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame, syncAllDrills } from './drills.js';
 import { momentPrompt, systemPrompt, EXPLANATION_SCHEMA, CATEGORIES } from './prompts.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -20,6 +20,13 @@ app.use('/vendor/chessground', express.static(path.join(ROOT, 'node_modules/ches
 app.use('/vendor/chessground/assets', express.static(path.join(ROOT, 'node_modules/chessground/assets')));
 app.use('/vendor/chess.js', express.static(path.join(ROOT, 'node_modules/chess.js/dist/esm')));
 app.use(express.static(path.join(ROOT, 'public')));
+
+// Bounds for numeric settings; out-of-range values are clamped, non-numbers rejected.
+// A cleared field must not slip through as 0 (a 0 threshold drills every move).
+const NUMERIC_LIMITS = {
+  playerRating: [400, 3500], engineDepth: [4, 40], engineMultiPv: [1, 6],
+  engineThreads: [0, 64], engineHash: [16, 8192], momentThreshold: [1, 100], drillThreshold: [1, 100],
+};
 
 const wrap = fn => (req, res) => fn(req, res).catch(err => {
   console.error(err);
@@ -40,8 +47,11 @@ app.put('/api/settings', wrap(async (req, res) => {
   const patch = {};
   for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
   if (patch.playerNames && typeof patch.playerNames === 'string') patch.playerNames = patch.playerNames.split(/[,;\n]/).map(s => s.trim()).filter(Boolean);
-  for (const k of ['playerRating', 'engineDepth', 'engineMultiPv', 'engineThreads', 'engineHash', 'momentThreshold', 'drillThreshold']) {
-    if (k in patch) patch[k] = Number(patch[k]);
+  for (const [k, [min, max]] of Object.entries(NUMERIC_LIMITS)) {
+    if (!(k in patch)) continue;
+    const n = Number(patch[k]);
+    if (patch[k] === '' || !Number.isFinite(n)) return res.status(400).json({ error: `${k} must be a number` });
+    patch[k] = Math.min(max, Math.max(min, n));
   }
   res.json({ settings: await saveSettings(patch) });
 }));
@@ -79,6 +89,7 @@ app.get('/api/games/:id', wrap(async (req, res) => {
 }));
 
 app.delete('/api/games/:id', wrap(async (req, res) => {
+  cancelJobs(req.params.id);
   await deleteGame(req.params.id);
   await removeDrillsForGame(req.params.id);
   res.json({ ok: true });
@@ -111,7 +122,10 @@ app.post('/api/games/:id/analyse', wrap(async (req, res) => {
   const game = await getGame(req.params.id);
   if (!game) return res.status(404).json({ error: 'not found' });
   if (!game.playerColor) return res.status(400).json({ error: 'set the player colour first' });
-  if (req.body?.force) { game.analysis = null; game.explanations = {}; game.gameSummary = null; game.status = 'imported'; await saveGame(game); }
+  if (req.body?.force) {
+    cancelJobs(game.id); // a live job would restore the wiped analysis and shadow the re-run
+    game.analysis = null; game.explanations = {}; game.gameSummary = null; game.status = 'imported'; await saveGame(game);
+  }
   res.json({ job: enqueue('analyse', game.id) });
 }));
 
@@ -168,5 +182,6 @@ app.get(/^\/(?!api|vendor).*/, (req, res) => res.sendFile(path.join(ROOT, 'publi
 const PORT = Number(process.env.PORT) || 3210;
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`chess-analyzer running at http://localhost:${PORT}  (data: ${DATA_DIR})`);
+  syncAllDrills().catch(err => console.error(`drill sync failed: ${err.message}`));
   resumeInterrupted().catch(err => console.error(`resume failed: ${err.message}`));
 });

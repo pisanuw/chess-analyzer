@@ -63,7 +63,6 @@ export function momentPrompt(game, ply, knownPatterns = []) {
   const lines = m.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n');
   const playedRank = m.playedRank ? `This was the engine's line number ${m.playedRank}.` : 'This move is not among the engine\'s top lines.';
   const nextMove = moves[ply]; // opponent's reply
-  const after = m.lines.length ? '' : '';
   return `Game: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || 'unknown event'} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.
 The player being coached is ${playerName} (${side}), rated about ${game.playerRating || 2000}.
 
@@ -78,7 +77,7 @@ ${lines}
 
 Move played by ${side}: ${m.san}. Evaluation after it: ${formatEval(m.evalAfter)}. ${playedRank}
 ${nextMove ? `The opponent replied ${nextMove.san}.` : ''}
-Win-probability lost by this move: ${m.loss} points (${m.judgment}). ${clockText(m)}${after}
+Win-probability lost by this move: ${m.loss} points (${m.judgment}). ${clockText(m)}
 
 Explain why ${m.san} is classified as ${m.judgment === 'inaccuracy' ? 'an' : 'a'} ${m.judgment} and what the engine's first choice ${m.bestSan} achieves instead, using only the lines above. Then classify the error.${knownPatterns.length ? `
 

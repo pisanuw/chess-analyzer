@@ -1,5 +1,5 @@
 // Small SVG charts: horizontal bars, a single-series line, and the game eval graph. No dependencies.
-import { esc } from './api.js';
+import { esc, formatEval } from './api.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 
@@ -126,7 +126,7 @@ export function evalGraph(container, moves, { currentPly = 0, onSelect = null } 
   hit.addEventListener('mousemove', e => {
     const m = moves[plyAt(e) - 1];
     const r = container.getBoundingClientRect();
-    tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${m.moveNumber}${m.color === 'white' ? '.' : '...'} ${esc(m.san)}</b> ${esc(fmt(m.evalAfter))}${m.judgment !== 'best' && m.judgment !== 'good' ? ' (' + m.judgment + ')' : ''}`);
+    tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${m.moveNumber}${m.color === 'white' ? '.' : '...'} ${esc(m.san)}</b> ${esc(formatEval(m.evalAfter))}${m.judgment !== 'best' && m.judgment !== 'good' ? ' (' + m.judgment + ')' : ''}`);
   });
   hit.addEventListener('mouseleave', () => tip.hide());
   if (onSelect) hit.addEventListener('click', e => onSelect(plyAt(e)));
@@ -135,7 +135,3 @@ export function evalGraph(container, moves, { currentPly = 0, onSelect = null } 
   return { setPly(ply) { cursor.setAttribute('x1', xs(ply)); cursor.setAttribute('x2', xs(ply)); } };
 }
 
-function fmt(cp) {
-  if (Math.abs(cp) >= 9800) return (cp > 0 ? '#' : '#-') + (10000 - Math.abs(cp));
-  return (cp >= 0 ? '+' : '') + (cp / 100).toFixed(2);
-}
