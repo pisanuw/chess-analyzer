@@ -6,7 +6,7 @@ import { CATEGORY_LABEL } from './report.js';
 export async function scoutView(root) {
   const { subjects } = await api.scoutSubjects();
   if (!subjects.length) {
-    root.innerHTML = `<h1>Scouting</h1><div class="empty">No opponent games yet. On the Games page, choose "Scout an opponent" when importing their PGNs.</div>`;
+    root.innerHTML = `<h1>Scouting</h1><div class="empty">No opponents yet. Everyone you play appears here once your games are analysed; import an opponent's other games with "Scout an opponent" for a deeper dossier.</div>`;
     return;
   }
   const current = decodeURIComponent(location.hash.split('/')[2] || '') || subjects[0].subject;
@@ -31,7 +31,7 @@ async function renderDossier(el, subject) {
   const catLabel = c => CATEGORY_LABEL[c] || c;
   const fmtLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
   el.innerHTML = `
-    <p class="muted">${r.games} analysed game${r.games === 1 ? '' : 's'} of ${esc(subject)}. Their mistakes, phrased for your preparation: aim for the phases and structures where they go wrong.</p>
+    <p class="muted">${r.games} analysed game${r.games === 1 ? '' : 's'} of ${esc(subject)}, including your own games against them. Their mistakes, phrased for your preparation: aim for the phases and structures where they go wrong. Error categories and patterns come from explained scout imports; your own games contribute engine data.</p>
     <div class="tiles">
       <div class="tile"><div class="v">${r.overallAccuracy ?? '–'}%</div><div class="l">Their average accuracy</div></div>
       <div class="tile"><div class="v">${(r.totalMoments / r.games).toFixed(1)}</div><div class="l">Their mistakes per game</div></div>

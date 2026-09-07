@@ -1,12 +1,17 @@
 // Opening repertoire: group analysed games by colour and first plies, find where preparation ends.
 import { getGame, listGames } from './store.js';
+import { gamesForSubject } from './subjects.js';
 
 const LINE_PLIES = 8;
 
 export async function buildRepertoire({ purpose = 'own', subject = null } = {}) {
-  const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained')
-    && g.purpose === purpose && (purpose === 'own' || g.subject === subject));
-  const games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
+  let games;
+  if (purpose === 'scout') {
+    games = await gamesForSubject(subject);
+  } else {
+    const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
+    games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
+  }
   const lines = new Map();
   for (const g of games) {
     const sans = g.analysis.moves.slice(0, LINE_PLIES).map(m => m.san);

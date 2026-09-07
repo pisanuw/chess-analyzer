@@ -57,7 +57,8 @@ export function makeGame({ id = 'aaaaaaaaaaaa', color = 'white', moments = [{ pl
     analysis: {
       moves,
       analysedAt: '2026-01-01T00:00:00.000Z',
-      summary: { moments: moments.map(m => m.ply), player: color, white: { ...colorStats }, black: { ...colorStats } },
+      // Real summaries only list the tracked player's plies (summarize filters isPlayer).
+      summary: { moments: moments.filter(m => (m.ply % 2 === 1) === (color === 'white')).map(m => m.ply), player: color, white: { ...colorStats }, black: { ...colorStats } },
     },
     explanations: explained
       ? Object.fromEntries(moments.map(m => [m.ply, { pattern, category, time_pressure: false, explanation: 'why it fails', key_question: 'what is the threat', concept: 'concept' }]))

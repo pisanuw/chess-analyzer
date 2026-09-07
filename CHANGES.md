@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-07 (scouting includes opponents from your own games)
+
+- Every opponent from the player's own analysed games now appears in Scouting automatically: their side of each game is flipped on the fly from stored per-move analysis (both colours are already engine-evaluated), so no re-analysis is needed. Dossiers merge these with any scout-imported games of the same name. Own games contribute engine data (their mistakes, accuracy, phases, clocks, repertoire); error categories and patterns still come from explained scout imports. No punish drills are created from own games: a missed punishment is already one of the player's own drills.
+
 ## 2026-09-07 (scout name autocomplete)
 
 - The "Scout an opponent" name field autocompletes: suggestions come from the pasted PGN's White/Black headers (most frequent name first, which in a multi-game file is the subject), known scout subjects, and past opponents; the player's own names are excluded. Switching to scout mode with a PGN pasted prefills the best candidate.

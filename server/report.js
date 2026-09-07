@@ -1,14 +1,20 @@
 // Aggregate weakness report across all analysed games.
 import { getGame, listGames, getDrills } from './store.js';
+import { gamesForSubject } from './subjects.js';
 import { CATEGORIES } from './prompts.js';
 
 const WEIGHT = { inaccuracy: 1, mistake: 2, blunder: 3 };
 
-/** Weakness report for the tracked player (default), or for a scouted subject. */
+/** Weakness report for the tracked player (default), or for a scouted subject
+ * (scout imports plus the player's own games against them, flipped). */
 export async function buildReport({ purpose = 'own', subject = null } = {}) {
-  const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained')
-    && g.purpose === purpose && (purpose === 'own' || g.subject === subject));
-  const games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
+  let games;
+  if (purpose === 'scout') {
+    games = await gamesForSubject(subject);
+  } else {
+    const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
+    games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
+  }
 
   const byCategory = Object.fromEntries([...CATEGORIES, 'unexplained'].map(c => [c, { count: 0, weight: 0, moments: [] }]));
   const byPhase = { opening: { moves: 0, cpl: 0, acc: 0, moments: 0, weight: 0 }, middlegame: { moves: 0, cpl: 0, acc: 0, moments: 0, weight: 0 }, endgame: { moves: 0, cpl: 0, acc: 0, moments: 0, weight: 0 } };

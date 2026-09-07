@@ -217,13 +217,20 @@ app.get('/api/repertoire', wrap(async (req, res) => res.json({ repertoire: await
 
 // --- scouting ----------------------------------------------------------------
 app.get('/api/scout', wrap(async (req, res) => {
+  // Subjects = scouted imports plus every opponent from the player's own games.
   const subjects = new Map();
-  for (const g of await listGames()) {
-    if (g.purpose !== 'scout' || !g.subject) continue;
-    const s = subjects.get(g.subject) || { subject: g.subject, games: 0, analysed: 0 };
+  const add = (name, analysed, kind) => {
+    if (!name || name === '?') return;
+    const s = subjects.get(name) || { subject: name, games: 0, analysed: 0, scoutGames: 0, ownGames: 0 };
     s.games++;
-    if (g.status === 'analysed' || g.status === 'explained') s.analysed++;
-    subjects.set(g.subject, s);
+    if (analysed) s.analysed++;
+    s[kind]++;
+    subjects.set(name, s);
+  };
+  for (const g of await listGames()) {
+    const analysed = g.status === 'analysed' || g.status === 'explained';
+    if (g.purpose === 'scout' && g.subject) add(g.subject, analysed, 'scoutGames');
+    else if (g.purpose !== 'scout' && g.playerColor) add(g.playerColor === 'white' ? g.black : g.white, analysed, 'ownGames');
   }
   res.json({ subjects: [...subjects.values()].sort((a, b) => b.games - a.games) });
 }));

@@ -57,11 +57,15 @@ test('scout games create punish drills from the position after the mistake', asy
   }
 });
 
-test('scout API: subject list and dossier', async () => {
+test('scout API: subject list includes scouted names and own-game opponents', async () => {
   const subjects = (await (await fetch(base + '/api/scout')).json()).subjects;
-  assert.equal(subjects.length, 1);
+  assert.equal(subjects.length, 2); // Karpov (scouted) and the own game's opponent
   assert.equal(subjects[0].subject, 'Karpov, A');
   assert.equal(subjects[0].games, 2);
+  assert.equal(subjects[0].scoutGames, 2);
+  const opp = subjects.find(s => s.subject === 'Opponent');
+  assert.ok(opp, 'opponents from own games are listed automatically');
+  assert.equal(opp.ownGames, 1);
   const res = await fetch(base + '/api/scout/' + encodeURIComponent('Karpov, A'));
   assert.equal(res.status, 200);
   const dossier = await res.json();
@@ -118,4 +122,19 @@ test('prep sheet endpoint: 404 unknown subject, clean error in manual mode', asy
   const manual = await fetch(base + '/api/scout/' + encodeURIComponent('Karpov, A') + '/prepsheet', { method: 'POST' });
   assert.equal(manual.status, 500);
   assert.match((await manual.json()).error, /manual/);
+});
+
+test('own games feed a derived dossier for their opponent', async () => {
+  // Own game where the OPPONENT (black, named 'Opponent') blunders at ply 2.
+  writeGame(dir, makeGame({ id: 'eeeeeeeeee01', color: 'white', moments: [{ ply: 2, loss: 28 }], plies: 4, explained: false }));
+  const dossier = await (await fetch(base + '/api/scout/Opponent')).json();
+  // aaaaaaaaaa01 (clean for black) + eeeeeeeeee01 (black blunder), both flipped.
+  assert.equal(dossier.report.games, 2);
+  assert.equal(dossier.report.totalMoments, 1, 'the opponent\'s mistake is derived from stored analysis');
+  assert.equal(dossier.report.byCategory.unexplained.count, 1, 'own games contribute engine data, not categories');
+  assert.equal(dossier.repertoire.reduce((s, l) => s + l.count, 0), 2);
+  assert.ok(dossier.repertoire.every(l => l.color === 'black'), 'repertoire is from the opponent\'s side');
+  // No punish drills from own games: a missed punishment is already the player's own drill.
+  await syncAllDrills();
+  assert.ok(!(await getDrills()).drills.some(d => d.gameId === 'eeeeeeeeee01'));
 });
