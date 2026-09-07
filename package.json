@@ -1,0 +1,31 @@
+{
+  "name": "chess-analyzer",
+  "version": "0.1.0",
+  "description": "Local chess game analyzer: Stockfish + LLM explanations, weakness report, drills",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "samples": "node scripts/make-samples.js 3 > samples/sample-games.pgn"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pisanuw/chess-analyzer.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/pisanuw/chess-analyzer/issues"
+  },
+  "homepage": "https://github.com/pisanuw/chess-analyzer#readme",
+  "type": "module",
+  "dependencies": {
+    "chess.js": "^1.4.0",
+    "chessground": "^9.2.1",
+    "express": "^5.2.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

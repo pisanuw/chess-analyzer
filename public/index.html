@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chess Analyzer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/vendor/chessground/assets/chessground.base.css">
+<link rel="stylesheet" href="/vendor/chessground/assets/chessground.brown.css">
+<link rel="stylesheet" href="/vendor/chessground/assets/chessground.cburnett.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#/games">♞ Chess Analyzer</a>
+  <nav>
+    <a href="#/games" data-nav="games">Games</a>
+    <a href="#/report" data-nav="report">Report</a>
+    <a href="#/drills" data-nav="drills">Drills <span id="drill-badge" class="badge" hidden></span></a>
+    <a href="#/settings" data-nav="settings">Settings</a>
+  </nav>
+  <div id="jobs" class="jobs"></div>
+</header>
+<main id="app"></main>
+<div id="toast" class="toast" hidden></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>
