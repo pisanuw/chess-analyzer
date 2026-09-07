@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parsePgnFile, detectPlayerColor } from './pgn.js';
 import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
-import { enqueue, listJobs } from './jobs.js';
+import { enqueue, listJobs, resumeInterrupted } from './jobs.js';
 import { findStockfish } from './engine.js';
 import { checkClaudeCli } from './llm.js';
 import { buildReport } from './report.js';
@@ -168,4 +168,5 @@ app.get(/^\/(?!api|vendor).*/, (req, res) => res.sendFile(path.join(ROOT, 'publi
 const PORT = Number(process.env.PORT) || 3210;
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`chess-analyzer running at http://localhost:${PORT}  (data: ${DATA_DIR})`);
+  resumeInterrupted().catch(err => console.error(`resume failed: ${err.message}`));
 });

@@ -12,7 +12,11 @@ let running = false;
 const pending = [];
 
 export function listJobs() {
-  return [...jobs.values()].sort((a, b) => b.id - a.id).slice(0, 50);
+  // Cap only finished jobs: active ones must always be visible, or the UI shows
+  // a long queue with no running progress bar (the runner is the oldest job).
+  const all = [...jobs.values()].sort((a, b) => b.id - a.id);
+  const isActive = j => j.status === 'queued' || j.status === 'running';
+  return all.filter(isActive).concat(all.filter(j => !isActive(j)).slice(0, 50)).sort((a, b) => b.id - a.id);
 }
 
 export function enqueue(kind, gameId) {
@@ -23,6 +27,19 @@ export function enqueue(kind, gameId) {
   pending.push(job);
   pump();
   return job;
+}
+
+/** Re-queue work that was pending when the server last stopped. The queue is
+ * in-memory, but game status on disk records how far each game got. */
+export async function resumeInterrupted() {
+  const settings = await getSettings();
+  let analyse = 0, explain = 0;
+  for (const g of await listGames()) {
+    if (!g.playerColor) continue;
+    if (g.status === 'imported' || g.status === 'analysing') { enqueue('analyse', g.id); analyse++; }
+    else if (g.status === 'analysed' && settings.autoExplain && settings.llmProvider !== 'manual') { enqueue('explain', g.id); explain++; }
+  }
+  if (analyse || explain) console.log(`resumed unfinished work: ${analyse} to analyse, ${explain} to explain`);
 }
 
 async function pump() {

@@ -61,9 +61,9 @@ export class Engine {
   }
 
   /** Send a command and resolve when `done(line)` is true. Collects lines through `onLine`. */
-  command(cmd, done, onLine) {
+  command(cmd, done, onLine, timeoutMs = 600000) {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { cleanup(); reject(new Error(`engine timeout on: ${cmd}`)); }, 600000);
+      const timer = setTimeout(() => { cleanup(); reject(new Error(`engine timeout on: ${cmd}`)); }, timeoutMs);
       const listener = line => {
         if (onLine) onLine(line);
         if (done(line)) { cleanup(); resolve(line); }
@@ -78,12 +78,12 @@ export class Engine {
    * Analyse one position. Returns { lines: [{ multipv, cp, mate, pv: [uci...] }], bestmove }.
    * Scores are from the side-to-move perspective (UCI convention).
    */
-  analyse(fen, { depth = 18, multipv = 3 } = {}) {
+  analyse(fen, { depth = 18, multipv = 3, movetimeMs = 120000 } = {}) {
     const run = async () => {
       this.send(`setoption name MultiPV value ${multipv}`);
       this.send(`position fen ${fen}`);
       const lines = new Map();
-      const best = await this.command(`go depth ${depth}`, l => l.startsWith('bestmove'), line => {
+      const onInfo = line => {
         if (!line.startsWith('info') || !line.includes(' pv ') || !line.includes(' score ')) return;
         const mpv = Number((line.match(/ multipv (\d+)/) || [])[1] || 1);
         const d = Number((line.match(/ depth (\d+)/) || [])[1] || 0);
@@ -93,7 +93,23 @@ export class Engine {
         const prev = lines.get(mpv);
         if (prev && prev.depth > d) return; // keep deepest
         lines.set(mpv, { multipv: mpv, depth: d, cp: cpM ? Number(cpM[1]) : null, mate: mateM ? Number(mateM[1]) : null, pv });
-      });
+      };
+      // movetime caps pathological positions where reaching the depth takes forever;
+      // the command timeout is only a backstop for an unresponsive engine.
+      let best;
+      try {
+        best = await this.command(`go depth ${depth} movetime ${movetimeMs}`, l => l.startsWith('bestmove'), onInfo, movetimeMs + 30000);
+      } catch (err) {
+        // Interrupt the search so the process is idle for the next position, and
+        // salvage the depth reached so far. A search left running would swallow
+        // the next job's commands and hand it this position's bestmove.
+        try {
+          best = await this.command('stop', l => l.startsWith('bestmove'), onInfo, 10000);
+        } catch {
+          this.stop(); // engine is unresponsive; next job spawns a fresh one
+          throw err;
+        }
+      }
       const bestmove = best.split(/\s+/)[1];
       return { bestmove: bestmove === '(none)' ? null : bestmove, lines: [...lines.values()].sort((a, b) => a.multipv - b.multipv) };
     };

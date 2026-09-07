@@ -33,11 +33,15 @@ export async function gamesView(root) {
   `;
 
   const list = root.querySelector('#list');
+  let sortAsc = false;
+  const byDate = (a, b) => (b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt);
   const render = () => {
     if (!games.length) { list.innerHTML = '<div class="empty">No games yet. Import a PGN above.</div>'; return; }
+    const rows = [...games].sort(byDate);
+    if (sortAsc) rows.reverse();
     list.innerHTML = `<table>
-      <thead><tr><th>Date</th><th>White</th><th>Black</th><th>Result</th><th>Event</th><th>Played</th><th>Status</th><th class="num">Accuracy</th><th class="num">Moments</th><th></th></tr></thead>
-      <tbody>${games.map(g => `
+      <thead><tr><th data-sort style="cursor:pointer" title="Toggle date order">Date ${sortAsc ? '↑' : '↓'}</th><th>White</th><th>Black</th><th>Result</th><th>Event</th><th>Played</th><th>Status</th><th class="num">Accuracy</th><th class="num">Moments</th><th></th></tr></thead>
+      <tbody>${rows.map(g => `
         <tr class="clickable" data-id="${g.id}">
           <td><small>${esc(g.date)}</small></td>
           <td>${esc(g.white)}${g.whiteElo ? ` <small>(${esc(g.whiteElo)})</small>` : ''}</td>
@@ -61,6 +65,7 @@ export async function gamesView(root) {
   const refresh = async () => { games = (await api.games()).games; render(); };
 
   list.addEventListener('click', async e => {
+    if (e.target.closest('th[data-sort]')) { sortAsc = !sortAsc; return render(); }
     const tr = e.target.closest('tr[data-id]');
     if (!tr) return;
     const id = tr.dataset.id;
