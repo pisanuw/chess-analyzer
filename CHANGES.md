@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-09-08 (drills match the error being trained)
+
+- Play-out drills: conversion, defence, and endgame-technique drills are now played OUT against the sparring engine (at the player's rating) instead of answered with one move, which cannot train a skill that lives across many moves. Pass = winning chances held within the usual 3-point band (mate/stalemate/draw scored 100/0/50, so defending a lost position to a draw passes); verdict from the full-strength assess endpoint, evals hidden until then. Honest grading applies as usual, and a one-move fallback button remains. Only in normal sessions with a local engine; practice rounds and the mirror keep single-move form.
+- Calculation drills walk the engine line deeper (up to 4 follow-up moves instead of 2): the original failure was miscalculating a line, so the drill demands the line.
+- Timed mode: drills whose moment was flagged time-pressure (or played under 2 minutes) offer an opt-in 30s countdown; running out counts as a miss. Rehearses deciding fast, which untimed reflection does not.
+- A missed drill now shows the synthesized pattern note (rule + triggers) for its pattern right under the verdict: the moment of failure is when the transferable lesson lands.
+- Category rounds in the UI: `#/drills?category=...` mirrors pattern lightning rounds; a "Today" line on the Drills page prescribes the heaviest pattern round and top focus-area round from the report.
+- Session quality of life: Undo last grade (reverts the review and returns to that drill), Suspend drill on the reveal screen with a Restore-all control on the end-of-queue screen, per-answer time shown on reveal, and the recap includes average answer time.
+
 ## 2026-09-08 (frontend platform: mirror polling, PWA, name dialog, guess retry)
 
 - The hosted mirror no longer polls `/api/jobs` every few seconds: jobs live in a function instance's memory, so the answer was guaranteed empty and each poll was a Netlify invocation and phone battery (an open tab was ~17k invocations/day). Polling now starts only when `/api/status` says the backend is writable; on the mirror the drill badge refreshes per navigation instead of on a timer.
