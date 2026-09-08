@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-08 (whole-game explanation batches, CLI retry)
+
+- Explanations for a game's moments now go out as ONE claude CLI call when 2 or more are pending: the shared game context is stated once, each moment keeps its own engine lines, and the reply is an explanations array keyed by ply (`momentsBatchPrompt` / `scoutMomentsBatchPrompt` + `batchExplanationSchema`). A 6-moment game drops from ~7 minutes of sequential calls toward the cost of one. Entries that come back missing or invalid (unknown category, empty fields) fall through to the existing per-moment loop, which is also the retry path if the batch call fails; per-moment writes keep their per-step crash safety.
+- Per-moment and summary calls retry once (2s pause) on transient CLI errors instead of failing the whole job at moment 5 of 6.
+- prompts.js refactored around shared section builders (`momentSection`, `scoutSection`, `gameLine`); single-moment prompt text is unchanged in substance.
+
 ## 2026-09-08 (opening eval cache)
 
 - Engine evaluations of the first 20 positions of each game are cached in `data/evalcache.json`, keyed by engine name, depth, MultiPV, and FEN (capped at 4000 entries, oldest out). Multi-game tournament imports stop re-searching the same repertoire moves at full depth; a changed engine or setting simply misses the cache. Per-machine derived data, ignored by the data repo, safe to delete.

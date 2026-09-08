@@ -4,6 +4,7 @@ import { makeGame } from './helpers.js';
 import {
   EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA,
   momentPrompt, scoutMomentPrompt, scoutGameSummaryPrompt, prepSheetPrompt,
+  momentsBatchPrompt, scoutMomentsBatchPrompt, batchExplanationSchema,
 } from '../server/prompts.js';
 
 test('scout explanation schema keeps the exact field names of the own schema', () => {
@@ -23,6 +24,29 @@ test('scoutMomentPrompt frames the subject and includes the punishment lines', (
   assert.ok(!p.includes('—'), 'no em dashes (repo convention)');
   const own = momentPrompt(g, 1, []);
   assert.ok(own.includes('being coached'), 'own prompt still coaches the mover');
+});
+
+test('batch prompt states the game once and each moment under its ply', () => {
+  const g = makeGame({ moments: [{ ply: 1, loss: 25 }, { ply: 3, loss: 22 }], plies: 4 });
+  g.playerRating = 2000;
+  const p = momentsBatchPrompt(g, [1, 3], ['Old pattern'], ['old concept']);
+  assert.equal((p.match(/being coached/g) || []).length, 1, 'shared context appears once');
+  assert.ok(p.includes('Moment 1 of 2 (ply 1)') && p.includes('Moment 2 of 2 (ply 3)'));
+  assert.ok(p.includes('Old pattern') && p.includes('old concept'), 'libraries passed once for the whole batch');
+  assert.ok(!p.includes('—'), 'no em dashes (repo convention)');
+
+  const schema = batchExplanationSchema(false);
+  assert.deepEqual(schema.required, ['explanations']);
+  assert.ok(schema.properties.explanations.items.required.includes('ply'));
+  assert.deepEqual(
+    schema.properties.explanations.items.required.filter(k => k !== 'ply'),
+    EXPLANATION_SCHEMA.required,
+    'batch items require exactly the single-call fields plus ply');
+
+  const sg = makeGame({ purpose: 'scout', subject: 'Karpov, A', moments: [{ ply: 1, loss: 25 }, { ply: 3, loss: 22 }], plies: 4 });
+  const sp = scoutMomentsBatchPrompt(sg, [1, 3]);
+  assert.ok(sp.includes('Karpov, A') && sp.includes('Mistake 2 of 2 (ply 3)'));
+  assert.ok(!sp.includes('—'));
 });
 
 test('scoutGameSummaryPrompt and prepSheetPrompt are grounded in the dossier', () => {

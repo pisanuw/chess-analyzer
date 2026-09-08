@@ -3,7 +3,7 @@ import { getEngine } from './engine.js';
 import { analyseGame, summarize } from './analyze.js';
 import { getGame, saveGame, getSettings, listGames } from './store.js';
 import { complete, LlmError } from './llm.js';
-import { systemPrompt, momentPrompt, gameSummaryPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutGameSummaryPrompt, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA } from './prompts.js';
+import { systemPrompt, momentPrompt, momentsBatchPrompt, gameSummaryPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutMomentsBatchPrompt, scoutGameSummaryPrompt, batchExplanationSchema, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA, CATEGORIES } from './prompts.js';
 import { syncDrillsForGame } from './drills.js';
 
 const jobs = new Map();
@@ -133,6 +133,31 @@ async function runAnalyse(job) {
   }
 }
 
+/** Validate one explanation object from a batch reply (the CLI enforces the
+ * schema on single calls, but batch entries are matched to plies by hand).
+ * Returns the clean entry or null. */
+export function sanitizeExplanation(e) {
+  if (!e) return null;
+  for (const k of ['pattern', 'category', 'explanation', 'key_question']) if (typeof e[k] !== 'string' || !e[k]) return null;
+  if (!CATEGORIES.includes(e.category)) return null;
+  return {
+    pattern: e.pattern, category: e.category, time_pressure: !!e.time_pressure,
+    explanation: e.explanation, key_question: e.key_question,
+    concept: typeof e.concept === 'string' ? e.concept : '',
+  };
+}
+
+/** One retry for transient CLI failures (timeout, malformed output); anything
+ * else propagates. A minute-long call failing at moment 5 of 6 should not
+ * fail the whole job when a second attempt would do. */
+async function completeRetry(settings, req) {
+  try { return await complete(settings, req); } catch (err) {
+    if (!(err instanceof LlmError)) throw err;
+    await new Promise(r => setTimeout(r, 2000));
+    return complete(settings, req);
+  }
+}
+
 async function runExplain(job) {
   const settings = await getSettings();
   const game = await getGame(job.gameId);
@@ -148,11 +173,51 @@ async function runExplain(job) {
   const system = scout ? scoutSystemPrompt(settings.playerRating) : systemPrompt(settings.playerRating);
   const schema = scout ? SCOUT_EXPLANATION_SCHEMA : EXPLANATION_SCHEMA;
   const known = await knownPatterns(game);
-  for (const ply of todo) {
+  let remaining = [...todo];
+
+  // Whole game in one call first: the moments share their context and each
+  // per-moment CLI call costs about a minute of wall time. Anything missing
+  // or invalid in the reply falls through to the per-moment loop, which is
+  // also the retry path when the batch call itself fails.
+  if (remaining.length >= 2) {
+    if (job.cancelled) throw new Error('cancelled');
+    job.itemStartedAt = new Date().toISOString();
+    try {
+      const args = [game, remaining, [...known.patterns], [...known.concepts]];
+      const { output, costUsd, model } = await complete(settings, {
+        system,
+        prompt: scout ? scoutMomentsBatchPrompt(...args) : momentsBatchPrompt(...args),
+        schema: batchExplanationSchema(scout),
+        timeoutMs: 240000 + 60000 * remaining.length,
+      });
+      job.costUsd += costUsd || 0;
+      const byPly = new Map((output?.explanations || []).map(e => [Number(e?.ply), e]));
+      const saved = [];
+      for (const ply of remaining) {
+        const e = sanitizeExplanation(byPly.get(ply));
+        if (!e) continue;
+        const entry = { ...e, model, costUsd: null, createdAt: new Date().toISOString() };
+        game.explanations[ply] = entry; // keep the held copy current for later prompts
+        if (entry.pattern) known.patterns.add(entry.pattern);
+        if (entry.concept) known.concepts.add(entry.concept);
+        saved.push([ply, entry]);
+      }
+      if (saved.length) {
+        await updateGame(job.gameId, g => { g.explanations = g.explanations || {}; for (const [ply, entry] of saved) g.explanations[ply] = entry; });
+        job.progress += saved.length;
+        remaining = remaining.filter(ply => !game.explanations[ply]);
+      }
+    } catch (err) {
+      if (job.cancelled || !(err instanceof LlmError)) throw err;
+      console.error(`[job ${job.id}] batch explanation failed, falling back per moment: ${err.message}`);
+    }
+  }
+
+  for (const ply of remaining) {
     if (job.cancelled) throw new Error('cancelled');
     job.itemStartedAt = new Date().toISOString(); // lets the UI show elapsed time on the current explanation
     const args = [game, ply, [...known.patterns], [...known.concepts]];
-    const { output, costUsd, model } = await complete(settings, { system, prompt: scout ? scoutMomentPrompt(...args) : momentPrompt(...args), schema });
+    const { output, costUsd, model } = await completeRetry(settings, { system, prompt: scout ? scoutMomentPrompt(...args) : momentPrompt(...args), schema });
     const entry = { ...output, model, costUsd, createdAt: new Date().toISOString() };
     game.explanations[ply] = entry; // keep the held copy current for later prompts
     await updateGame(job.gameId, g => { g.explanations = g.explanations || {}; g.explanations[ply] = entry; });
@@ -164,7 +229,7 @@ async function runExplain(job) {
   if (job.cancelled) throw new Error('cancelled');
   if (!game.gameSummary) {
     job.itemStartedAt = new Date().toISOString();
-    const { output, costUsd, model } = await complete(settings, { system, prompt: scout ? scoutGameSummaryPrompt(game) : gameSummaryPrompt(game), schema: SUMMARY_SCHEMA });
+    const { output, costUsd, model } = await completeRetry(settings, { system, prompt: scout ? scoutGameSummaryPrompt(game) : gameSummaryPrompt(game), schema: SUMMARY_SCHEMA });
     const gs = { ...output, model, costUsd, createdAt: new Date().toISOString() };
     job.costUsd += costUsd || 0;
     await updateGame(job.gameId, g => { if (!g.gameSummary) g.gameSummary = gs; });

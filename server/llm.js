@@ -38,11 +38,12 @@ function tryParse(text) {
   try { return JSON.parse(cleaned); } catch { return null; }
 }
 
-/** Provider dispatch. Returns { output, costUsd, model } or throws. */
-export async function complete(settings, { system, prompt, schema }) {
+/** Provider dispatch. Returns { output, costUsd, model } or throws.
+ * `timeoutMs` widens the default for long calls (whole-game batches). */
+export async function complete(settings, { system, prompt, schema, timeoutMs }) {
   const provider = settings.llmProvider || 'claude-cli';
   if (provider === 'claude-cli') {
-    return claudeCli({ system, prompt, schema, model: settings.claudeModel || undefined });
+    return claudeCli({ system, prompt, schema, model: settings.claudeModel || undefined, ...(timeoutMs ? { timeoutMs } : {}) });
   }
   if (provider === 'manual') {
     throw new LlmError('LLM provider is set to manual: copy the prompt from the game view and paste the JSON answer back.');

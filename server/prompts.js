@@ -8,6 +8,16 @@ const conceptsBlock = concepts => concepts?.length ? `
 Concept names already used for this player (reuse one verbatim if it fits, so study topics aggregate; otherwise coin a new short phrase):
 ${concepts.map(c => `- ${c}`).join('\n')}` : '';
 
+const patternsBlock = patterns => patterns?.length ? `
+
+Pattern names already in this player's library (reuse one verbatim if it fits, so recurring weaknesses aggregate; otherwise coin a new short name):
+${patterns.map(p => `- ${p}`).join('\n')}` : '';
+
+const weaknessBlock = (subject, patterns) => patterns?.length ? `
+
+Weakness names already recorded for ${subject} (reuse one verbatim if it fits, so their recurring weaknesses aggregate; otherwise coin a new short name):
+${patterns.map(p => `- ${p}`).join('\n')}` : '';
+
 export const CATEGORIES = [
   'tactics-allowed',    // overlooked the opponent's tactic or threat
   'tactics-missed',     // missed a winning tactic that was available
@@ -57,6 +67,26 @@ export const SCOUT_EXPLANATION_SCHEMA = {
   required: ['pattern', 'category', 'time_pressure', 'explanation', 'key_question', 'concept'],
 };
 
+/** Schema for a whole game's explanations in one call: one entry per moment,
+ * each carrying the ply it belongs to. */
+export function batchExplanationSchema(scout = false) {
+  const item = scout ? SCOUT_EXPLANATION_SCHEMA : EXPLANATION_SCHEMA;
+  return {
+    type: 'object',
+    properties: {
+      explanations: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: { ply: { type: 'number', description: 'The ply number of this moment, exactly as given in the prompt' }, ...item.properties },
+          required: ['ply', ...item.required],
+        },
+      },
+    },
+    required: ['explanations'],
+  };
+}
+
 export const PREP_SHEET_SCHEMA = {
   type: 'object',
   properties: {
@@ -79,21 +109,52 @@ Rules:
 - Evaluations are from White's point of view; positive favours White.`;
 }
 
-/** Scout variant of momentPrompt: same engine grounding, exploitation framing. */
-export function scoutMomentPrompt(game, ply, knownPatterns = [], knownConcepts = []) {
+const gameLine = game => `${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || 'unknown event'} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.`;
+
+function clockText(m, game) {
+  if (m.clock == null) return '';
+  const mins = Math.floor(m.clock / 60), secs = m.clock % 60;
+  const base = `Clock after the move: ${mins}:${String(secs).padStart(2, '0')} remaining.`;
+  // Deterministic time-spent, so time_pressure is not guessed from one number.
+  const spent = game?.analysis?.moves ? spentPerMove(game.analysis.moves, game.headers?.TimeControl)[m.ply - 1] : null;
+  if (spent == null) return base;
+  return `${base} Time spent on this move: about ${spent} seconds.`;
+}
+
+/** The per-moment context for an own-game moment: position, lines, played move,
+ * loss, clock. Shared by the single and batch prompts. */
+function momentSection(game, ply) {
+  const moves = game.analysis.moves;
+  const m = moves[ply - 1];
+  const side = m.color === 'white' ? 'White' : 'Black';
+  const recent = sanLine(moves.slice(Math.max(0, ply - 9), ply - 1));
+  const lines = m.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n');
+  const playedRank = m.playedRank ? `This was the engine's line number ${m.playedRank}.` : 'This move is not among the engine\'s top lines.';
+  const nextMove = moves[ply]; // opponent's reply
+  return `Recent moves before the critical moment: ${recent || '(start of game)'}
+
+Position before the move (FEN): ${m.fenBefore}
+Phase: ${m.phase}. Move ${m.moveNumber}, ${side} to move. Engine evaluation before the move: ${formatEval(m.evalBefore)}.
+
+Engine top lines from this position (${side} to move):
+${lines}
+
+Move played by ${side}: ${m.san}. Evaluation after it: ${formatEval(m.evalAfter)}. ${playedRank}
+${nextMove ? `The opponent replied ${nextMove.san}.` : ''}
+Win-probability lost by this move: ${m.loss} points (${m.judgment}). ${clockText(m, game)}`;
+}
+
+/** The per-moment context for a scouted mistake, including the punishment lines. */
+function scoutSection(game, ply) {
   const moves = game.analysis.moves;
   const m = moves[ply - 1];
   const side = m.color === 'white' ? 'White' : 'Black';
   const subject = game.subject || game.headers[side] || 'the opponent';
-  const opening = sanLine(moves.slice(0, 20));
   const recent = sanLine(moves.slice(Math.max(0, ply - 9), ply - 1));
   const lines = m.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n');
   const next = moves[ply]; // the reply position: how the punishment starts
   const punishLines = next?.lines?.length ? `\nEngine lines AFTER the mistake (${next.color === 'white' ? 'White' : 'Black'} to move, the punishment):\n${next.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n')}\n` : '';
-  return `You are scouting ${subject}, who played ${side} in this game: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || 'unknown event'} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.
-
-Opening moves: ${opening}
-Recent moves before the mistake: ${recent || '(start of game)'}
+  return `Recent moves before the mistake: ${recent || '(start of game)'}
 
 Position before their move (FEN): ${m.fenBefore}
 Phase: ${m.phase}. Move ${m.moveNumber}, ${side} to move. Evaluation: ${formatEval(m.evalBefore)}.
@@ -102,11 +163,75 @@ Engine top lines from this position (${side} to move):
 ${lines}
 
 ${subject} played ${m.san}. Evaluation after it: ${formatEval(m.evalAfter)}. Win-probability lost: ${m.loss} points (${m.judgment}). ${clockText(m, game)}
-${punishLines}
-Explain what ${m.san} gets wrong and, concretely, how the student punishes it using the lines above. Then classify the error and give the cue that signals this weakness is in play.${knownPatterns.length ? `
+${punishLines}`;
+}
 
-Weakness names already recorded for ${subject} (reuse one verbatim if it fits, so their recurring weaknesses aggregate; otherwise coin a new short name):
-${knownPatterns.map(p => `- ${p}`).join('\n')}` : ''}${conceptsBlock(knownConcepts)}`;
+/** Build the user prompt for one critical moment. `knownPatterns` are pattern names already used for this player. */
+export function momentPrompt(game, ply, knownPatterns = [], knownConcepts = []) {
+  const moves = game.analysis.moves;
+  const m = moves[ply - 1];
+  const side = m.color === 'white' ? 'White' : 'Black';
+  const playerName = game.headers[side] || side;
+  return `Game: ${gameLine(game)}
+The player being coached is ${playerName} (${side}), rated about ${game.playerRating || 2000}.
+
+Opening moves: ${sanLine(moves.slice(0, 20))}
+
+${momentSection(game, ply)}
+
+Explain why ${m.san} is classified as ${m.judgment === 'inaccuracy' ? 'an' : 'a'} ${m.judgment} and what the engine's first choice ${m.bestSan} achieves instead, using only the lines above. Then classify the error.${patternsBlock(knownPatterns)}${conceptsBlock(knownConcepts)}`;
+}
+
+/** All of a game's unexplained moments in ONE prompt: the shared game context
+ * is stated once, then each moment's section. Pairs with batchExplanationSchema. */
+export function momentsBatchPrompt(game, plies, knownPatterns = [], knownConcepts = []) {
+  const moves = game.analysis.moves;
+  const side = game.playerColor === 'white' ? 'White' : 'Black';
+  const playerName = game.headers[side] || side;
+  const sections = plies.map((ply, i) => `=== Moment ${i + 1} of ${plies.length} (ply ${ply}) ===
+${momentSection(game, ply)}`).join('\n\n');
+  return `Game: ${gameLine(game)}
+The player being coached is ${playerName} (${side}), rated about ${game.playerRating || 2000}.
+
+Opening moves: ${sanLine(moves.slice(0, 20))}
+
+There are ${plies.length} critical moments to explain, listed below. Each is independent: when explaining a moment, use only that moment's lines.
+
+${sections}
+
+For each moment: explain why the played move is classified as it is and what the engine's first choice achieves instead, then classify the error. Return exactly one entry in the explanations array per moment, carrying its ply number as given in the heading.${patternsBlock(knownPatterns)}${conceptsBlock(knownConcepts)}`;
+}
+
+/** Scout variant of momentPrompt: same engine grounding, exploitation framing. */
+export function scoutMomentPrompt(game, ply, knownPatterns = [], knownConcepts = []) {
+  const moves = game.analysis.moves;
+  const m = moves[ply - 1];
+  const side = m.color === 'white' ? 'White' : 'Black';
+  const subject = game.subject || game.headers[side] || 'the opponent';
+  return `You are scouting ${subject}, who played ${side} in this game: ${gameLine(game)}
+
+Opening moves: ${sanLine(moves.slice(0, 20))}
+
+${scoutSection(game, ply)}
+Explain what ${m.san} gets wrong and, concretely, how the student punishes it using the lines above. Then classify the error and give the cue that signals this weakness is in play.${weaknessBlock(subject, knownPatterns)}${conceptsBlock(knownConcepts)}`;
+}
+
+/** Scout variant of momentsBatchPrompt: every mistake of the subject in one call. */
+export function scoutMomentsBatchPrompt(game, plies, knownPatterns = [], knownConcepts = []) {
+  const moves = game.analysis.moves;
+  const side = game.playerColor === 'white' ? 'White' : 'Black';
+  const subject = game.subject || game.headers[side] || 'the opponent';
+  const sections = plies.map((ply, i) => `=== Mistake ${i + 1} of ${plies.length} (ply ${ply}) ===
+${scoutSection(game, ply)}`).join('\n\n');
+  return `You are scouting ${subject}, who played ${side} in this game: ${gameLine(game)}
+
+Opening moves: ${sanLine(moves.slice(0, 20))}
+
+There are ${plies.length} mistakes by ${subject} to explain, listed below. Each is independent: when explaining a mistake, use only that mistake's lines.
+
+${sections}
+
+For each mistake: explain what the move gets wrong and, concretely, how the student punishes it using only that mistake's lines, then classify the error and give the cue that signals the weakness is in play. Return exactly one entry in the explanations array per mistake, carrying its ply number as given in the heading.${weaknessBlock(subject, knownPatterns)}${conceptsBlock(knownConcepts)}`;
 }
 
 /** Scout variant of the game summary: how the subject plays and how to face them. */
@@ -178,6 +303,16 @@ ${list}
 Synthesize what these instances have in common into one transferable lesson for this player. Use only the instances above: do not invent positions, variations, or evaluations. Return: rule (the principle the player keeps violating), triggers (the cues that should alert them), advice (one habit to apply before moving).`;
 }
 
+/** A previous explanation was rated unhelpful: ask for a clearly better one. */
+export function reExplainSuffix(prior) {
+  return `
+
+A previous explanation for this moment was shown to the student and rated NOT helpful. It was:
+"${prior}"
+
+Write a clearly better explanation: more concrete, tied strictly to the given lines, naming the exact threat or resource that was missed. Do not repeat the old wording.`;
+}
+
 export function systemPrompt(rating) {
   return `You are a chess coach explaining Stockfish analysis to a FIDE ${rating || 2000} rated player.
 You are given a position (FEN), the move that was played, and the engine's top lines with evaluations.
@@ -187,49 +322,6 @@ Rules:
 - Be concrete and brief: the explanation is one paragraph of at most 120 words. No praise, no filler, no generic advice.
 - Plain punctuation: commas, colons, and parentheses. Never use em dashes.
 - Evaluations are from White's point of view; positive favours White.`;
-}
-
-function clockText(m, game) {
-  if (m.clock == null) return '';
-  const mins = Math.floor(m.clock / 60), secs = m.clock % 60;
-  const base = `Clock after the move: ${mins}:${String(secs).padStart(2, '0')} remaining.`;
-  // Deterministic time-spent, so time_pressure is not guessed from one number.
-  const spent = game?.analysis?.moves ? spentPerMove(game.analysis.moves, game.headers?.TimeControl)[m.ply - 1] : null;
-  if (spent == null) return base;
-  return `${base} Time spent on this move: about ${spent} seconds.`;
-}
-
-/** Build the user prompt for one critical moment. `knownPatterns` are pattern names already used for this player. */
-export function momentPrompt(game, ply, knownPatterns = [], knownConcepts = []) {
-  const moves = game.analysis.moves;
-  const m = moves[ply - 1];
-  const side = m.color === 'white' ? 'White' : 'Black';
-  const playerName = game.headers[side] || side;
-  const opening = sanLine(moves.slice(0, 20));
-  const recent = sanLine(moves.slice(Math.max(0, ply - 9), ply - 1));
-  const lines = m.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n');
-  const playedRank = m.playedRank ? `This was the engine's line number ${m.playedRank}.` : 'This move is not among the engine\'s top lines.';
-  const nextMove = moves[ply]; // opponent's reply
-  return `Game: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || 'unknown event'} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.
-The player being coached is ${playerName} (${side}), rated about ${game.playerRating || 2000}.
-
-Opening moves: ${opening}
-Recent moves before the critical moment: ${recent || '(start of game)'}
-
-Position before the move (FEN): ${m.fenBefore}
-Phase: ${m.phase}. Move ${m.moveNumber}, ${side} to move. Engine evaluation before the move: ${formatEval(m.evalBefore)}.
-
-Engine top lines from this position (${side} to move):
-${lines}
-
-Move played by ${side}: ${m.san}. Evaluation after it: ${formatEval(m.evalAfter)}. ${playedRank}
-${nextMove ? `The opponent replied ${nextMove.san}.` : ''}
-Win-probability lost by this move: ${m.loss} points (${m.judgment}). ${clockText(m, game)}
-
-Explain why ${m.san} is classified as ${m.judgment === 'inaccuracy' ? 'an' : 'a'} ${m.judgment} and what the engine's first choice ${m.bestSan} achieves instead, using only the lines above. Then classify the error.${knownPatterns.length ? `
-
-Pattern names already in this player's library (reuse one verbatim if it fits, so recurring weaknesses aggregate; otherwise coin a new short name):
-${knownPatterns.map(p => `- ${p}`).join('\n')}` : ''}${conceptsBlock(knownConcepts)}`;
 }
 
 export function gameSummaryPrompt(game) {
