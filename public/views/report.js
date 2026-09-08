@@ -39,7 +39,8 @@ export async function reportView(root) {
     </div>
 
     ${r.focus.length ? `<h2>Focus areas</h2><div class="grid grid-3">${r.focus.map((f, i) => `
-      <div class="card"><div class="muted">#${i + 1}</div><b>${esc(CATEGORY_LABEL[f.category] || f.category)}</b><div class="muted">${f.count} moment${f.count === 1 ? '' : 's'}, weighted ${f.weight}</div></div>`).join('')}</div>` : ''}
+      <div class="card"><div class="muted">#${i + 1}</div><b>${esc(CATEGORY_LABEL[f.category] || f.category)}</b><div class="muted">${f.count} moment${f.count === 1 ? '' : 's'}, weighted ${f.weight}</div>
+      <div style="margin-top:6px"><a href="#/drills?category=${encodeURIComponent(f.category)}" title="Every drill of this error type, back to back (does not touch the review schedule)">Drill this ▸</a></div></div>`).join('')}</div>` : ''}
 
     <div class="grid grid-2" style="margin-top: 20px">
       <div class="card">
@@ -101,13 +102,17 @@ export async function reportView(root) {
 
     ${r.drillStats ? `<div class="card" style="margin-top: 20px">
       <h3 style="margin-top:0">Drill performance</h3>
-      <p class="muted" style="margin-top:0">${r.drillStats.attempts} reviews on this machine, ${r.drillStats.rate}% correct.</p>
+      <p class="muted" style="margin-top:0">${r.drillStats.attempts} reviews${r.drillStats.machines > 1 ? ` across ${r.drillStats.machines} machines` : ' on this machine'}, ${r.drillStats.rate}% correct.</p>
       <div class="grid grid-2">
         <table><thead><tr><th>Phase</th><th class="num">Reviews</th><th class="num">Correct</th></tr></thead>
         <tbody>${Object.entries(r.drillStats.byPhase).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v.attempts}</td><td class="num">${Math.round((v.correct / v.attempts) * 100)}%</td></tr>`).join('')}</tbody></table>
         <table><thead><tr><th>Error type</th><th class="num">Reviews</th><th class="num">Correct</th></tr></thead>
         <tbody>${Object.entries(r.drillStats.byCategory).map(([k, v]) => `<tr><td>${esc(catLabel(k))}</td><td class="num">${v.attempts}</td><td class="num">${Math.round((v.correct / v.attempts) * 100)}%</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Categories appear once explained games are re-synced.</td></tr>'}</tbody></table>
       </div>
+      ${r.drillStats.speed ? `<h3>Recognition speed</h3>
+      <table><thead><tr><th>Pattern</th><th class="num">Timed reviews</th><th class="num">Median answer</th></tr></thead>
+      <tbody>${r.drillStats.speed.map(s => `<tr><td>${esc(s.pattern)}</td><td class="num">${s.attempts}</td><td class="num">${(s.medianMs / 1000).toFixed(1)}s</td></tr>`).join('')}</tbody></table>
+      <small>Instant recognition, not laborious re-derivation, is what pattern training is after; watch the medians fall.</small>` : ''}
     </div>` : ''}
 
     <div class="grid grid-2" style="margin-top: 20px">

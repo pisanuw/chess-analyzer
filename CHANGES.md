@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-08 (report links into practice, docs)
+
+- Focus-area cards on the report link straight into category rounds ("Drill this"), and drill performance shows the machine count plus a recognition-speed table (median answer time per pattern, once a pattern has 3+ timed reviews).
+- README, BRIEFING, and CLAUDE.md updated for the whole 2026-09-08 review batch (shared module, threshold re-scoring, eval cache, batched explanations, drill store upgrades, decoys, opening drills, re-explain, mirror polling, drill protocols, guess the move).
+
 ## 2026-09-08 (guess the move for whole games)
 
 - "Guess the move" in the game view: replay an analysed game predicting every one of your own moves. Each guess is scored in win-probability (your game move scores its known loss, stored engine lines score exactly, off-list guesses use the paired quick eval when an engine is present, unscored on the mirror), and the game continues as it actually went after each guess. The recap compares the replay's total loss against what the game itself lost on those moves. Old-school active recall over the whole game, and a second serving of quiet-position detection practice.
