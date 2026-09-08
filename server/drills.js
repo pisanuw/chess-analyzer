@@ -158,15 +158,19 @@ async function recordGuessUnlocked(game, ply, uci, correct, settings) {
 export function syncAllDrills() {
   return locked(async () => {
     const settings = await getSettings();
-    const ids = new Set();
+    const validIds = new Set();   // drill ids that match a current moment
+    const pendingGames = new Set(); // games mid-pipeline: keep their drills as-is
     for (const entry of await listGames()) {
-      ids.add(entry.id);
-      if (entry.status !== 'analysed' && entry.status !== 'explained') continue;
+      if (entry.status !== 'analysed' && entry.status !== 'explained') { pendingGames.add(entry.id); continue; }
       const game = await getGame(entry.id);
-      if (game?.analysis) await syncGameUnlocked(game, settings);
+      if (!game?.analysis) { pendingGames.add(entry.id); continue; }
+      await syncGameUnlocked(game, settings);
+      for (const ply of game.analysis.summary.moments) validIds.add(drillId(game.id, ply));
     }
     const store = await getDrills();
-    const kept = store.drills.filter(d => ids.has(d.gameId));
+    // Prune drills for deleted games AND for plies that are no longer moments
+    // (e.g. after a colour fix or re-analysis changed which side is tracked).
+    const kept = store.drills.filter(d => validIds.has(d.id) || pendingGames.has(d.gameId));
     if (kept.length !== store.drills.length) {
       store.drills = kept;
       await saveDrills(store);

@@ -76,3 +76,13 @@ test('syncAllDrills derives from disk and prunes orphans', async () => {
   assert.ok(drills.some(d => d.gameId === 'aaaaaaaaaa04'), 'derives drills from game files');
   assert.ok(!drills.some(d => d.gameId === 'aaaaaaaaaa02'), 'prunes drills whose game file is gone');
 });
+
+test('syncAllDrills prunes drills for plies that are no longer moments', async () => {
+  const dir = process.env.DATA_DIR;
+  // Same game, but the moment moved from ply 1 to ply 3 (e.g. after a colour fix).
+  writeGame(dir, makeGame({ id: 'aaaaaaaaaa04', moments: [{ ply: 3, loss: 22 }], plies: 4 }));
+  await syncAllDrills();
+  const { drills } = await getDrills();
+  assert.ok(!drills.some(d => d.id === 'aaaaaaaaaa04:1'), 'stale ply drill removed');
+  assert.ok(drills.some(d => d.id === 'aaaaaaaaaa04:3'), 'current moment drill present');
+});
