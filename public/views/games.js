@@ -35,6 +35,7 @@ export async function gamesView(root) {
     <div class="row" style="margin: 18px 0 8px; justify-content: space-between">
       <h2 style="margin:0">${games.length} game${games.length === 1 ? '' : 's'}</h2>
       <div class="row">
+        <input type="search" id="game-search" placeholder="Filter by player or event…" style="width: 220px; padding: 4px 8px; font-size: 13px">
         ${status.readonly ? '' : '<button id="analyse-all" class="small">Analyse and explain everything pending</button>'}
       </div>
     </div>
@@ -44,6 +45,8 @@ export async function gamesView(root) {
   const list = root.querySelector('#list');
   let sortAsc = false;
   let filter = 'all'; // 'all' | 'own' | a subject name
+  let query = '';     // free-text filter on players and event
+  const matchesQuery = g => !query || [g.white, g.black, g.event, g.subject].some(s => (s || '').toLowerCase().includes(query));
   const byDate = (a, b) => ((b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt)) * (sortAsc ? -1 : 1);
   const render = () => {
     if (!games.length) { list.innerHTML = '<div class="empty">No games yet. Import a PGN above.</div>'; return; }
@@ -52,7 +55,8 @@ export async function gamesView(root) {
       ${[['all', 'All'], ['own', 'My games'], ...subjects.map(s => [s, 'Scout: ' + s])].map(([v, label]) =>
         `<button class="small${filter === v ? ' primary' : ''}" data-filter="${esc(v)}">${esc(label)}</button>`).join('')}
     </div>` : '';
-    const rows = [...games].filter(g => filter === 'all' || (filter === 'own' ? g.purpose !== 'scout' : g.subject === filter)).sort(byDate);
+    const rows = [...games].filter(g => filter === 'all' || (filter === 'own' ? g.purpose !== 'scout' : g.subject === filter)).filter(matchesQuery).sort(byDate);
+    if (!rows.length) { list.innerHTML = filterBar + '<div class="empty">No games match.</div>'; return; }
     list.innerHTML = filterBar + `<table>
       <thead><tr><th data-sort style="cursor:pointer" title="Toggle date order">Date ${sortAsc ? '↑' : '↓'}</th><th>White</th><th>Black</th><th>Result</th><th>Event</th><th>Played</th><th>Status</th><th class="num">Accuracy</th><th class="num">Moments</th><th></th></tr></thead>
       <tbody>${rows.map(g => `
@@ -132,6 +136,11 @@ export async function gamesView(root) {
     return names;
   };
   root.querySelector('#pgn')?.addEventListener('input', updateNameSuggestions);
+
+  root.querySelector('#game-search').addEventListener('input', e => {
+    query = e.target.value.trim().toLowerCase();
+    render();
+  });
 
   root.querySelectorAll('input[name="gpurpose"]').forEach(el => el.addEventListener('change', () => {
     const scout = root.querySelector('input[name="gpurpose"]:checked').value === 'scout';

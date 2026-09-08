@@ -2,6 +2,16 @@
 
 Newest first.
 
+## 2026-09-07 (frontend: promotion picker, clocks in drills, time strip, recap, repertoire transpositions)
+
+- Promotions get a click overlay (queen, rook, bishop, knight; keys q/r/b/n, Escape cancels) instead of a window.prompt; a dismissed pick re-sets the board.
+- Drills show the clock from the game ("clock in the game: 1:40"): the time situation is part of the position. Drill records carry the mistake's clock; existing drills pick it up on the next startup sync.
+- The eval graph grows a time-spent strip under the win-probability line when the PGN has clocks (bar height = think time; tooltip shows seconds), making the long-think-then-blunder and time-trouble-collapse patterns visible at a glance.
+- Finishing the due queue shows a session recap: answers, correct rate, and what was missed on the first try, grouped by error type.
+- The repertoire groups by the position after 8 plies instead of the move string, so transpositions merge; the most common move order is shown with an "N orders" chip, and every line links to the lichess analysis board for explorer study. Scout dossier repertoires get the same treatment.
+- Games list has a free-text filter (players, event, subject) next to the scout chips.
+- Editing names and synthesizing a pattern re-render the view instead of reloading the whole app.
+
 ## 2026-09-07 (backend: fair quick evals, win-probability acceptance, index cache, hosted CAS)
 
 - Quick evals of off-list guesses now search the guess and the stored best move together (UCI searchmoves, one search, same depth), instead of judging a depth-12 eval of the guess against the stored depth-18 lines. The endpoint also returns the difference in win-probability points.

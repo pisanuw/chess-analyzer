@@ -69,7 +69,7 @@ async function renderDossier(el, subject) {
       ${repertoire.length ? `<table><thead><tr><th>As</th><th>Line</th><th>ECO</th><th class="num">Games</th><th class="num">Their score</th><th class="num">Prep ends</th><th>Games</th></tr></thead>
       <tbody>${repertoire.map(l => `<tr>
         <td><span class="chip ${l.color}">${l.color}</span></td>
-        <td>${esc(fmtLine(l.line))}</td>
+        <td>${esc(fmtLine(l.line))} <a href="https://lichess.org/analysis/pgn/${encodeURIComponent(fmtLine(l.line))}" target="_blank" rel="noopener" title="Open on the lichess analysis board">↗</a>${l.moveOrders > 1 ? ` <span class="chip" title="Reached by ${l.moveOrders} move orders">${l.moveOrders} orders</span>` : ''}</td>
         <td>${esc(l.eco)}</td>
         <td class="num">${l.count}</td>
         <td class="num">${l.scorePct != null ? l.scorePct + '%' : '–'}</td>

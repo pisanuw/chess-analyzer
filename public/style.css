@@ -182,6 +182,8 @@ tr.clickable:hover td { background: var(--surface-2); }
 .chart .dot.flagged { fill: var(--critical); }
 .chart .area { fill: var(--seq-250); opacity: .55; }
 .chart .cursor { stroke: var(--muted); stroke-dasharray: 3 3; }
+.chart .tbar.white { fill: var(--muted); opacity: .8; }
+.chart .tbar.black { fill: var(--text-2); opacity: .8; }
 .chart .hit { fill: transparent; cursor: pointer; }
 
 .import-area { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: start; }
@@ -190,4 +192,7 @@ tr.clickable:hover td { background: var(--surface-2); }
 @media (max-width: 900px) { .drill-layout { grid-template-columns: 1fr; } }
 .kbd { font-family: ui-monospace, Menlo, monospace; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; background: var(--surface-2); }
 .empty { color: var(--muted); padding: 30px; text-align: center; }
+.promo-overlay { position: fixed; inset: 0; background: rgba(10, 10, 14, .45); display: flex; align-items: center; justify-content: center; z-index: 30; }
+.promo { display: flex; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+.promo button { font-size: 38px; line-height: 1; padding: 6px 14px; }
 pre.prompt { white-space: pre-wrap; font-size: 12px; background: var(--surface-2); padding: 10px; border-radius: 6px; max-height: 260px; overflow: auto; }

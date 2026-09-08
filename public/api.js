@@ -84,6 +84,11 @@ export function winProb(cp) {
 // points. Mirrors WP_ACCEPT in server/drills.js; keep the two in sync.
 export const WP_ACCEPT = 3;
 
+/** Seconds -> "m:ss". */
+export function fmtClock(s) {
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 /** "12." for White moves, "12..." for Black. */
 export function movePrefix(m) {
   return `${m.moveNumber}${m.color === 'white' ? '.' : '...'}`;

@@ -1,6 +1,7 @@
 // Drills: replay your own critical moments, spaced repetition.
-import { api, esc, toast, formatEval, WP_ACCEPT } from '../api.js';
+import { api, esc, toast, formatEval, fmtClock, WP_ACCEPT } from '../api.js';
 import { Board, applyMove, walkSans, lineShapes } from '../board.js';
+import { CATEGORY_LABEL } from './report.js';
 
 const MAX_FOLLOWUPS = 2; // player moves asked beyond the first, along the engine's PV
 
@@ -9,6 +10,7 @@ export async function drillsView(root) {
   let idx = 0;
   let board = null;
   let state = null; // { drill, status, verdict, game }
+  const session = { attempts: 0, correct: 0, missed: [] }; // missed: first-attempt failures
 
   root.innerHTML = `
     <div class="row" style="justify-content: space-between"><h1 style="margin:0">Drills</h1><span class="muted" id="counts"></span></div>
@@ -26,7 +28,7 @@ export async function drillsView(root) {
         if (due.length) return load();
       }
       counts.textContent = `${total} drill${total === 1 ? '' : 's'} total`;
-      el.innerHTML = `<div class="card"><div class="empty">${total ? 'Nothing due right now. Come back later.' : 'No drills yet. Drills are created from mistakes and blunders when games are analysed.'}</div></div>`;
+      el.innerHTML = `${sessionRecap()}<div class="card"><div class="empty">${total ? 'Nothing due right now. Come back later.' : 'No drills yet. Drills are created from mistakes and blunders when games are analysed.'}</div></div>`;
       board?.destroy();
       board = null;
       state = null; // stray keypresses must not re-grade the last drill
@@ -55,6 +57,21 @@ export async function drillsView(root) {
     api.game(state.drill.gameId).then(({ game }) => { state.game = game; renderPanel(); }).catch(() => {});
   }
 
+  /** Close the loop at the end of a session: how it went, what to revisit. */
+  function sessionRecap() {
+    if (!session.attempts) return '';
+    const missCounts = new Map();
+    for (const d of session.missed) {
+      const k = d.category ? (CATEGORY_LABEL[d.category] || d.category) : (d.pattern || d.phase);
+      missCounts.set(k, (missCounts.get(k) || 0) + 1);
+    }
+    const missed = [...missCounts.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n}× ${esc(k)}`).join(', ');
+    const pct = Math.round((session.correct / session.attempts) * 100);
+    return `<div class="card" style="margin-bottom: 12px"><h3 style="margin-top:0">Session done</h3>
+      <p>${session.attempts} answer${session.attempts === 1 ? '' : 's'}, ${session.correct} correct (${pct}%).</p>
+      ${missed ? `<p class="muted">Missed on the first try: ${missed}.</p>` : '<p class="muted">Clean session, nothing missed.</p>'}</div>`;
+  }
+
   function reveal(verdict) {
     state.status = 'revealed';
     state.verdict = verdict;
@@ -72,13 +89,14 @@ export async function drillsView(root) {
     renderPanel();
   }
 
-  function onMove(orig, dest) {
+  async function onMove(orig, dest) {
     if (!state) return;
     const d = state.drill;
     if (state.status === 'follow') {
       const f = state.follow;
-      const res = applyMove(f.steps[f.idx + 1].fen, orig, dest);
-      if (!res) return;
+      const reply = f.steps[f.idx + 1];
+      const res = await applyMove(reply.fen, orig, dest);
+      if (!res) return board.set(reply.fen, { lastMove: reply.uci, movableFor: d.sideToMove }); // dismissed promotion
       const expected = f.steps[f.idx + 2];
       const done = played => {
         board.set(played.fen, { lastMove: played.uci, shapes: lineShapes(d.lines, d.playedUci) });
@@ -96,8 +114,8 @@ export async function drillsView(root) {
       return done(res);
     }
     if (state.status !== 'guessing') return;
-    const res = applyMove(d.fen, orig, dest);
-    if (!res) return;
+    const res = await applyMove(d.fen, orig, dest);
+    if (!res) return board.set(d.fen, { movableFor: d.sideToMove }); // dismissed promotion
     const correct = d.acceptedUci.includes(res.uci);
     const rank = d.lines.findIndex(l => l.uci === res.uci);
     let text;
@@ -138,7 +156,7 @@ export async function drillsView(root) {
     if (state.status === 'guessing') {
       const hint = d.reviews?.length ? state.game?.explanations?.[d.ply]?.key_question : null;
       p.innerHTML = `<div class="guess"><b>${punish ? `${esc(d.subject || 'The opponent')} just played ${esc(d.mistakeSan)}. ${side} to move: find the punishment.` : `${side} to move. Find the best move.`}</b>
-        <p class="muted">Drill ${idx + 1} of ${due.length}. ${chips}</p>
+        <p class="muted">Drill ${idx + 1} of ${due.length}. ${chips}${d.clock != null ? ` · clock in the game: ${fmtClock(d.clock)}` : ''}</p>
         ${hint ? `<div class="kq">Ask yourself: ${esc(hint)}</div>` : ''}
         <button class="small" id="giveup">Show answer</button></div>`;
       p.querySelector('#giveup').onclick = () => { board.set(d.fen, { shapes: lineShapes(d.lines, d.playedUci) }); reveal({ correct: false, text: `Engine: ${d.bestSan}.`, followUps: 0, foundSans: [] }); };
@@ -184,6 +202,9 @@ export async function drillsView(root) {
     grading = true;
     try {
       await api.reviewDrill(state.drill.id, g, state.verdict.correct);
+      session.attempts++;
+      if (state.verdict.correct) session.correct++;
+      else if (!session.missed.some(x => x.id === state.drill.id)) session.missed.push(state.drill);
       import('../app.js').then(m => m.updateDrillBadge());
       idx++;
       await load();

@@ -12,15 +12,30 @@ export function legalDests(fen) {
   return { dests, turn: chess.turn() === 'w' ? 'white' : 'black', inCheck: chess.inCheck() };
 }
 
-/** Apply a move (orig, dest) to a FEN; asks which piece on promotion. Returns { san, uci, fen } or null. */
-export function applyMove(fen, orig, dest) {
+/** Overlay asking which piece to promote to; resolves 'q'|'r'|'b'|'n', or null if dismissed. */
+function pickPromotion(color) {
+  return new Promise(resolve => {
+    const glyphs = color === 'w' ? { q: '♕', r: '♖', b: '♗', n: '♘' } : { q: '♛', r: '♜', b: '♝', n: '♞' };
+    const div = document.createElement('div');
+    div.className = 'promo-overlay';
+    div.innerHTML = `<div class="promo">${['q', 'r', 'b', 'n'].map(p => `<button data-p="${p}" title="${p}">${glyphs[p]}</button>`).join('')}</div>`;
+    const done = p => { div.remove(); document.removeEventListener('keydown', onKey); resolve(p); };
+    const onKey = e => { if (e.key === 'Escape') done(null); if ('qrbn'.includes(e.key)) done(e.key); };
+    div.addEventListener('click', e => done(e.target.closest('button[data-p]')?.dataset.p || null));
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(div);
+  });
+}
+
+/** Apply a move (orig, dest) to a FEN; asks which piece on promotion. Resolves { san, uci, fen } or null. */
+export async function applyMove(fen, orig, dest) {
   const chess = new Chess(fen);
   try {
     let promotion = 'q';
     const piece = chess.get(orig);
     if (piece?.type === 'p' && (dest[1] === '8' || dest[1] === '1')) {
-      const ans = (window.prompt('Promote to: q, r, b, or n', 'q') || 'q').trim().toLowerCase();
-      if (ans.length === 1 && 'qrbn'.includes(ans)) promotion = ans;
+      promotion = await pickPromotion(piece.color);
+      if (!promotion) return null; // dismissed: the caller re-sets the board
     }
     const m = chess.move({ from: orig, to: dest, promotion });
     if (!m) return null;

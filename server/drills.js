@@ -64,6 +64,7 @@ function makeDrill(game, ply, tier, existing) {
     phase: m.phase,
     judgment: m.judgment,
     loss: m.loss,
+    clock: m.clock ?? null, // seconds left after the mistake: the time situation the position was played in
     tier, // 'core' (mistakes/blunders) or 'sharpen' (near-miss moments below the drill threshold)
     category: e?.category || existing?.category || null,
     pattern: e?.pattern || existing?.pattern || null,
@@ -102,6 +103,7 @@ function makePunishDrill(game, ply, tier, existing) {
     phase: m.phase,
     judgment: m.judgment,
     loss: m.loss,
+    clock: m.clock ?? null, // the subject's clock when they erred: context for how the mistake happened
     tier,
     category: e?.category || existing?.category || null,
     pattern: e?.pattern || existing?.pattern || null,

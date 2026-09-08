@@ -1,5 +1,5 @@
 // Single game: board, eval graph, moves, critical moments with guess-first reveal, summary.
-import { api, esc, toast, formatEval, moveLabel, movePrefix, winProb, WP_ACCEPT, JUDGE_MARK } from '../api.js';
+import { api, esc, toast, formatEval, fmtClock, moveLabel, movePrefix, winProb, WP_ACCEPT, JUDGE_MARK } from '../api.js';
 import { Board, applyMove, walkSans, lineShapes } from '../board.js';
 import { evalGraph } from '../charts.js';
 
@@ -107,7 +107,7 @@ export async function gameView(root, id, startPly) {
         if (scout) { subject = prompt('Scouting subject (must match one of the names)', game.subject || ''); if (subject == null) return; }
         await api.setNames(id, white.trim(), black.trim(), subject?.trim());
         toast('Names updated');
-        location.reload(); // header, dossiers, and labels all derive from the names
+        window.dispatchEvent(new HashChangeEvent('hashchange')); // header and labels derive from the names: rebuild the view
       }
     } catch (err) { toast(err.message, true); }
   });
@@ -206,7 +206,7 @@ export async function gameView(root, id, startPly) {
     panel.querySelector('.guess')?.scrollIntoView({ block: 'nearest' });
   }
 
-  function onUserMove(orig, dest) {
+  async function onUserMove(orig, dest) {
     const g = state.guess;
     if (!g || g.status !== 'guessing') return;
     const m = moves()[g.ply - 1];
@@ -214,8 +214,8 @@ export async function gameView(root, id, startPly) {
     // checked against the NEXT move's stored lines (the refutation).
     const t = scout ? moves()[g.ply] : m;
     if (!t) return;
-    const res = applyMove(t.fenBefore, orig, dest);
-    if (!res) return;
+    const res = await applyMove(t.fenBefore, orig, dest);
+    if (!res) return showPly(state.ply); // dismissed promotion: undo the visual drop
     g.tried = res;
     g.status = 'revealed';
     const rank = t.lines.findIndex(l => l.uci === res.uci);
@@ -348,7 +348,7 @@ export async function gameView(root, id, startPly) {
     ({ game } = await api.game(id));
     renderActions();
     root.querySelector('[data-tab="moments"]').textContent = `Critical moments${game.analysis ? ` (${game.analysis.summary.moments.length})` : ''}`;
-    if (game.analysis) graph = evalGraph(root.querySelector('#graph'), game.analysis.moves, { currentPly: state.ply, onSelect: ply => showPly(ply) });
+    if (game.analysis) graph = evalGraph(root.querySelector('#graph'), game.analysis.moves, { currentPly: state.ply, onSelect: ply => showPly(ply), timeControl: h.TimeControl });
     renderPanel();
     showPly(state.ply);
   }
@@ -357,14 +357,10 @@ export async function gameView(root, id, startPly) {
   jobEvents.addEventListener('finished', onFinished);
 
   // --- initial render -------------------------------------------------------------
-  if (game.analysis) graph = evalGraph(root.querySelector('#graph'), game.analysis.moves, { currentPly: 0, onSelect: ply => showPly(ply) });
+  if (game.analysis) graph = evalGraph(root.querySelector('#graph'), game.analysis.moves, { currentPly: 0, onSelect: ply => showPly(ply), timeControl: h.TimeControl });
   renderPanel();
   if (startPly && game.analysis && game.analysis.summary.moments.includes(Number(startPly))) openMoment(Number(startPly));
   else showPly(startPly ? Number(startPly) : 0);
 
   return { destroy: () => { board.destroy(); document.removeEventListener('keydown', onKey); jobEvents.removeEventListener('finished', onFinished); } };
-}
-
-function fmtClock(s) {
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }

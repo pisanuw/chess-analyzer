@@ -96,16 +96,36 @@ export function lineChart(container, points, { yMin = 0, yMax = 100, format = v 
   container.appendChild(svg);
 }
 
-/** Eval graph across a game: white win probability by ply, with player moments marked. */
-export function evalGraph(container, moves, { currentPly = 0, onSelect = null } = {}) {
+/** Time spent per ply from stored clocks ([%clk] is seconds remaining after the move). */
+function spentPerMove(moves, timeControl) {
+  const tc = (timeControl || '').match(/^(\d+)(?:\+(\d+))?$/);
+  const base = tc ? Number(tc[1]) : null, inc = tc ? Number(tc[2] || 0) : 0;
+  const prev = { white: base, black: base };
+  return moves.map(m => {
+    let spent = null;
+    if (m.clock != null && prev[m.color] != null) spent = Math.max(0, prev[m.color] - m.clock + inc);
+    if (m.clock != null) prev[m.color] = m.clock;
+    return spent;
+  });
+}
+
+const fmtSpent = s => s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
+
+/** Eval graph across a game: white win probability by ply, with player moments
+ * marked and, when the PGN has clocks, a time-spent strip underneath (the
+ * classic patterns: the long think before the blunder, the blitzed collapse). */
+export function evalGraph(container, moves, { currentPly = 0, onSelect = null, timeControl = null } = {}) {
   container.classList.add('chart');
   container.innerHTML = '';
-  const W = Math.max(300, container.clientWidth || 520), H = 110, pad = 4;
   const n = moves.length;
   if (!n) return;
+  const spents = spentPerMove(moves, timeControl);
+  const hasTime = spents.some(s => s != null);
+  const W = Math.max(300, container.clientWidth || 520), pad = 4;
+  const evalH = 110, timeH = hasTime ? 30 : 0, H = evalH + timeH;
   const xs = ply => pad + (ply / n) * (W - 2 * pad);
   const wpWhite = m => (m.color === 'white' ? m.wpAfter : 100 - m.wpAfter); // white perspective after the move
-  const ys = wp => pad + (1 - wp / 100) * (H - 2 * pad);
+  const ys = wp => pad + (1 - wp / 100) * (evalH - 2 * pad);
   const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, style: 'background: var(--surface-2); border-radius: 6px' });
   let d = `M${xs(0)},${ys(50)}`;
   moves.forEach(m => { d += ` L${xs(m.ply).toFixed(1)},${ys(wpWhite(m)).toFixed(1)}`; });
@@ -117,6 +137,16 @@ export function evalGraph(container, moves, { currentPly = 0, onSelect = null } 
       svg.appendChild(svgEl('circle', { cx: xs(m.ply), cy: ys(wpWhite(m)), r: m.judgment === 'inaccuracy' ? 3 : 4.5, class: 'dot flagged' }));
     }
   }
+  if (hasTime) {
+    const maxSpent = Math.max(30, ...spents.filter(s => s != null));
+    svg.appendChild(svgEl('line', { x1: pad, y1: evalH, x2: W - pad, y2: evalH, class: 'axis' }));
+    const bw = Math.max(1, (W - 2 * pad) / n - 1);
+    moves.forEach((m, i) => {
+      if (!spents[i]) return;
+      const h = Math.max(1.5, (spents[i] / maxSpent) * (timeH - 6));
+      svg.appendChild(svgEl('rect', { x: (xs(m.ply) - bw / 2).toFixed(1), y: (H - pad - h).toFixed(1), width: bw.toFixed(1), height: h.toFixed(1), class: `tbar ${m.color}` }));
+    });
+  }
   const cursor = svgEl('line', { x1: xs(currentPly), y1: pad, x2: xs(currentPly), y2: H - pad, class: 'cursor' });
   svg.appendChild(cursor);
   const tip = tooltip(container);
@@ -126,9 +156,11 @@ export function evalGraph(container, moves, { currentPly = 0, onSelect = null } 
     return Math.max(1, Math.min(n, Math.round(((e.clientX - r.left) / r.width) * n)));
   };
   hit.addEventListener('mousemove', e => {
-    const m = moves[plyAt(e) - 1];
+    const ply = plyAt(e);
+    const m = moves[ply - 1];
     const r = container.getBoundingClientRect();
-    tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${movePrefix(m)} ${esc(m.san)}</b> ${esc(formatEval(m.evalAfter))}${flaggedJudgment(m.judgment) ? ' (' + m.judgment + ')' : ''}`);
+    const think = spents[ply - 1] != null ? ` · ${fmtSpent(spents[ply - 1])} think` : '';
+    tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${movePrefix(m)} ${esc(m.san)}</b> ${esc(formatEval(m.evalAfter))}${flaggedJudgment(m.judgment) ? ' (' + m.judgment + ')' : ''}${think}`);
   });
   hit.addEventListener('mouseleave', () => tip.hide());
   if (onSelect) hit.addEventListener('click', e => onSelect(plyAt(e)));

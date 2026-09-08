@@ -4,6 +4,9 @@ import { gamesForSubject } from './subjects.js';
 
 const LINE_PLIES = 8;
 
+/** Most frequent key in a count map (ties: first inserted). */
+const topKey = map => [...map.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+
 export async function buildRepertoire({ purpose = 'own', subject = null } = {}) {
   let games;
   if (purpose === 'scout') {
@@ -14,10 +17,17 @@ export async function buildRepertoire({ purpose = 'own', subject = null } = {}) 
   }
   const lines = new Map();
   for (const g of games) {
-    const sans = g.analysis.moves.slice(0, LINE_PLIES).map(m => m.san);
-    const key = `${g.playerColor}|${sans.join(' ')}`;
-    if (!lines.has(key)) lines.set(key, { color: g.playerColor, line: sans, eco: g.headers.ECO || '', games: [], score: 0, scored: 0, acc: 0, prepEnds: [] });
+    const opening = g.analysis.moves.slice(0, LINE_PLIES);
+    // Group by the POSITION after the opening plies, not the move order, so
+    // transpositions merge. Placement, turn, and castling identify it; en
+    // passant and the counters would split identical positions spuriously.
+    const posKey = opening.length ? opening[opening.length - 1].fenAfter.split(' ').slice(0, 3).join(' ') : 'start';
+    const key = `${g.playerColor}|${posKey}`;
+    if (!lines.has(key)) lines.set(key, { color: g.playerColor, variants: new Map(), ecos: new Map(), games: [], score: 0, scored: 0, acc: 0, prepEnds: [] });
     const l = lines.get(key);
+    const san = opening.map(m => m.san).join(' ');
+    l.variants.set(san, (l.variants.get(san) || 0) + 1);
+    if (g.headers.ECO) l.ecos.set(g.headers.ECO, (l.ecos.get(g.headers.ECO) || 0) + 1);
     const score = resultScore(g.headers.Result, g.playerColor);
     // Earliest opening move by the player that left the engine's list or lost ≥10 win-%:
     // a practical marker for "this is where preparation or understanding ran out".
@@ -29,8 +39,9 @@ export async function buildRepertoire({ purpose = 'own', subject = null } = {}) 
   }
   return [...lines.values()].map(l => ({
     color: l.color,
-    line: l.line,
-    eco: l.eco,
+    line: (topKey(l.variants) || '').split(' ').filter(Boolean), // most common move order
+    moveOrders: l.variants.size,
+    eco: topKey(l.ecos) || '',
     count: l.games.length,
     scorePct: l.scored ? Math.round((l.score / l.scored) * 100) : null,
     accuracy: +(l.acc / l.games.length).toFixed(1),

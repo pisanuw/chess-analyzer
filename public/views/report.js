@@ -127,7 +127,7 @@ export async function reportView(root) {
 
   root.querySelectorAll('button[data-synth]').forEach(b => b.onclick = async () => {
     b.disabled = true; b.textContent = 'Synthesizing (about a minute)…';
-    try { await api.synthesizePattern(b.dataset.synth); location.reload(); }
+    try { await api.synthesizePattern(b.dataset.synth); window.dispatchEvent(new HashChangeEvent('hashchange')); }
     catch (err) { b.disabled = false; b.textContent = `Synthesize: ${b.dataset.synth}`; toast(err.message, true); }
   });
 

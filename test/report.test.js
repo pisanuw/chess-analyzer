@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { Chess } from 'chess.js';
 import { tempData, makeGame, writeGame } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
@@ -79,4 +80,36 @@ test('buildRepertoire groups lines and marks where prep ends', async () => {
   assert.ok(line.line.length > 0 && line.line.length <= 8);
   assert.equal(line.prepEndsPly, null); // fixture moments are middlegame, so prep never "ends"
   assert.ok(line.games[0].id);
+});
+
+/** Analysed game with real positions from SAN moves; the player is White, no mistakes. */
+function openingGame(id, sans, date) {
+  const chess = new Chess();
+  const moves = sans.map((san, i) => {
+    const fenBefore = chess.fen();
+    const mv = chess.move(san);
+    return {
+      ply: i + 1, moveNumber: Math.floor(i / 2) + 1, color: mv.color === 'w' ? 'white' : 'black',
+      san: mv.san, uci: mv.from + mv.to + (mv.promotion || ''), fenBefore, fenAfter: chess.fen(),
+      clock: null, evalBefore: 0, evalAfter: 0, loss: 0, cpLoss: 0, accuracy: 95,
+      judgment: 'best', phase: 'opening', isPlayer: i % 2 === 0,
+      bestUci: mv.from + mv.to, bestSan: mv.san, playedRank: 1,
+      lines: [{ multipv: 1, cp: 20, uci: mv.from + mv.to, san: [mv.san] }],
+    };
+  });
+  const base = makeGame({ id, date, moments: [], plies: 2 });
+  return { ...base, moves, analysis: { ...base.analysis, moves, summary: { ...base.analysis.summary, moments: [] } } };
+}
+
+test('buildRepertoire merges transpositions by position, keeping the common move order', async () => {
+  // Same position after 4 plies via two move orders.
+  writeGame(dir, openingGame('eeeeeeeeee01', ['d4', 'd5', 'c4', 'e6'], '2026.04.01'));
+  writeGame(dir, openingGame('eeeeeeeeee02', ['d4', 'd5', 'c4', 'e6'], '2026.04.02'));
+  writeGame(dir, openingGame('eeeeeeeeee03', ['c4', 'e6', 'd4', 'd5'], '2026.04.03'));
+  const rep = await buildRepertoire();
+  const merged = rep.find(l => l.games.some(g => g.id === 'eeeeeeeeee01'));
+  assert.ok(merged, 'line exists');
+  assert.equal(merged.count, 3, 'all three games share one line');
+  assert.equal(merged.moveOrders, 2);
+  assert.deepEqual(merged.line, ['d4', 'd5', 'c4', 'e6'], 'most common move order shown');
 });
