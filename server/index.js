@@ -7,6 +7,7 @@ import { parsePgnFile, detectPlayerColor } from './pgn.js';
 import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, sweepTmpFiles, ensureDataIgnores, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { enqueue, listJobs, resumeInterrupted, cancelJobs } from './jobs.js';
 import { findStockfish, getSparringEngine } from './engine.js';
+import { probeHosts, remoteHostList } from './enginepool.js';
 import { checkClaudeCli, complete } from './llm.js';
 import { buildReport, buildPrepCard } from './report.js';
 import { buildRepertoire } from './repertoire.js';
@@ -44,7 +45,8 @@ app.use(express.static(path.join(ROOT, 'public')));
 // A cleared field must not slip through as 0 (a 0 threshold drills every move).
 const NUMERIC_LIMITS = {
   playerRating: [400, 3500], engineDepth: [4, 40], engineMultiPv: [1, 6],
-  engineThreads: [0, 64], engineHash: [16, 8192], momentThreshold: [1, 100], drillThreshold: [1, 100],
+  engineThreads: [0, 64], engineHash: [16, 8192], remoteThreads: [1, 64],
+  momentThreshold: [1, 100], drillThreshold: [1, 100],
 };
 
 // Explanations and the game summary depend on analysis and colour; clear together.
@@ -64,6 +66,16 @@ app.get('/api/status', wrap(async (req, res) => {
 }));
 
 app.get('/api/settings', wrap(async (req, res) => res.json({ settings: await getSettings(), defaults: DEFAULT_SETTINGS })));
+
+// Probe every configured remote engine host over ssh (parallel, ~5s timeout
+// each) and keep the successful connections warm for the next analysis job.
+// vpnHint flags the everything-unreachable case, which usually means the VPN
+// is down rather than every machine being off.
+app.post('/api/engine/hosts/test', wrap(async (req, res) => {
+  const settings = await getSettings();
+  if (!remoteHostList(settings).length) return res.status(400).json({ error: 'no remote hosts configured' });
+  res.json(await probeHosts(settings));
+}));
 
 /** Re-derive critical moments from stored analysis after a threshold change:
  * no engine, no LLM. Explanations are keyed by ply and kept even for plies
@@ -92,6 +104,7 @@ app.put('/api/settings', wrap(async (req, res) => {
   const patch = {};
   for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
   if (patch.playerNames && typeof patch.playerNames === 'string') patch.playerNames = patch.playerNames.split(/[,;\n]/).map(s => s.trim()).filter(Boolean);
+  if (patch.remoteHosts !== undefined && typeof patch.remoteHosts === 'string') patch.remoteHosts = patch.remoteHosts.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
   for (const [k, [min, max]] of Object.entries(NUMERIC_LIMITS)) {
     if (!(k in patch)) continue;
     const n = Number(patch[k]);

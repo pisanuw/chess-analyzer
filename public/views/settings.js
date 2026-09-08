@@ -27,6 +27,17 @@ export async function settingsView(root) {
           <label class="field"><span>Hash MB</span><input type="number" name="engineHash" value="${s.engineHash}" min="16" max="8192"></label>
         </div>
 
+        <h3>Remote engines (ssh)</h3>
+        <label class="field"><span>Remote hosts</span><textarea name="remoteHosts" rows="3" placeholder="csslab1.uwb.edu, csslab2.uwb.edu, ...">${esc(s.remoteHosts.join('\n'))}</textarea><small>Analysis positions are distributed across these hosts plus the local engine. Needs passwordless ssh (keys); hosts that are down are skipped automatically. Save settings before testing.</small></label>
+        <div class="grid grid-2">
+          <label class="field"><span>Stockfish path on hosts</span><input type="text" name="remoteEnginePath" value="${esc(s.remoteEnginePath)}" placeholder="~/stockfish"></label>
+          <label class="field"><span>Threads per host</span><input type="number" name="remoteThreads" value="${s.remoteThreads}" min="1" max="64"></label>
+        </div>
+        <div class="row">
+          <button id="test-hosts" ${s.remoteHosts.length ? '' : 'disabled'}>Test remote hosts</button>
+          <small id="hosts-result" class="muted"></small>
+        </div>
+
         <h3>Explanations (LLM)</h3>
         <label class="field"><span>Provider</span>
           <select name="llmProvider">
@@ -43,6 +54,21 @@ export async function settingsView(root) {
       <button class="primary" id="save">Save settings</button>
       <small class="muted">Data folder: <code>${esc(status.dataDir)}</code></small>
     </div>`;
+
+  const testBtn = root.querySelector('#test-hosts');
+  testBtn.onclick = async () => {
+    const out = root.querySelector('#hosts-result');
+    testBtn.disabled = true;
+    out.textContent = 'Testing (up to 15 seconds per unreachable host)...';
+    try {
+      const r = await api.testHosts();
+      const downList = r.results.filter(x => !x.ok).map(x => `${x.host}: ${x.error}`);
+      out.textContent = `${r.up} of ${r.results.length} hosts reachable.`
+        + (r.vpnHint ? ` ${r.vpnHint}` : '')
+        + (downList.length && !r.vpnHint ? ` Down: ${downList.join('; ')}` : '');
+    } catch (err) { out.textContent = err.message; }
+    testBtn.disabled = false;
+  };
 
   root.querySelector('#save').onclick = async () => {
     const patch = {};

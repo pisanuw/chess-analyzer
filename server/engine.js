@@ -23,20 +23,23 @@ export function findStockfish(configured) {
 }
 
 export class Engine {
-  constructor(path, { threads, hash = 256 } = {}) {
+  constructor(path, { args = [], threads, hash = 256, label } = {}) {
     this.path = path;
+    this.args = args;          // e.g. ssh options + host + remote command: the UCI engine can live anywhere stdio reaches
+    this.label = label || path; // where this engine runs, for logs and host test results
     this.threads = threads || Math.max(1, os.cpus().length - 1);
     this.hash = hash;
     this.proc = null;
     this.buffer = '';
+    this.stderrTail = '';
     this.listeners = [];
     this.pending = new Set(); // reject callbacks of in-flight commands
     this.queue = Promise.resolve();
     this.name = null;
   }
 
-  async start() {
-    this.proc = spawn(this.path, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  async start(timeoutMs = 600000) {
+    this.proc = spawn(this.path, this.args, { stdio: ['pipe', 'pipe', 'pipe'] });
     this.proc.stdout.setEncoding('utf8');
     this.proc.stdout.on('data', chunk => {
       this.buffer += chunk;
@@ -47,6 +50,14 @@ export class Engine {
         if (line) for (const l of this.listeners) l(line);
       }
     });
+    // Keep the last stderr line: for an ssh transport it carries the real
+    // failure ("Connection timed out", "Permission denied"), which beats a
+    // bare "process exited" in the host test results.
+    this.proc.stderr.setEncoding('utf8');
+    this.proc.stderr.on('data', chunk => {
+      const lines = chunk.split('\n').map(s => s.trim()).filter(Boolean);
+      if (lines.length) this.stderrTail = lines[lines.length - 1].slice(0, 200);
+    });
     // Fail in-flight commands immediately when the process dies, instead of
     // leaving them to hit their timeouts; 'error' also fires for a bad binary
     // path, which would otherwise crash the whole server as an unhandled event.
@@ -56,14 +67,14 @@ export class Engine {
       this.pending.clear();
     };
     this.proc.on('error', err => die(new Error(`engine process error: ${err.message}`)));
-    this.proc.on('exit', () => die(new Error('engine process exited')));
+    this.proc.on('exit', () => die(new Error(this.stderrTail ? `engine process exited (${this.stderrTail})` : 'engine process exited')));
     await this.command('uci', line => line === 'uciok', line => {
       const m = line.match(/^id name (.+)$/);
       if (m) this.name = m[1];
-    });
+    }, timeoutMs);
     this.send(`setoption name Threads value ${this.threads}`);
     this.send(`setoption name Hash value ${this.hash}`);
-    await this.command('isready', line => line === 'readyok');
+    await this.command('isready', line => line === 'readyok', null, timeoutMs);
     return this;
   }
 

@@ -16,6 +16,9 @@ export const DEFAULT_SETTINGS = {
   engineMultiPv: 3,
   engineThreads: 0,         // 0 = cpus - 1
   engineHash: 256,
+  remoteHosts: [],          // ssh hosts that run Stockfish for distributed analysis (no daemon: ssh host stockfish IS a UCI engine)
+  remoteEnginePath: '~/stockfish', // Stockfish on the remote hosts: the binary, or a directory containing one
+  remoteThreads: 4,         // threads per remote engine; modest by default, the hosts are shared machines
   momentThreshold: 12,      // win-probability drop (0..100) that makes a player move a critical moment
   drillThreshold: 20,       // moments with at least this loss become drills
   llmProvider: 'claude-cli', // 'claude-cli' | 'manual'

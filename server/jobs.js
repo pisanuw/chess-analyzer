@@ -1,5 +1,5 @@
 // Sequential job queue: engine analysis, then LLM explanations. Progress is polled by the UI.
-import { getEngine } from './engine.js';
+import { getEnginePool } from './enginepool.js';
 import { analyseGame, summarize } from './analyze.js';
 import { getGame, saveGame, getSettings, listGames } from './store.js';
 import { complete, LlmError } from './llm.js';
@@ -107,9 +107,11 @@ async function runAnalyse(job) {
   job.stage = 'engine';
   job.total = game.moves.length + 1;
   job.depthTarget = settings.engineDepth || 18;
-  const engine = await getEngine(settings);
+  const pool = await getEnginePool(settings);
+  job.engines = pool.engines.length; // lets the UI show that work is distributed
+  if (pool.warning) { job.warning = pool.warning; console.warn(pool.warning); }
   await updateGame(job.gameId, g => { g.status = 'analysing'; g.lastError = null; });
-  const { moves, summary } = await analyseGame(engine, game, settings, (done, total, depth) => {
+  const { moves, summary } = await analyseGame(pool, game, settings, (done, total, depth) => {
     job.progress = done; job.total = total;
     if (depth !== undefined) { job.depth = depth; return; } // live update from the engine's stdout handler: must not throw
     job.depth = null;

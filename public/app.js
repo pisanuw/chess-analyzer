@@ -62,11 +62,11 @@ async function pollJobs() {
       // engine depth while analysing, elapsed seconds on the current explanation.
       const detail = j.stage === 'explain'
         ? (j.itemStartedAt ? ` · ${Math.max(0, Math.round((Date.now() - Date.parse(j.itemStartedAt)) / 1000))}s` : '')
-        : (j.depth ? ` · depth ${j.depth}/${j.depthTarget || '?'}` : '');
+        : (j.depth ? ` · depth ${j.depth}/${j.depthTarget || '?'}` : (j.engines > 1 ? ` · ${j.engines} engines` : ''));
       const frac = j.total ? (j.progress + (j.depth && j.depthTarget ? Math.min(1, j.depth / j.depthTarget) : 0)) / j.total : 0;
       return `
-      <span class="job" title="${esc(j.kind)} ${esc(j.gameId)}">
-        ${j.stage === 'explain' ? 'Explaining' : 'Analysing'} ${j.total ? `${j.progress}/${j.total}` : ''}${detail}
+      <span class="job" title="${esc(j.kind)} ${esc(j.gameId)}${j.warning ? ': ' + esc(j.warning) : ''}">
+        ${j.warning ? '⚠ ' : ''}${j.stage === 'explain' ? 'Explaining' : 'Analysing'} ${j.total ? `${j.progress}/${j.total}` : ''}${detail}
         <span class="bar"><i style="width:${Math.round(frac * 100)}%"></i></span>
       </span>`;
     }).join('') + (active.length > running.length ? `<span class="muted">${active.length - running.length} queued</span>` : '');

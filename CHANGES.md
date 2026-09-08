@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-08 (distributed engine analysis over ssh)
+
+- Analysis positions now fan out across a pool of engines: the local Stockfish plus one per configured remote host, driven over plain ssh (`ssh host stockfish` is itself a UCI engine on stdio, so the remotes need no daemon and no admin access, just a binary and key auth). Work-stealing dispatch: fast machines take more positions, a dying machine's position is re-queued on the survivors, and the last-engine failure fails the job as before. Remote searches run under `nice -n 19` with modest threads since the hosts are shared lab machines.
+- New settings: remote hosts list, Stockfish path on the hosts (binary or directory), threads per host; a "Test remote hosts" button probes every host in parallel and reports reachability. When every host is unreachable the job carries a VPN hint (the tunnel being down is likelier than 22 dead machines) and analysis proceeds locally; unreachable hosts get a 5-minute cooldown so they cannot stall each job with fresh probes.
+- Engine class accepts a command plus args and keeps the last stderr line for error messages, so transport failures read as "Connection timed out" instead of "process exited". Job progress with a pool counts completed positions (the per-search depth readout only applies to a single engine working front to back) and shows the engine count; the eval cache checks every engine name in the pool on lookup and stores under the analysing engine's name.
+
 ## 2026-09-08 (report links into practice, docs)
 
 - Focus-area cards on the report link straight into category rounds ("Drill this"), and drill performance shows the machine count plus a recognition-speed table (median answer time per pattern, once a pattern has 3+ timed reviews).

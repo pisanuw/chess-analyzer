@@ -52,6 +52,7 @@ export const api = {
   saveExplanation: (id, ply, e) => req('PUT', `/api/games/${id}/moments/${ply}/explanation`, e),
   guess: (id, ply, uci, correct) => req('POST', `/api/games/${id}/moments/${ply}/guess`, { uci, correct }),
   evalMove: (id, ply, uci) => req('POST', `/api/games/${id}/moments/${ply}/eval`, { uci }),
+  testHosts: () => req('POST', '/api/engine/hosts/test', {}),
   jobs: () => req('GET', '/api/jobs'),
   report: () => req('GET', '/api/report'),
   repertoire: () => req('GET', '/api/repertoire'),

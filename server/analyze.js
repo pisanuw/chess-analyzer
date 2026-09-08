@@ -2,6 +2,7 @@
 import { Chess } from 'chess.js';
 import { winProb, formatEval } from '../public/shared.js';
 import { getCachedEval, putCachedEval, evalCacheKey, CACHE_PLIES } from './evalcache.js';
+import { poolAnalyse, singleEnginePool } from './enginepool.js';
 
 // Shared with the frontend (public/shared.js); re-exported so server modules
 // keep importing them from here.
@@ -68,44 +69,64 @@ function terminalCp(fen) {
 }
 
 /**
- * Analyse every position of a game. `game.moves` from pgn.js. Calls onProgress(ply, total).
+ * Analyse every position of a game. `pool` is an engine pool (enginepool.js);
+ * a bare Engine is accepted and wrapped. Calls onProgress(done, total).
  * Returns { moves: [...annotated], summary }.
  */
-export async function analyseGame(engine, game, settings, onProgress) {
+export async function analyseGame(pool, game, settings, onProgress) {
+  if (!pool.engines) pool = singleEnginePool(pool);
   const depth = settings.engineDepth || 18;
   const multipv = settings.engineMultiPv || 3;
   const threshold = settings.momentThreshold ?? 12;
   const player = game.playerColor;
   const total = game.moves.length + 1;
+  const stmOf = fen => (fen.split(' ')[1] === 'w' ? 'white' : 'black');
 
   // Evaluate each position (before each move, plus the final one).
-  const positions = [];
   const fens = [...game.moves.map(m => m.fenBefore), game.moves.length ? game.moves[game.moves.length - 1].fenAfter : new Chess().fen()];
+  const positions = new Array(fens.length);
+
+  // Pre-pass: terminal positions need no engine, and opening positions recur
+  // across games (same repertoire, same event), so serve those from the eval
+  // cache when engine, depth, and MultiPV match. Only the misses hit the pool.
+  const todo = [];
   for (let i = 0; i < fens.length; i++) {
-    const fen = fens[i];
-    const term = terminalCp(fen);
-    let result;
+    const term = terminalCp(fens[i]);
     if (term !== null) {
-      result = { bestmove: null, lines: [], cp: term };
-    } else {
-      // Opening positions recur across games (same repertoire, same event):
-      // serve them from the eval cache when engine, depth, and MultiPV match.
-      const key = i < CACHE_PLIES ? evalCacheKey(engine.name, depth, multipv, fen) : null;
-      const hit = key ? await getCachedEval(key) : null;
-      if (hit) {
-        result = { bestmove: hit.bestmove, lines: hit.lines, cp: scoreToCp(hit.lines[0]) };
-      } else {
-        // Third onProgress arg = current search depth within position i; those calls
-        // come from the engine's stdout handler and must not throw (see jobs.js).
-        const r = await engine.analyse(fen, { depth, multipv, onDepth: onProgress ? d => onProgress(i, total, d) : null });
-        result = { bestmove: r.bestmove, lines: r.lines, cp: scoreToCp(r.lines[0]) };
-        if (key && r.lines.length) await putCachedEval(key, { bestmove: r.bestmove, lines: r.lines });
+      positions[i] = { bestmove: null, lines: [], cp: term, stm: stmOf(fens[i]) };
+      continue;
+    }
+    // The pool may mix Stockfish versions (local vs remote): try each name.
+    let hit = null;
+    if (i < CACHE_PLIES) {
+      for (const name of pool.names) {
+        hit = await getCachedEval(evalCacheKey(name, depth, multipv, fens[i]));
+        if (hit) break;
       }
     }
-    result.stm = fen.split(' ')[1] === 'w' ? 'white' : 'black';
-    positions.push(result);
-    if (onProgress) onProgress(i + 1, total);
+    if (hit) positions[i] = { bestmove: hit.bestmove, lines: hit.lines, cp: scoreToCp(hit.lines[0]), stm: stmOf(fens[i]) };
+    else todo.push(i);
   }
+
+  // Fan the remaining positions out across the pool: they are independent, so
+  // any engine can take any of them, and progress is completed positions.
+  let done = fens.length - todo.length;
+  if (onProgress) onProgress(done, total); // also the cancel checkpoint before searching
+  // Live search-depth reporting only makes sense when a single engine works
+  // the game front to back; with a pool the position counter moves instead.
+  const single = pool.engines.length === 1;
+  await poolAnalyse(
+    pool,
+    todo,
+    (engine, i) => engine.analyse(fens[i], { depth, multipv, onDepth: onProgress && single ? d => onProgress(done, total, d) : null }),
+    async (i, r, engine) => {
+      positions[i] = { bestmove: r.bestmove, lines: r.lines, cp: scoreToCp(r.lines[0]), stm: stmOf(fens[i]) };
+      if (i < CACHE_PLIES && r.lines.length) {
+        await putCachedEval(evalCacheKey(engine.name, depth, multipv, fens[i]), { bestmove: r.bestmove, lines: r.lines });
+      }
+      done++;
+      if (onProgress) onProgress(done, total);
+    });
 
   const moves = game.moves.map((m, i) => {
     const before = positions[i];
@@ -147,7 +168,8 @@ export async function analyseGame(engine, game, settings, onProgress) {
   const finalEval = positions[positions.length - 1];
   const summary = summarize(moves, player, threshold);
   summary.finalEval = finalEval.cp * stmSign(finalEval.stm);
-  summary.engine = engine.name;
+  summary.engine = pool.name;
+  if (pool.engines.length > 1) summary.pool = pool.engines.length; // how many engines shared the work
   summary.depth = depth;
   summary.multipv = multipv;
   return { moves, summary };
