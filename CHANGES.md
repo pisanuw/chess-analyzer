@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-08 (guess the move for whole games)
+
+- "Guess the move" in the game view: replay an analysed game predicting every one of your own moves. Each guess is scored in win-probability (your game move scores its known loss, stored engine lines score exactly, off-list guesses use the paired quick eval when an engine is present, unscored on the mirror), and the game continues as it actually went after each guess. The recap compares the replay's total loss against what the game itself lost on those moves. Old-school active recall over the whole game, and a second serving of quiet-position detection practice.
+
 ## 2026-09-08 (drills match the error being trained)
 
 - Play-out drills: conversion, defence, and endgame-technique drills are now played OUT against the sparring engine (at the player's rating) instead of answered with one move, which cannot train a skill that lives across many moves. Pass = winning chances held within the usual 3-point band (mate/stalemate/draw scored 100/0/50, so defending a lost position to a draw passes); verdict from the full-strength assess endpoint, evals hidden until then. Honest grading applies as usual, and a one-move fallback button remains. Only in normal sessions with a local engine; practice rounds and the mirror keep single-move form.
