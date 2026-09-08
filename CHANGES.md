@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-09-08 (frontend platform: mirror polling, PWA, name dialog, guess retry)
+
+- The hosted mirror no longer polls `/api/jobs` every few seconds: jobs live in a function instance's memory, so the answer was guaranteed empty and each poll was a Netlify invocation and phone battery (an open tab was ~17k invocations/day). Polling now starts only when `/api/status` says the backend is writable; on the mirror the drill badge refreshes per navigation instead of on a timer.
+- PWA basics: a web manifest and an SVG icon, so the mirror installs to a phone home screen as an app.
+- Fixing player names uses a proper dialog (Escape cancels, matches the promotion picker style) instead of three chained `window.prompt` calls.
+- Guess-first in the game view: the panel no longer prints the position eval while guessing (knowing "you are much better here" answers half the question; the clock stays, it is context). A missed first attempt now earns exactly one retry with the engine lines still hidden; an off-list retry that the quick eval calls playable settles as revealed. Both attempts are recorded, so the first-try drill boost is unaffected.
+
 ## 2026-09-08 (re-explain unhelpful explanations)
 
 - A "not really" vote on an explanation now offers a Re-explain button (game view): `POST /api/games/:id/moments/:ply/reexplain` re-runs the moment with the rejected text quoted in the prompt ("rated NOT helpful ... do not repeat the old wording") and replaces the stored explanation. The vote is cleared so the new text starts unrated, and drills re-sync in case the category changed. Blocked in manual mode and on the read-only mirror (no CLI there); the report's list of unhelpful moments links straight to where the button lives.

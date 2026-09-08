@@ -5,6 +5,36 @@ import { evalGraph } from '../charts.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
+/** Modal form for fixing player names; resolves { white, black, subject? } or null. */
+function editNamesDialog(current, wantSubject) {
+  return new Promise(resolve => {
+    const div = document.createElement('div');
+    div.className = 'promo-overlay';
+    div.innerHTML = `<form class="dialog">
+      <h3 style="margin:0 0 4px">Fix player names</h3>
+      <label class="field"><span>White</span><input name="white" value="${esc(current.white)}"></label>
+      <label class="field"><span>Black</span><input name="black" value="${esc(current.black)}"></label>
+      ${wantSubject ? `<label class="field"><span>Scouting subject (must match one of the names)</span><input name="subject" value="${esc(current.subject || '')}"></label>` : ''}
+      <div class="row" style="justify-content:flex-end; gap:8px"><button type="button" class="small" data-d="cancel">Cancel</button><button class="small primary">Save</button></div>
+    </form>`;
+    const done = v => { div.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
+    const onKey = e => { if (e.key === 'Escape') done(null); };
+    document.addEventListener('keydown', onKey);
+    div.addEventListener('click', e => { if (e.target === div || e.target.closest('[data-d="cancel"]')) done(null); });
+    div.querySelector('form').addEventListener('submit', e => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      done({
+        white: String(f.get('white') || '').trim(),
+        black: String(f.get('black') || '').trim(),
+        subject: wantSubject ? String(f.get('subject') || '').trim() : undefined,
+      });
+    });
+    document.body.appendChild(div);
+    div.querySelector('input').focus();
+  });
+}
+
 export async function gameView(root, id, startPly) {
   let { game, feedback = {} } = await api.game(id);
   const { settings } = await api.settings();
@@ -65,7 +95,7 @@ export async function gameView(root, id, startPly) {
     state.preview = null;
     const m = state.ply ? moves()[state.ply - 1] : null;
     const guessPly = state.guess ? (scout ? state.guess.ply : state.guess.ply - 1) : null;
-    const movableFor = state.guess && state.guess.status === 'guessing' && state.ply === guessPly ? seat : null;
+    const movableFor = state.guess && (state.guess.status === 'guessing' || state.guess.status === 'retry') && state.ply === guessPly ? seat : null;
     board.set(fenAt(state.ply), { lastMove: m?.uci, movableFor, shapes: shapes || [] });
     root.querySelector('#evaltext').textContent = m && game.analysis ? formatEval(m.evalAfter) : '';
     root.querySelector('#plytext').textContent = m ? `${moveLabel(m)}${game.analysis ? ' ' + JUDGE_MARK[m.judgment] : ''}` : 'Start';
@@ -102,11 +132,10 @@ export async function gameView(root, id, startPly) {
       if (b.dataset.act === 'reanalyse') { if (confirm('Re-run engine analysis? Explanations for this game will be cleared.')) { await api.analyse(id, true); toast('Re-analysis queued'); } }
       if (b.dataset.act === 'explain') { await api.explain(id); toast('Explanations queued'); }
       if (b.dataset.act === 'names') {
-        const white = prompt('White player name', h.White || ''); if (white == null) return;
-        const black = prompt('Black player name', h.Black || ''); if (black == null) return;
-        let subject;
-        if (scout) { subject = prompt('Scouting subject (must match one of the names)', game.subject || ''); if (subject == null) return; }
-        await api.setNames(id, white.trim(), black.trim(), subject?.trim());
+        const v = await editNamesDialog({ white: h.White || '', black: h.Black || '', subject: game.subject }, scout);
+        if (!v) return;
+        if (!v.white || !v.black) return toast('Both names are required', true);
+        await api.setNames(id, v.white, v.black, v.subject);
         toast('Names updated');
         window.dispatchEvent(new HashChangeEvent('hashchange')); // header and labels derive from the names: rebuild the view
       }
@@ -201,7 +230,7 @@ export async function gameView(root, id, startPly) {
     state.moment = ply;
     // A scout mistake on the game's final move has no analysed reply to guess into.
     const guessable = !scout || !!moves()[ply];
-    state.guess = { ply, status: guessable ? 'guessing' : 'revealed', tried: null, verdict: null };
+    state.guess = { ply, status: guessable ? 'guessing' : 'revealed', tried: null, verdict: null, attempts: 0 };
     renderPanel();
     showPly(scout ? ply : ply - 1);
     if (seat && board.orientation !== seat) board.orient(seat);
@@ -308,7 +337,7 @@ export async function gameView(root, id, startPly) {
   async function onUserMove(orig, dest) {
     if (state.playout) return playoutMove(orig, dest);
     const g = state.guess;
-    if (!g || g.status !== 'guessing') return;
+    if (!g || (g.status !== 'guessing' && g.status !== 'retry')) return;
     const m = moves()[g.ply - 1];
     // For scouting, the guess is played in the position AFTER the mistake, and is
     // checked against the NEXT move's stored lines (the refutation).
@@ -317,7 +346,7 @@ export async function gameView(root, id, startPly) {
     const res = await applyMove(t.fenBefore, orig, dest);
     if (!res) return showPly(state.ply); // dismissed promotion: undo the visual drop
     g.tried = res;
-    g.status = 'revealed';
+    g.attempts++;
     const rank = t.lines.findIndex(l => l.uci === res.uci);
     const sign = t.color === 'white' ? 1 : -1;
     // Record the attempt: correct first-try guesses start this drill higher up the
@@ -325,6 +354,7 @@ export async function gameView(root, id, startPly) {
     // guess would be recorded as wrong while the engine is still checking it.
     const record = good => api.guess(id, g.ply, res.uci, good).catch(() => {});
     let recordLater = false;
+    const revealShapes = () => board.shapes(lineShapes(t.lines, scout ? t.uci : m.uci));
     if (res.uci === t.bestUci || rank === 0) g.verdict = { good: true, text: `${res.san}: the engine's first choice (${formatEval(t.lines[0]?.cp ?? t.evalBefore)}).` };
     else if (rank > 0) {
       const wpDiff = winProb(t.lines[0].cp * sign) - winProb(t.lines[rank].cp * sign);
@@ -340,7 +370,10 @@ export async function gameView(root, id, startPly) {
         verdict.good = r.wpDiff <= WP_ACCEPT;
         verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (t.color === 'white' ? 1 : -1))}, ${r.wpDiff.toFixed(1)} win-% behind the best move.${verdict.good ? ' Playable.' : ''}`;
         record(verdict.good);
-        if (state.guess?.verdict === verdict) renderPanel();
+        if (state.guess?.verdict !== verdict) return;
+        // A retry that the engine then calls playable is settled: reveal.
+        if (verdict.good && state.guess.status === 'retry') { state.guess.status = 'revealed'; revealShapes(); }
+        renderPanel();
       }).catch(() => {
         verdict.text = `${res.san}: not among the engine's top ${t.lines.length} lines.`;
         record(false);
@@ -348,9 +381,18 @@ export async function gameView(root, id, startPly) {
       });
     }
     if (!recordLater) record(g.verdict.good);
+    // A missed first attempt earns one retry: the verdict shows, the engine
+    // lines stay hidden, and the position resets for another go.
+    if (!g.verdict.good && g.attempts === 1) {
+      g.status = 'retry';
+      renderPanel();
+      showPly(scout ? g.ply : g.ply - 1);
+      return;
+    }
+    g.status = 'revealed';
     renderPanel();
     showPreview(res.fen, res.uci);
-    board.shapes(lineShapes(t.lines, scout ? t.uci : m.uci));
+    revealShapes();
   }
 
   function renderGuessPanel() {
@@ -359,11 +401,15 @@ export async function gameView(root, id, startPly) {
     const t = scout ? (moves()[g.ply] || m) : m; // whose fenBefore the guess plays in
     const e = game.explanations?.[g.ply];
     const side = t.color === 'white' ? 'White' : 'Black';
-    if (g.status === 'guessing') {
+    if (g.status === 'guessing' || g.status === 'retry') {
+      // No eval shown while guessing: "you are much better here" answers half
+      // the question. The clock is context, not a hint.
       return `<div class="guess">
         <div class="row" style="justify-content: space-between"><b>${scout ? `${esc(game.subject || 'They')} played ${esc(moveLabel(m))} <span class="chip ${m.judgment}">${m.judgment}</span>. ${side} to move: find the punishment.` : `${esc(movePrefix(m))} ${side} to move. Find the best move.`}</b>
           <span><button class="small" data-g="reveal">Show answer</button> <button class="small" data-g="close">Close</button></span></div>
-        <p class="muted">Play your move on the board. Eval here: ${formatEval(scout ? m.evalAfter : m.evalBefore)}${m.clock != null ? ` · clock ${fmtClock(m.clock)}` : ''}</p>
+        ${g.status === 'retry' && g.verdict
+          ? `<div class="result bad">${esc(g.verdict.text)}</div><p class="muted">One more try: play a different move, or show the answer.</p>`
+          : `<p class="muted">Play your move on the board.${m.clock != null ? ` Clock in the game: ${fmtClock(m.clock)}.` : ''}</p>`}
       </div>`;
     }
     const lines = t.lines.map((l, i) => `<li class="${l.uci === t.uci ? 'played' : ''}" data-line="${i}">

@@ -83,7 +83,6 @@ async function pollJobs() {
     setTimeout(pollJobs, 5000);
   }
 }
-pollJobs();
 
 export async function updateDrillBadge() {
   try {
@@ -93,6 +92,20 @@ export async function updateDrillBadge() {
     b.hidden = !dueCount;
   } catch {}
 }
-updateDrillBadge();
-setInterval(updateDrillBadge, 60000);
-jobEvents.addEventListener('finished', updateDrillBadge);
+
+// The hosted mirror cannot run jobs (the queue lives in a function instance's
+// memory), so polling /api/jobs every few seconds would spend invocations and
+// battery on a guaranteed-empty answer. Poll only where analysis can actually
+// run; on the mirror, refresh the drill badge per navigation instead of on a
+// timer. If /api/status itself fails (mirror login pending), the login overlay
+// is already up and a reload restarts everything.
+api.status().then(({ readonly }) => {
+  updateDrillBadge();
+  if (readonly) {
+    window.addEventListener('hashchange', updateDrillBadge);
+  } else {
+    pollJobs();
+    setInterval(updateDrillBadge, 60000);
+    jobEvents.addEventListener('finished', updateDrillBadge);
+  }
+}).catch(() => {});
