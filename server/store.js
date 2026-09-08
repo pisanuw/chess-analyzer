@@ -52,6 +52,34 @@ function writeJson(file, value) {
   return next;
 }
 
+/** Remove leftover atomic-write temp files. A crash between writeFile and
+ * rename strands them, and the data repo's `git add -A` (push-data) would
+ * sync the partial file to every machine. Called once at startup. */
+export async function sweepTmpFiles() {
+  await ensureDirs();
+  let removed = 0;
+  for (const dir of [DATA_DIR, GAMES_DIR]) {
+    for (const f of await fs.readdir(dir).catch(() => [])) {
+      if (!f.endsWith('.tmp')) continue;
+      await fs.rm(path.join(dir, f), { force: true });
+      removed++;
+    }
+  }
+  return removed;
+}
+
+/** When data/ is its own git repo, make sure purely-local files never sync:
+ * crash leftovers and the per-machine engine eval cache. */
+export async function ensureDataIgnores(lines = ['*.tmp', 'evalcache.json']) {
+  try { await fs.stat(path.join(DATA_DIR, '.git')); } catch { return; }
+  const file = path.join(DATA_DIR, '.gitignore');
+  const current = await fs.readFile(file, 'utf8').catch(() => '');
+  const have = new Set(current.split('\n').map(s => s.trim()));
+  const missing = lines.filter(l => !have.has(l));
+  if (!missing.length) return;
+  await fs.writeFile(file, (!current || current.endsWith('\n') ? current : current + '\n') + missing.join('\n') + '\n');
+}
+
 export async function getSettings() {
   const saved = await readJson(path.join(DATA_DIR, 'settings.json'), {});
   const s = { ...DEFAULT_SETTINGS, ...saved };

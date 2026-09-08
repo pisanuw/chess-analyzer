@@ -4,13 +4,13 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Chess } from 'chess.js';
 import { parsePgnFile, detectPlayerColor } from './pgn.js';
-import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, sweepTmpFiles, ensureDataIgnores, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { enqueue, listJobs, resumeInterrupted, cancelJobs } from './jobs.js';
-import { findStockfish, getEngine, getSparringEngine } from './engine.js';
+import { findStockfish, getSparringEngine } from './engine.js';
 import { checkClaudeCli, complete } from './llm.js';
 import { buildReport, buildPrepCard } from './report.js';
 import { buildRepertoire } from './repertoire.js';
-import { scoreToCp, winProb } from './analyze.js';
+import { scoreToCp, winProb, summarize } from './analyze.js';
 import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback } from './drills.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, patternSynthesisPrompt, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { authMiddleware, loginRoute } from './auth.js';
@@ -63,6 +63,29 @@ app.get('/api/status', wrap(async (req, res) => {
 }));
 
 app.get('/api/settings', wrap(async (req, res) => res.json({ settings: await getSettings(), defaults: DEFAULT_SETTINGS })));
+
+/** Re-derive critical moments from stored analysis after a threshold change:
+ * no engine, no LLM. Explanations are keyed by ply and kept even for plies
+ * that stop being moments (harmless, and they come straight back if the
+ * threshold is lowered again). Status drops to 'analysed' when a new moment
+ * has no explanation yet, so the explain flow picks it up. */
+async function resummarizeGames(settings) {
+  let changed = 0;
+  for (const entry of await listGames()) {
+    if (entry.status !== 'analysed' && entry.status !== 'explained') continue;
+    const g = await getGame(entry.id);
+    if (!g?.analysis || !g.playerColor) continue;
+    const before = g.analysis.summary.moments.join(',');
+    const summary = { ...g.analysis.summary, ...summarize(g.analysis.moves, g.playerColor, settings.momentThreshold) };
+    if (summary.moments.join(',') === before) continue;
+    g.analysis.summary = summary;
+    g.status = summary.moments.every(p => g.explanations?.[p]) ? 'explained' : 'analysed';
+    await saveGame(g);
+    changed++;
+  }
+  return changed;
+}
+
 app.put('/api/settings', wrap(async (req, res) => {
   const allowed = Object.keys(DEFAULT_SETTINGS);
   const patch = {};
@@ -74,7 +97,16 @@ app.put('/api/settings', wrap(async (req, res) => {
     if (patch[k] === '' || !Number.isFinite(n)) return res.status(400).json({ error: `${k} must be a number` });
     patch[k] = Math.min(max, Math.max(min, n));
   }
-  res.json({ settings: await saveSettings(patch) });
+  const before = await getSettings();
+  const settings = await saveSettings(patch);
+  // Tuning a threshold must not require re-analysis (that would also wipe and
+  // re-buy every explanation): moments and drill tiers re-derive from stored
+  // moves. New unexplained moments surface via "Analyse and explain everything
+  // pending" or the next startup resume.
+  let recomputed = 0;
+  if (settings.momentThreshold !== before.momentThreshold) recomputed = await resummarizeGames(settings);
+  if (recomputed || settings.drillThreshold !== before.drillThreshold) await syncAllDrills();
+  res.json({ settings, recomputed });
 }));
 
 // --- games -------------------------------------------------------------------
@@ -240,6 +272,10 @@ app.post('/api/games/:id/moments/:ply/guess', wrap(async (req, res) => {
 // The guess and the stored best move are searched together (searchmoves, same
 // depth, one search) so the verdict compares like with like; a shallow eval of
 // the guess is never measured against the stored deep eval of the best move.
+// Runs on the sparring process: on the shared engine a drill answer would
+// queue behind a background analysis job's current deep search (and then the
+// job behind the answer). LimitStrength is forced off because a play-out may
+// have left the sparring process capped.
 app.post('/api/games/:id/moments/:ply/eval', wrap(async (req, res) => {
   const game = await getGame(req.params.id);
   const ply = Number(req.params.ply);
@@ -251,11 +287,14 @@ app.post('/api/games/:id/moments/:ply/eval', wrap(async (req, res) => {
   try { mv = chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] }); } catch { mv = null; }
   if (!mv) return res.status(400).json({ error: 'illegal move' });
   const settings = await getSettings();
-  const engine = await getEngine(settings);
+  const engine = await getSparringEngine(settings);
   const sign = m.color === 'white' ? 1 : -1;
   let moverCp, bestCp; // both from the mover's perspective
   if (m.bestUci && m.bestUci !== uci) {
-    const r = await engine.analyse(m.fenBefore, { depth: 12, multipv: 2, movetimeMs: 3000, searchMoves: [m.bestUci, uci] });
+    const r = await engine.analyse(m.fenBefore, {
+      depth: 12, multipv: 2, movetimeMs: 3000, searchMoves: [m.bestUci, uci],
+      options: { UCI_LimitStrength: 'false' },
+    });
     const lineFor = u => r.lines.find(l => l.pv[0] === u);
     const guessLine = lineFor(uci), bestLine = lineFor(m.bestUci);
     if (!guessLine || !bestLine) throw new Error('engine did not evaluate both moves');
@@ -413,6 +452,8 @@ const PORT = Number(process.env.PORT) || 3210;
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   app.listen(PORT, process.env.HOST || '127.0.0.1', () => {
     console.log(`chess-analyzer running at http://localhost:${PORT}  (data: ${DATA_DIR})`);
+    sweepTmpFiles().then(n => { if (n) console.log(`removed ${n} leftover .tmp file${n === 1 ? '' : 's'}`); }).catch(() => {});
+    ensureDataIgnores().catch(() => {});
     syncAllDrills().catch(err => console.error(`drill sync failed: ${err.message}`));
     resumeInterrupted().catch(err => console.error(`resume failed: ${err.message}`));
   });

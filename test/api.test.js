@@ -111,6 +111,21 @@ test('prep card endpoint returns markdown', async () => {
   assert.match(await res.text(), /Pre-tournament card/);
 });
 
+test('changing the moment threshold re-scores stored games without re-analysis', async () => {
+  writeGame(process.env.DATA_DIR, makeGame({ id: 'abcabcabcab1', moments: [{ ply: 1, loss: 25 }, { ply: 3, loss: 14 }], plies: 4 }));
+  const raised = await req('PUT', '/api/settings', { momentThreshold: 20 });
+  assert.equal(raised.status, 200);
+  assert.ok(raised.data.recomputed >= 1, 'at least the new game is re-scored');
+  const g = (await req('GET', '/api/games/abcabcabcab1')).data.game;
+  assert.deepEqual(g.analysis.summary.moments, [1], 'the 14-point moment drops out at threshold 20');
+  assert.equal(g.status, 'explained', 'explanations still cover every remaining moment');
+  await req('PUT', '/api/settings', { momentThreshold: 12 });
+  const g2 = (await req('GET', '/api/games/abcabcabcab1')).data.game;
+  assert.deepEqual(g2.analysis.summary.moments, [1, 3], 'lowering the threshold brings the moment back');
+  const { data } = await req('GET', '/api/drills');
+  assert.ok(data.total >= 2, 'drills resync after the threshold change');
+});
+
 test('playout endpoints validate input without touching the engine', async () => {
   assert.equal((await req('POST', '/api/playout/move', { fen: 'garbage' })).status, 400);
   // A finished game needs no engine either: the verdict is derived directly.

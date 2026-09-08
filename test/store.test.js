@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { tempData, makeGame, writeGame } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
-const { listGames, saveGame, deleteGame, DrillConflict } = await import('../server/store.js');
+const { listGames, saveGame, deleteGame, sweepTmpFiles, ensureDataIgnores, DrillConflict } = await import('../server/store.js');
 const { reviewDrill, syncDrillsForGame } = await import('../server/drills.js');
 
 test('game index cache serves cached entries and sees every kind of change', async () => {
@@ -107,4 +107,27 @@ test('persistent conflicts surface as DrillConflict after retries', async t => {
     { method: 'PATCH', url: /eq\.2/, rows: [] },
   ]);
   await assert.rejects(reviewDrill('g:1', 'good', true), DrillConflict);
+});
+
+test('sweepTmpFiles removes crash leftovers; ensureDataIgnores guards the data repo', async () => {
+  const dir = process.env.DATA_DIR;
+  writeFileSync(path.join(dir, 'drills.json.123.4.tmp'), '{');
+  writeFileSync(path.join(dir, 'games', 'aaaa.json.9.1.tmp'), '{');
+  const removed = await sweepTmpFiles();
+  assert.ok(removed >= 2, 'both leftovers removed');
+  assert.ok(!existsSync(path.join(dir, 'drills.json.123.4.tmp')));
+
+  // Not a git repo: no .gitignore appears.
+  await ensureDataIgnores();
+  assert.ok(!existsSync(path.join(dir, '.gitignore')));
+
+  // A data repo gets the local-only entries appended exactly once.
+  mkdirSync(path.join(dir, '.git'), { recursive: true });
+  writeFileSync(path.join(dir, '.gitignore'), 'drills.json\n');
+  await ensureDataIgnores();
+  await ensureDataIgnores();
+  const ignore = readFileSync(path.join(dir, '.gitignore'), 'utf8');
+  assert.match(ignore, /drills\.json/, 'existing entries kept');
+  assert.equal((ignore.match(/\*\.tmp/g) || []).length, 1);
+  assert.match(ignore, /evalcache\.json/);
 });

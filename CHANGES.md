@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-09-08 (threshold tuning without re-analysis, snappy quick evals, tmp hygiene)
+
+- Changing the critical-moment threshold now re-scores every analysed game in place: moments are re-derived from the stored per-move analysis (no engine, no LLM), explanations are kept (also for plies that drop out, so lowering the threshold restores them), and status falls back to 'analysed' when a new moment lacks an explanation. Changing either threshold re-syncs drills immediately instead of at the next restart. This unblocks threshold tuning, which previously required force re-analysis and re-bought every explanation.
+- Off-list quick evals (`/moments/:ply/eval`) moved from the shared analysis engine to the sparring process, with LimitStrength forced off. On the shared engine a drill answer queued behind a background job's current deep search, and the job then queued behind the answer.
+- Leftover atomic-write `*.tmp` files (crash between write and rename) are swept at startup; when `data/` is its own git repo, `*.tmp` and `evalcache.json` are appended to its .gitignore so `push-data`'s `git add -A` can never sync them.
+- Settings form ranges now match the server's clamps (depth 4-40, MultiPV up to 6, thresholds 1-100, rating 400-3500), and saving reports how many games were re-scored.
+
 ## 2026-09-08 (shared chess-math module)
 
 - New `public/shared.js` holds the helpers that were duplicated between server and frontend with "keep in sync" comments: `winProb`, `WP_ACCEPT`, `formatEval`, `parseTimeControl`, and the time-spent-per-move calculation (previously implemented three separate times in prompts.js, report.js, and charts.js). The server imports the file directly (plain ESM, no browser APIs); `analyze.js` and `pgn.js` re-export so existing imports keep working, and `api.js` re-exports for the views. No behaviour change intended; covered by test/shared.test.js.
