@@ -11,12 +11,22 @@ export async function scoutView(root) {
   }
   const current = decodeURIComponent(location.hash.split('/')[2] || '') || subjects[0].subject;
   root.innerHTML = `
-    <h1>Scouting</h1>
-    <div class="row" style="gap: 6px; flex-wrap: wrap; margin-bottom: 14px">
-      ${subjects.map(s => `<button class="small${s.subject === current ? ' primary' : ''}" data-subject="${esc(s.subject)}">${esc(s.subject)} (${s.analysed}/${s.games})</button>`).join('')}
+    <div class="row" style="justify-content: space-between; align-items: baseline">
+      <h1>Scouting</h1>
+      <input type="search" id="subject-search" placeholder="Find opponent…" style="padding: 6px 10px; font-size: 14px">
     </div>
+    <div class="row" id="subject-list" style="gap: 6px; flex-wrap: wrap; margin-bottom: 14px"></div>
     <div id="dossier"></div>`;
-  root.querySelectorAll('button[data-subject]').forEach(b => b.onclick = () => { location.hash = `#/scout/${encodeURIComponent(b.dataset.subject)}`; });
+  const listEl = root.querySelector('#subject-list');
+  const renderSubjects = q => {
+    const needle = q.trim().toLowerCase();
+    const shown = subjects.filter(s => !needle || s.subject.toLowerCase().includes(needle));
+    listEl.innerHTML = shown.map(s => `<button class="small${s.subject === current ? ' primary' : ''}" data-subject="${esc(s.subject)}">${esc(s.subject)} (${s.analysed}/${s.games})</button>`).join('')
+      || '<span class="muted">No opponents match.</span>';
+    listEl.querySelectorAll('button[data-subject]').forEach(b => b.onclick = () => { location.hash = `#/scout/${encodeURIComponent(b.dataset.subject)}`; });
+  };
+  renderSubjects('');
+  root.querySelector('#subject-search').addEventListener('input', e => renderSubjects(e.target.value));
   await renderDossier(root.querySelector('#dossier'), current);
 }
 
