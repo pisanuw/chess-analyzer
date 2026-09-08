@@ -271,7 +271,7 @@ app.get('/api/scout', wrap(async (req, res) => {
     if (g.purpose === 'scout' && g.subject) add(g.subject, analysed, 'scoutGames');
     else if (g.purpose !== 'scout' && g.playerColor) add(g.playerColor === 'white' ? g.black : g.white, analysed, 'ownGames');
   }
-  res.json({ subjects: [...subjects.values()].sort((a, b) => b.games - a.games) });
+  res.json({ subjects: [...subjects.values()].sort((a, b) => b.games - a.games || a.subject.localeCompare(b.subject)) });
 }));
 
 app.get('/api/scout/:subject', wrap(async (req, res) => {
