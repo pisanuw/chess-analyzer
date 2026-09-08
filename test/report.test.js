@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { Chess } from 'chess.js';
 import { tempData, makeGame, writeGame } from './helpers.js';
 
@@ -122,6 +124,27 @@ test('explanation feedback aggregates into the report', async () => {
   assert.equal(r.feedback.helpful, 1);
   assert.equal(r.feedback.unhelpful, 1);
   assert.ok(r.feedback.unhelpfulMoments.some(m => m.gameId === 'aaaaaaaaaa01' && m.ply === 1));
+});
+
+test('foreign drill mirrors merge into drill stats with pattern speed', async () => {
+  const foreignStore = {
+    drills: [{
+      id: 'x:1', gameId: 'x', ply: 1, phase: 'middlegame', category: 'calculation', pattern: 'Hanging piece',
+      reviews: [
+        { at: '2026-01-01T00:00:00Z', grade: 'good', correct: true, ms: 8000 },
+        { at: '2026-01-02T00:00:00Z', grade: 'good', correct: true, ms: 6000 },
+        { at: '2026-01-03T00:00:00Z', grade: 'again', correct: false, ms: 20000 },
+      ],
+    }],
+  };
+  writeFileSync(path.join(dir, 'drills-other-machine.json'), JSON.stringify(foreignStore));
+  const r = await buildReport();
+  assert.ok(r.drillStats, 'foreign reviews alone produce stats');
+  assert.equal(r.drillStats.attempts, 3);
+  assert.equal(r.drillStats.machines, 2);
+  assert.equal(r.drillStats.byCategory.calculation.attempts, 3);
+  assert.equal(r.drillStats.speed[0].pattern, 'Hanging piece');
+  assert.equal(r.drillStats.speed[0].medianMs, 8000);
 });
 
 test('prep card renders focus areas, rules, and the clock line', async () => {

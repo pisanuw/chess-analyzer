@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 import { tempData, makeGame, writeGame } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
-const { syncDrillsForGame, syncAllDrills, reviewDrill, dueDrills, recordGuess, recordFeedback, removeDrillsForGame } = await import('../server/drills.js');
+const { syncDrillsForGame, syncAllDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, dueDrills, recordGuess, recordFeedback, removeDrillsForGame } = await import('../server/drills.js');
 const { getDrills } = await import('../server/store.js');
 
 const settings = { drillThreshold: 20, momentThreshold: 12 };
@@ -139,6 +140,50 @@ test('lightning round serves a pattern regardless of due; practice grades leave 
   assert.equal(passed.reviews.at(-1).practice, true);
   const missed = await reviewDrill('aaaaaaaaaa08:1', 'again', false, true);
   assert.equal(missed.step, 0, 'a practice miss still resets: a miss is real evidence');
+});
+
+test('reviews record think time and ladder position; undo restores both', async () => {
+  const game = makeGame({ id: 'aaaaaaaaaa09', moments: [{ ply: 1, loss: 25 }] });
+  await syncDrillsForGame(game, settings);
+  const passed = await reviewDrill('aaaaaaaaaa09:1', 'good', true, false, 4200);
+  assert.equal(passed.step, 1);
+  const r = passed.reviews.at(-1);
+  assert.equal(r.ms, 4200);
+  assert.equal(r.prevStep, 0);
+  const undone = await undoReview('aaaaaaaaaa09:1');
+  assert.equal(undone.step, 0, 'ladder position restored');
+  assert.equal(undone.reviews.length, 0, 'review removed');
+  await assert.rejects(undoReview('aaaaaaaaaa09:1'), /no review to undo/);
+});
+
+test('suspended drills leave every queue until restored', async () => {
+  const game = makeGame({ id: 'aaaaaaaaaa10', moments: [{ ply: 1, loss: 25 }], pattern: 'Suspendable' });
+  await syncDrillsForGame(game, settings);
+  await suspendDrill('aaaaaaaaaa10:1');
+  const normal = await dueDrills(50);
+  assert.ok(!normal.due.some(d => d.id === 'aaaaaaaaaa10:1'), 'not in the due queue');
+  assert.ok(normal.suspendedCount >= 1);
+  const round = await dueDrills(50, { pattern: 'Suspendable' });
+  assert.ok(!round.due.some(d => d.id === 'aaaaaaaaaa10:1'), 'not in practice rounds either');
+  await syncDrillsForGame(game, settings); // re-sync must keep the flag
+  assert.ok((await getDrills()).drills.find(d => d.id === 'aaaaaaaaaa10:1').suspended);
+  assert.ok(await restoreSuspended() >= 1);
+  const after = await dueDrills(50);
+  assert.ok(after.due.some(d => d.id === 'aaaaaaaaaa10:1'), 'restored drill is due now');
+});
+
+test('category rounds serve every drill of an error type regardless of due date', async () => {
+  const game = makeGame({ id: 'aaaaaaaaaa11', moments: [{ ply: 1, loss: 25 }], category: 'endgame-technique' });
+  await syncDrillsForGame(game, settings);
+  await reviewDrill('aaaaaaaaaa11:1', 'good', true); // step 1: no longer due
+  const round = await dueDrills(50, { category: 'endgame-technique' });
+  assert.ok(round.due.some(d => d.id === 'aaaaaaaaaa11:1'));
+  assert.equal(round.category, 'endgame-technique');
+});
+
+test('drill saves mirror to a per-machine file for the data repo', async () => {
+  const files = readdirSync(process.env.DATA_DIR);
+  assert.ok(files.some(f => /^drills-.+\.json$/.test(f)), 'mirror file exists next to drills.json');
 });
 
 test('explanation feedback is stored per moment', async () => {

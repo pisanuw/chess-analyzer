@@ -60,8 +60,13 @@ export const api = {
   prepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet`),
   patterns: () => req('GET', '/api/patterns'),
   synthesizePattern: pattern => req('POST', '/api/patterns/synthesize', { pattern }),
-  drills: (pattern, limit) => req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}`),
-  reviewDrill: (id, grade, correct, practice = false) => req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice }),
+  drills: ({ pattern = null, category = null, limit = null, session = false } = {}) =>
+    req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}${category ? `&category=${encodeURIComponent(category)}` : ''}${session ? '&session=1' : ''}`),
+  reviewDrill: (id, grade, correct, practice = false, ms = null) =>
+    req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}) }),
+  suspendDrill: (id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended }),
+  undoDrill: id => req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {}),
+  restoreSuspended: () => req('POST', '/api/drills/restore-suspended', {}),
   feedback: (id, ply, helpful) => req('POST', `/api/games/${id}/moments/${ply}/feedback`, { helpful }),
   playoutMove: (fen, elo) => req('POST', '/api/playout/move', { fen, elo }),
   playoutAssess: fen => req('POST', '/api/playout/assess', { fen }),

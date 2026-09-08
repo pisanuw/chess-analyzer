@@ -11,7 +11,7 @@ import { checkClaudeCli, complete } from './llm.js';
 import { buildReport, buildPrepCard } from './report.js';
 import { buildRepertoire } from './repertoire.js';
 import { scoreToCp, winProb, summarize } from './analyze.js';
-import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback } from './drills.js';
+import { dueDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback } from './drills.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, patternSynthesisPrompt, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { authMiddleware, loginRoute } from './auth.js';
 
@@ -28,7 +28,7 @@ app.post('/api/login', loginRoute);
 // Read-only mirror (hosted copy): game data is managed on the analysing machine
 // and published; only training state (drill reviews, guesses) is writable.
 const READONLY = !!process.env.READONLY_DATA;
-const RO_ALLOW = [/^\/api\/login$/, /^\/api\/drills\/[^/]+\/review$/, /^\/api\/games\/[a-f0-9]{12}\/moments\/\d+\/(guess|eval|feedback)$/];
+const RO_ALLOW = [/^\/api\/login$/, /^\/api\/drills\/restore-suspended$/, /^\/api\/drills\/[^/]+\/(review|suspend|undo)$/, /^\/api\/games\/[a-f0-9]{12}\/moments\/\d+\/(guess|eval|feedback)$/];
 app.use((req, res, next) => {
   if (!READONLY || req.method === 'GET' || RO_ALLOW.some(re => re.test(req.path))) return next();
   res.status(405).json({ error: 'read-only mirror: manage games on the analysing machine, then publish' });
@@ -438,9 +438,20 @@ app.post('/api/patterns/synthesize', wrap(async (req, res) => {
   await savePatternNotes(notes);
   res.json({ note: notes[key] });
 }));
-app.get('/api/drills', wrap(async (req, res) => res.json(await dueDrills(Number(req.query.limit) || 20, { pattern: req.query.pattern || null }))));
+app.get('/api/drills', wrap(async (req, res) => res.json(await dueDrills(Number(req.query.limit) || 20, {
+  pattern: req.query.pattern || null,
+  category: req.query.category || null,
+  session: req.query.session === '1', // a real training session (not the badge poll): may mix in decoys
+}))));
+app.post('/api/drills/restore-suspended', wrap(async (req, res) => res.json({ restored: await restoreSuspended() })));
 app.post('/api/drills/:id/review', wrap(async (req, res) => {
-  res.json({ drill: await reviewDrill(req.params.id, req.body?.grade || 'good', req.body?.correct, !!req.body?.practice) });
+  res.json({ drill: await reviewDrill(req.params.id, req.body?.grade || 'good', req.body?.correct, !!req.body?.practice, Number(req.body?.ms)) });
+}));
+app.post('/api/drills/:id/suspend', wrap(async (req, res) => {
+  res.json({ drill: await suspendDrill(req.params.id, req.body?.suspended !== false) });
+}));
+app.post('/api/drills/:id/undo', wrap(async (req, res) => {
+  res.json({ drill: await undoReview(req.params.id) });
 }));
 
 app.get(/^\/(?!api|vendor).*/, (req, res) => res.sendFile(path.join(ROOT, 'public/index.html')));

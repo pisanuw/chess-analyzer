@@ -9,7 +9,7 @@ export async function drillsView(root, query) {
   // With ?pattern=..., a lightning round: every drill of one recurring pattern,
   // due or not, back to back (blocked practice for a struggling pattern).
   const lightning = new URLSearchParams(query || '').get('pattern');
-  let { due, total, dueCount, feedback = {} } = await api.drills(lightning, lightning ? 100 : 20);
+  let { due, total, dueCount, feedback = {} } = await api.drills({ pattern: lightning, limit: lightning ? 100 : 20, session: true });
   let idx = 0;
   let board = null;
   let state = null; // { drill, status, verdict, game, hintShown }
@@ -31,7 +31,7 @@ export async function drillsView(root, query) {
       // its drills are returned regardless of due date, so a re-fetch would
       // hand back the same positions forever.
       if (due.length && !lightning) {
-        ({ due, total, dueCount, feedback = {} } = await api.drills());
+        ({ due, total, dueCount, feedback = {} } = await api.drills({ session: true }));
         idx = 0;
         if (due.length) return load();
       }

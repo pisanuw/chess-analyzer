@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-09-08 (drill store: think time, undo, suspend, category rounds, cross-machine history)
+
+- Every drill review now records the time from seeing the position to answering (`ms` in `reviews[]`), plus the ladder position it advanced from. Recognition speed is the real signal of pattern acquisition and the raw material for the planned per-drill ease fit; it cannot be backfilled later.
+- Undo (`POST /api/drills/:id/undo`): pops the last review and restores the recorded ladder position, for fat-fingered grades.
+- Suspend (`POST /api/drills/:id/suspend`): parks a mis-tagged or resented drill out of every queue while keeping its history; `restore-suspended` brings everything back due. Suspension survives re-syncs.
+- Category rounds: `/api/drills?category=...` serves every drill of an error type back to back (due or not), the same blocked-practice semantics as pattern lightning rounds. Report focus areas can now link straight into practice.
+- Review history survives a dead machine: every local drill save also mirrors the store to `drills-<hostname>.json`, which the data repo syncs (drills.json itself stays per-machine). Other machines read the mirrors as foreign, read-only history; the report merges them into drill stats (with a machine count) and adds per-pattern median answer speed once a pattern has 3+ timed reviews.
+- All drill mutation routes stay writable on the hosted read-only mirror (they are training state, like reviews).
+
 ## 2026-09-08 (whole-game explanation batches, CLI retry)
 
 - Explanations for a game's moments now go out as ONE claude CLI call when 2 or more are pending: the shared game context is stated once, each moment keeps its own engine lines, and the reply is an explanations array keyed by ply (`momentsBatchPrompt` / `scoutMomentsBatchPrompt` + `batchExplanationSchema`). A 6-moment game drops from ~7 minutes of sequential calls toward the cost of one. Entries that come back missing or invalid (unknown category, empty fields) fall through to the existing per-moment loop, which is also the retry path if the batch call fails; per-moment writes keep their per-step crash safety.

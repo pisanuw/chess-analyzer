@@ -74,6 +74,8 @@ function makeDrill(game, ply, tier, existing) {
     tier, // 'core' (mistakes/blunders) or 'sharpen' (near-miss moments below the drill threshold)
     category: e?.category || existing?.category || null,
     pattern: e?.pattern || existing?.pattern || null,
+    timePressure: e?.time_pressure ?? existing?.timePressure ?? false,
+    ...(existing?.suspended ? { suspended: true } : {}),
     label: `${game.headers.White || '?'} vs ${game.headers.Black || '?'}${game.headers.Date ? ', ' + game.headers.Date : ''}`,
     createdAt: existing?.createdAt || new Date().toISOString(),
     due: existing?.due || new Date().toISOString(),
@@ -113,6 +115,8 @@ function makePunishDrill(game, ply, tier, existing) {
     tier,
     category: e?.category || existing?.category || null,
     pattern: e?.pattern || existing?.pattern || null,
+    timePressure: e?.time_pressure ?? existing?.timePressure ?? false,
+    ...(existing?.suspended ? { suspended: true } : {}),
     label: `vs ${game.subject || '?'}: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}${game.headers.Date ? ', ' + game.headers.Date : ''}`,
     createdAt: existing?.createdAt || new Date().toISOString(),
     due: existing?.due || new Date().toISOString(),
@@ -154,6 +158,8 @@ function makeThreatDrill(game, ply, tier, existing) {
     tier,
     category: e?.category || existing?.category || null,
     pattern: e?.pattern || existing?.pattern || null,
+    timePressure: e?.time_pressure ?? existing?.timePressure ?? false,
+    ...(existing?.suspended ? { suspended: true } : {}),
     label: `${game.headers.White || '?'} vs ${game.headers.Black || '?'}${game.headers.Date ? ', ' + game.headers.Date : ''}`,
     createdAt: existing?.createdAt || new Date().toISOString(),
     due: existing?.due || new Date().toISOString(),
@@ -268,17 +274,20 @@ export function removeDrillsForGame(gameId) {
 
 /** Record a review. grade: 'again' | 'good' | 'easy'. A failed drill stays due
  * today (retried at the end of the session); the ladder only advances after a
- * same-day pass. Practice reviews (lightning rounds) are extra reps outside the
- * schedule: a miss still resets the drill (a miss is real evidence), but a pass
- * does not advance the ladder. */
-export function reviewDrill(id, grade, correct, practice = false) {
-  return locked(() => reviewUnlocked(id, grade, correct, practice));
+ * same-day pass. Practice reviews (lightning and category rounds) are extra
+ * reps outside the schedule: a miss still resets the drill (a miss is real
+ * evidence), but a pass does not advance the ladder. `ms` is the time from
+ * seeing the position to answering: recognition speed is the real signal of
+ * pattern acquisition, and the raw material for fitting per-drill ease later. */
+export function reviewDrill(id, grade, correct, practice = false, ms = null) {
+  return locked(() => reviewUnlocked(id, grade, correct, practice, ms));
 }
 
-async function reviewUnlocked(id, grade, correct, practice) {
+async function reviewUnlocked(id, grade, correct, practice, ms) {
   const store = await getDrills();
   const d = store.drills.find(x => x.id === id);
   if (!d) throw new Error('drill not found');
+  const prev = { prevStep: d.step, prevDue: d.due }; // lets undoReview restore the ladder
   if (grade === 'again' || correct === false) {
     d.step = 0;
     d.due = new Date().toISOString(); // due now: it comes back at the end of this session
@@ -287,9 +296,57 @@ async function reviewUnlocked(id, grade, correct, practice) {
     else d.step = Math.min(LADDER_DAYS.length - 1, d.step + 1);
     d.due = new Date(Date.now() + LADDER_DAYS[d.step] * DAY).toISOString();
   }
-  d.reviews.push({ at: new Date().toISOString(), grade, correct: !!correct, ...(practice ? { practice: true } : {}) });
+  d.reviews.push({
+    at: new Date().toISOString(), grade, correct: !!correct, ...prev,
+    ...(practice ? { practice: true } : {}),
+    ...(Number.isFinite(ms) && ms >= 0 ? { ms: Math.round(ms) } : {}),
+  });
   await saveDrills(store);
   return d;
+}
+
+/** Undo the last review of a drill (a fat-fingered grade): pop it and restore
+ * the ladder position it recorded. Session stats are the caller's business. */
+export function undoReview(id) {
+  return locked(async () => {
+    const store = await getDrills();
+    const d = store.drills.find(x => x.id === id);
+    if (!d) throw new Error('drill not found');
+    const r = d.reviews.pop();
+    if (!r) throw new Error('no review to undo');
+    if (r.prevStep != null) { d.step = r.prevStep; d.due = r.prevDue; }
+    await saveDrills(store);
+    return d;
+  });
+}
+
+/** Park a drill (mis-tagged, trivial, or just resented): it leaves every queue
+ * but keeps its history. Restoring makes it due now. */
+export function suspendDrill(id, suspended = true) {
+  return locked(async () => {
+    const store = await getDrills();
+    const d = store.drills.find(x => x.id === id);
+    if (!d) throw new Error('drill not found');
+    if (suspended) d.suspended = true;
+    else { delete d.suspended; d.due = new Date().toISOString(); }
+    await saveDrills(store);
+    return d;
+  });
+}
+
+export function restoreSuspended() {
+  return locked(async () => {
+    const store = await getDrills();
+    let n = 0;
+    for (const d of store.drills) {
+      if (!d.suspended) continue;
+      delete d.suspended;
+      d.due = new Date().toISOString();
+      n++;
+    }
+    if (n) await saveDrills(store);
+    return n;
+  });
 }
 
 /** Was this explanation useful? Stored per machine like reviews; the report
@@ -303,28 +360,32 @@ export function recordFeedback(gameId, ply, helpful) {
   });
 }
 
-/** Due drills, core tier first, then near-miss sharpeners. Consecutive drills
- * from the same game are spread apart so one game's context cannot prime the
- * answers to its own next positions. With `pattern`, a lightning round instead:
- * every drill of that recurring pattern, due or not, for blocked practice. */
-export async function dueDrills(limit = 20, { pattern = null } = {}) {
+/** Due drills, core tier first, then opening flashcards, then near-miss
+ * sharpeners. Consecutive drills from the same game are spread apart so one
+ * game's context cannot prime the answers to its own next positions. With
+ * `pattern` or `category`, a practice round instead: every matching drill,
+ * due or not, back to back (blocked practice). Suspended drills never serve. */
+export async function dueDrills(limit = 20, { pattern = null, category = null } = {}) {
   const store = await getDrills();
   const now = Date.now();
-  if (pattern) {
-    const key = normalizeKey(pattern);
-    const match = store.drills.filter(d => normalizeKey(d.pattern) === key)
+  const pool = store.drills.filter(d => !d.suspended);
+  const suspendedCount = store.drills.length - pool.length;
+  if (pattern || category) {
+    const key = normalizeKey(pattern || category);
+    const field = pattern ? (d => d.pattern) : (d => d.category);
+    const match = pool.filter(d => normalizeKey(field(d)) === key)
       .sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
-    return { due: match.slice(0, limit), total: store.drills.length, dueCount: match.length, pattern, feedback: store.feedback };
+    return { due: match.slice(0, limit), total: store.drills.length, dueCount: match.length, pattern, category, suspendedCount, feedback: store.feedback };
   }
-  const rank = d => (d.tier === 'sharpen' ? 1 : 0);
-  const due = store.drills.filter(d => Date.parse(d.due) <= now)
+  const rank = d => (d.tier === 'core' ? 0 : d.tier === 'opening' ? 1 : 2);
+  const due = pool.filter(d => Date.parse(d.due) <= now)
     .sort((a, b) => rank(a) - rank(b) || Date.parse(a.due) - Date.parse(b.due));
   for (let i = 1; i < due.length; i++) {
     if (due[i].gameId !== due[i - 1].gameId) continue;
     const j = due.findIndex((d, k) => k > i && d.gameId !== due[i].gameId && rank(d) === rank(due[i]));
     if (j > i) [due[i], due[j]] = [due[j], due[i]];
   }
-  return { due: due.slice(0, limit), total: store.drills.length, dueCount: due.length, feedback: store.feedback };
+  return { due: due.slice(0, limit), total: store.drills.length, dueCount: due.length, suspendedCount, feedback: store.feedback };
 }
 
 function normalizeKey(s) {

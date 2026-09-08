@@ -134,3 +134,18 @@ test('playout endpoints validate input without touching the engine', async () =>
   assert.equal(mate.data.over, 'checkmate');
   assert.ok(mate.data.cp > 9000, 'mated side to move means a winning score for the other side');
 });
+
+test('review think time, undo, suspend, and restore over HTTP', async () => {
+  const passed = await req('POST', '/api/drills/abcdefabcdef%3A1/review', { grade: 'good', correct: true, ms: 1500 });
+  assert.equal(passed.data.drill.reviews.at(-1).ms, 1500);
+  const undo = await req('POST', '/api/drills/abcdefabcdef%3A1/undo');
+  assert.equal(undo.status, 200);
+  assert.equal(undo.data.drill.step, 0, 'ladder restored');
+  const sus = await req('POST', '/api/drills/abcdefabcdef%3A1/suspend', {});
+  assert.equal(sus.data.drill.suspended, true);
+  const drills = (await req('GET', '/api/drills')).data;
+  assert.ok(!drills.due.some(d => d.id === 'abcdefabcdef:1'), 'suspended drill leaves the queue');
+  assert.ok(drills.suspendedCount >= 1);
+  const restored = await req('POST', '/api/drills/restore-suspended');
+  assert.ok(restored.data.restored >= 1);
+});

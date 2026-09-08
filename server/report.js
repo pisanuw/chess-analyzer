@@ -1,5 +1,5 @@
 // Aggregate weakness report across all analysed games.
-import { getGame, listGames, getDrills } from './store.js';
+import { getGame, listGames, getDrills, getForeignDrillStores } from './store.js';
 import { gamesForSubject } from './subjects.js';
 import { parseTimeControl, spentPerMove } from '../public/shared.js';
 import { CATEGORIES } from './prompts.js';
@@ -138,24 +138,45 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     if (!categoryTrend.length) categoryTrend = null;
   }
 
-  // Drill performance from this machine's review history (the player's own drills).
+  // Drill performance from review history: this machine's live store plus the
+  // read-only mirrors other machines sync through the data repo (the same
+  // player reviews on both, so the histories merge).
   const dstore = purpose === 'own' ? await getDrills() : { drills: [] };
-  const drillByPhase = {}, drillByCategory = {};
+  const foreign = purpose === 'own' ? await getForeignDrillStores() : [];
+  const drillByPhase = {}, drillByCategory = {}, patternSpeed = new Map();
   let drillAttempts = 0, drillCorrect = 0;
-  for (const d of dstore.drills) {
-    for (const r of d.reviews || []) {
-      drillAttempts++; if (r.correct) drillCorrect++;
-      const bump = (obj, k) => { if (!k) return; const o = obj[k] = obj[k] || { attempts: 0, correct: 0 }; o.attempts++; if (r.correct) o.correct++; };
-      bump(drillByPhase, d.phase);
-      bump(drillByCategory, d.category);
+  const tally = drills => {
+    for (const d of drills) {
+      for (const r of d.reviews || []) {
+        drillAttempts++; if (r.correct) drillCorrect++;
+        const bump = (obj, k) => { if (!k) return; const o = obj[k] = obj[k] || { attempts: 0, correct: 0 }; o.attempts++; if (r.correct) o.correct++; };
+        bump(drillByPhase, d.phase);
+        bump(drillByCategory, d.category);
+        if (d.pattern && Number.isFinite(r.ms)) {
+          const k = normalizeKey(d.pattern);
+          const p = patternSpeed.get(k) || { pattern: d.pattern, times: [] };
+          p.times.push(r.ms);
+          patternSpeed.set(k, p);
+        }
+      }
     }
-  }
+  };
+  tally(dstore.drills);
+  for (const f of foreign) tally(f.drills);
+  const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  const speed = [...patternSpeed.values()]
+    .filter(p => p.times.length >= 3)
+    .map(p => ({ pattern: p.pattern, attempts: p.times.length, medianMs: median(p.times) }))
+    .sort((a, b) => b.attempts - a.attempts)
+    .slice(0, 10);
   const drillStats = drillAttempts ? {
     attempts: drillAttempts,
     correct: drillCorrect,
     rate: Math.round((drillCorrect / drillAttempts) * 100),
+    machines: 1 + foreign.length,
     byPhase: drillByPhase,
     byCategory: drillByCategory,
+    speed: speed.length ? speed : null,
   } : null;
 
   // Explanation feedback (per machine): counts, plus the moments flagged as

@@ -1,5 +1,6 @@
 // JSON file storage under data/. One file per game, plus settings.json and drills.json.
 import { promises as fs } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -202,6 +203,28 @@ export async function getDrills() {
   return store;
 }
 
+// drills.json itself is per-machine and never synced (each machine keeps its
+// own ladder), but the review HISTORY inside it is worth preserving: it will
+// feed the per-drill ease fit, and a dead laptop should not erase months of
+// it. Every local save therefore also mirrors the store to drills-<host>.json,
+// which the data repo DOES sync; other machines read those files as foreign,
+// read-only history for report stats.
+const HOST = os.hostname().split('.')[0].replace(/[^a-zA-Z0-9_-]+/g, '-') || 'machine';
+const mirrorFile = () => path.join(DATA_DIR, `drills-${HOST}.json`);
+
+/** Drill stores mirrored from OTHER machines: [{ machine, drills }]. */
+export async function getForeignDrillStores() {
+  await ensureDirs();
+  const out = [];
+  for (const f of await fs.readdir(DATA_DIR).catch(() => [])) {
+    const m = f.match(/^drills-(.+)\.json$/);
+    if (!m || m[1] === HOST) continue;
+    const store = await readJson(path.join(DATA_DIR, f), null).catch(() => null);
+    if (Array.isArray(store?.drills)) out.push({ machine: m[1], drills: store.drills });
+  }
+  return out;
+}
+
 export async function getPrepSheets() {
   return readJson(path.join(DATA_DIR, 'prepsheets.json'), {});
 }
@@ -224,6 +247,7 @@ export async function saveDrills(value) {
   const s = sb();
   if (!s) {
     await writeJson(path.join(DATA_DIR, 'drills.json'), value);
+    await writeJson(mirrorFile(), value).catch(() => {}); // best effort: the mirror is derived history
     return value;
   }
   // Claim the next revision only if the row still holds the one we read; an
