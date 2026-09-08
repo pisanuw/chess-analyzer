@@ -1,5 +1,6 @@
 // Small SVG charts: horizontal bars, a single-series line, and the game eval graph. No dependencies.
 import { esc, formatEval, movePrefix } from './api.js';
+import { spentPerMove } from './shared.js';
 
 const flaggedJudgment = j => j === 'inaccuracy' || j === 'mistake' || j === 'blunder';
 
@@ -94,19 +95,6 @@ export function lineChart(container, points, { yMin = 0, yMax = 100, format = v 
   if (onClick) hit.addEventListener('click', e => onClick(points[idxAt(e)]));
   svg.appendChild(hit);
   container.appendChild(svg);
-}
-
-/** Time spent per ply from stored clocks ([%clk] is seconds remaining after the move). */
-function spentPerMove(moves, timeControl) {
-  const tc = (timeControl || '').match(/^(\d+)(?:\+(\d+))?$/);
-  const base = tc ? Number(tc[1]) : null, inc = tc ? Number(tc[2] || 0) : 0;
-  const prev = { white: base, black: base };
-  return moves.map(m => {
-    let spent = null;
-    if (m.clock != null && prev[m.color] != null) spent = Math.max(0, prev[m.color] - m.clock + inc);
-    if (m.clock != null) prev[m.color] = m.clock;
-    return spent;
-  });
 }
 
 const fmtSpent = s => s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;

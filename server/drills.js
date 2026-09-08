@@ -1,15 +1,9 @@
 // Drills: positions from the player's own mistakes, scheduled with a small spaced-repetition ladder.
 import { getDrills, saveDrills, getSettings, listGames, getGame, DrillConflict } from './store.js';
-import { winProb } from './analyze.js';
+import { winProb, WP_ACCEPT } from '../public/shared.js';
 
 const LADDER_DAYS = [1, 3, 7, 14, 30, 60];
 const DAY = 86400000;
-
-// Accept any stored line within this many win-probability points of the best
-// move: the same currency as judgments and thresholds, so acceptance is strict
-// in balanced positions and forgiving in already-decided ones (a fixed cp band
-// was the opposite). Mirrored by WP_ACCEPT in public/api.js; keep in sync.
-const WP_ACCEPT = 3;
 
 /** UCI moves of the lines close enough to best. `sign` converts the stored
  * White-perspective cp to the mover's perspective. */

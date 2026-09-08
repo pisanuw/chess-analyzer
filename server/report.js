@@ -1,7 +1,7 @@
 // Aggregate weakness report across all analysed games.
 import { getGame, listGames, getDrills } from './store.js';
 import { gamesForSubject } from './subjects.js';
-import { parseTimeControl } from './pgn.js';
+import { parseTimeControl, spentPerMove } from '../public/shared.js';
 import { CATEGORIES } from './prompts.js';
 
 export { parseTimeControl };
@@ -57,21 +57,18 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
       moments: g.analysis.summary.moments.length,
     });
     // Time management from stored clocks (seconds remaining after each move).
-    const tc = parseTimeControl(g.headers.TimeControl);
-    const prevClock = { white: tc?.base ?? null, black: tc?.base ?? null };
+    const spents = spentPerMove(g.analysis.moves, g.headers.TimeControl);
     const momentSet = new Set(g.analysis.summary.moments);
-    for (const m of g.analysis.moves) {
-      let spent = null;
-      if (m.clock != null && prevClock[m.color] != null) spent = Math.max(0, prevClock[m.color] - m.clock + (tc?.inc || 0));
-      if (m.clock != null) prevClock[m.color] = m.clock;
-      if (!m.isPlayer || m.clock == null) continue;
+    g.analysis.moves.forEach((m, i) => {
+      const spent = spents[i];
+      if (!m.isPlayer || m.clock == null) return;
       time.moves++;
       if (momentSet.has(m.ply)) {
         if (spent != null) { time.momentSpentTotal += spent; time.momentSpentN++; if (spent <= 10) time.fastMoments++; }
         if (m.clock > 300 && m.loss >= 20) time.comfortBlunders++;
         if (m.clock < 120) time.underTwoMin++;
       } else if (spent != null) { time.otherSpentTotal += spent; time.otherSpentN++; }
-    }
+    });
 
     const gameCats = {};
     for (const ply of g.analysis.summary.moments) {

@@ -1,6 +1,5 @@
 // Prompt construction for the explanation step. Everything the model sees is engine-grounded.
-import { formatEval } from './analyze.js';
-import { parseTimeControl } from './pgn.js';
+import { formatEval, spentPerMove } from '../public/shared.js';
 
 const sanLine = ms => ms.map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
 
@@ -195,11 +194,8 @@ function clockText(m, game) {
   const mins = Math.floor(m.clock / 60), secs = m.clock % 60;
   const base = `Clock after the move: ${mins}:${String(secs).padStart(2, '0')} remaining.`;
   // Deterministic time-spent, so time_pressure is not guessed from one number.
-  const tc = parseTimeControl(game?.headers?.TimeControl);
-  const prev = game?.analysis?.moves.slice(0, m.ply - 1).reverse().find(x => x.color === m.color && x.clock != null);
-  const from = prev ? prev.clock : tc?.base;
-  if (from == null) return base;
-  const spent = Math.max(0, from - m.clock + (tc?.inc || 0));
+  const spent = game?.analysis?.moves ? spentPerMove(game.analysis.moves, game.headers?.TimeControl)[m.ply - 1] : null;
+  if (spent == null) return base;
   return `${base} Time spent on this move: about ${spent} seconds.`;
 }
 

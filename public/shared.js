@@ -1,0 +1,44 @@
+// Pure chess-math helpers used by BOTH sides: the server imports this file
+// directly (plain ESM, no browser APIs) and the frontend loads it statically.
+// One definition each for the values that used to be duplicated across
+// server/ and public/ with "keep in sync" comments.
+
+/** Lichess win-probability model, 0..100, from the perspective of the side the cp is for. */
+export function winProb(cp) {
+  const c = Math.max(-1500, Math.min(1500, cp));
+  return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * c)) - 1);
+}
+
+// "Close enough to best" band for guesses and drills, in win-probability
+// points: the same currency as judgments and thresholds, so acceptance is
+// strict in balanced positions and forgiving in already-decided ones.
+export const WP_ACCEPT = 3;
+
+/** "+0.42" / "-1.10", "#3" / "#-3" for mates, '' for null. cp is from White's side. */
+export function formatEval(cp) {
+  if (cp == null) return '';
+  if (Math.abs(cp) >= 9800) return (cp > 0 ? '#' : '#-') + (10000 - Math.abs(cp));
+  return (cp >= 0 ? '+' : '') + (cp / 100).toFixed(2);
+}
+
+/** Parse a PGN TimeControl header like "5400+30" or "600" into { base, inc } seconds. */
+export function parseTimeControl(tc) {
+  const m = (tc || '').match(/^(\d+)(?:\+(\d+))?$/);
+  if (!m) return null;
+  return { base: Number(m[1]), inc: Number(m[2] || 0) };
+}
+
+/** Seconds spent on each move, aligned with `moves` (null where unknown).
+ * [%clk] comments store seconds REMAINING after the move; spent time is the
+ * difference from the mover's previous clock (or the base time control),
+ * plus the increment they got back. */
+export function spentPerMove(moves, timeControl) {
+  const tc = parseTimeControl(timeControl);
+  const prev = { white: tc ? tc.base : null, black: tc ? tc.base : null };
+  return moves.map(m => {
+    let spent = null;
+    if (m.clock != null && prev[m.color] != null) spent = Math.max(0, prev[m.color] - m.clock + (tc ? tc.inc : 0));
+    if (m.clock != null) prev[m.color] = m.clock;
+    return spent;
+  });
+}

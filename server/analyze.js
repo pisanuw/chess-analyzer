@@ -1,5 +1,10 @@
 // Engine analysis of a whole game: per-move evaluations, judgments, phases, critical moments.
 import { Chess } from 'chess.js';
+import { winProb, formatEval } from '../public/shared.js';
+
+// Shared with the frontend (public/shared.js); re-exported so server modules
+// keep importing them from here.
+export { winProb, formatEval };
 
 const MATE_CP = 10000;
 
@@ -13,12 +18,6 @@ export function scoreToCp(line) {
     return line.mate > 0 ? MATE_CP - line.mate : -MATE_CP - line.mate;
   }
   return line.cp ?? 0;
-}
-
-/** Lichess win-probability model, 0..100, from the perspective of the side the cp is for. */
-export function winProb(cp) {
-  const c = Math.max(-1500, Math.min(1500, cp));
-  return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * c)) - 1);
 }
 
 /** Lichess-style move accuracy from win-probability drop (both in 0..100). */
@@ -57,14 +56,6 @@ export function pvToSan(fen, pv, maxPlies = 8) {
     } catch { break; }
   }
   return san;
-}
-
-export function formatEval(cpForWhite) {
-  if (Math.abs(cpForWhite) >= MATE_CP - 200) {
-    const n = MATE_CP - Math.abs(cpForWhite);
-    return (cpForWhite > 0 ? '#' : '#-') + n;
-  }
-  return (cpForWhite >= 0 ? '+' : '') + (cpForWhite / 100).toFixed(2);
 }
 
 /** Terminal position evaluation (mate/stalemate/draw) from side-to-move perspective, or null. */

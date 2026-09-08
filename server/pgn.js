@@ -30,12 +30,8 @@ export function parseClock(comment) {
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
-/** Parse a PGN TimeControl header like "5400+30" or "600" into { base, inc } seconds. */
-export function parseTimeControl(tc) {
-  const m = (tc || '').match(/^(\d+)(?:\+(\d+))?$/);
-  if (!m) return null;
-  return { base: Number(m[1]), inc: Number(m[2] || 0) };
-}
+// Shared with the frontend; re-exported so server modules keep importing it from here.
+export { parseTimeControl } from '../public/shared.js';
 
 /**
  * Parse a single PGN game into { headers, moves[], pgn, id }.

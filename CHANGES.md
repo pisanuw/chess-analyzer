@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-08 (shared chess-math module)
+
+- New `public/shared.js` holds the helpers that were duplicated between server and frontend with "keep in sync" comments: `winProb`, `WP_ACCEPT`, `formatEval`, `parseTimeControl`, and the time-spent-per-move calculation (previously implemented three separate times in prompts.js, report.js, and charts.js). The server imports the file directly (plain ESM, no browser APIs); `analyze.js` and `pgn.js` re-export so existing imports keep working, and `api.js` re-exports for the views. No behaviour change intended; covered by test/shared.test.js.
+
 ## 2026-09-08 (training: threat drills, play-it-out, lightning rounds, question-first, feedback, prep card)
 
 - See-the-threat drills: a tactics-allowed moment now creates a second drill from the position AFTER the mistake, played from the opponent's side (find the punishment you overlooked) but oriented from the player's side of the board, where threats must be spotted. Created once the moment is explained; removed if a re-explanation changes the category.
