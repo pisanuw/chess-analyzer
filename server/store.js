@@ -66,15 +66,33 @@ export async function saveSettings(patch) {
   return next;
 }
 
+// listGames() backs every view, report, and job lookup; parsing each full game
+// file (MultiPV lines included) on every call is the entire cost of those
+// endpoints once the collection grows. Cache the small index entry per file,
+// keyed by mtime and size, and invalidate on our own writes; external writers
+// (git pull in the data repo) produce new mtimes and fall through the cache.
+const indexCache = new Map(); // absolute path -> { mtimeMs, size, entry }
+
 export async function listGames() {
   await ensureDirs();
   const files = (await fs.readdir(GAMES_DIR)).filter(f => f.endsWith('.json'));
-  // One corrupt file must not take down every list-based endpoint; skip and warn.
-  const games = await Promise.all(files.map(f => readJson(path.join(GAMES_DIR, f), null).catch(err => {
-    console.error(`skipping unreadable game file ${f}: ${err.message}`);
-    return null;
-  })));
-  return games.filter(Boolean).map(gameIndexEntry).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt));
+  const games = await Promise.all(files.map(async f => {
+    const file = path.join(GAMES_DIR, f);
+    let stat;
+    try { stat = await fs.stat(file); } catch { return null; } // deleted between readdir and stat
+    const hit = indexCache.get(file);
+    if (hit && hit.mtimeMs === stat.mtimeMs && hit.size === stat.size) return hit.entry;
+    // One corrupt file must not take down every list-based endpoint; skip and
+    // warn (once per version of the file, thanks to the cache).
+    const g = await readJson(file, null).catch(err => {
+      console.error(`skipping unreadable game file ${f}: ${err.message}`);
+      return null;
+    });
+    const entry = g ? gameIndexEntry(g) : null;
+    indexCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, entry });
+    return entry;
+  }));
+  return games.filter(Boolean).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt));
 }
 
 export function gameIndexEntry(g) {
@@ -114,21 +132,30 @@ export async function getGame(id) {
 }
 
 export async function saveGame(game) {
-  await writeJson(path.join(GAMES_DIR, game.id + '.json'), game);
+  const file = path.join(GAMES_DIR, game.id + '.json');
+  await writeJson(file, game);
+  indexCache.delete(file);
   return game;
 }
 
 export async function deleteGame(id) {
   if (!isValidId(id)) return;
-  await fs.rm(path.join(GAMES_DIR, id + '.json'), { force: true });
+  const file = path.join(GAMES_DIR, id + '.json');
+  await fs.rm(file, { force: true });
+  indexCache.delete(file);
 }
 
 // Drill/guess state is per machine. The hosted copy has no persistent disk, so
 // when SUPABASE_URL is set the whole store lives as one jsonb row in Supabase
-// (table chess_kv); our drill mutation lock already serializes access.
+// (table chess_kv). The in-process drill mutation lock serializes one instance,
+// but concurrent function instances share nothing, so hosted writes are
+// compare-and-swap on a revision counter kept inside the value.
 const sb = () => process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
   ? { url: process.env.SUPABASE_URL, headers: { apikey: process.env.SUPABASE_SERVICE_KEY, authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`, 'content-type': 'application/json' } }
   : null;
+
+/** A hosted drill write lost the compare-and-swap race; the caller re-reads and reapplies. */
+export class DrillConflict extends Error {}
 
 export async function getDrills() {
   const s = sb();
@@ -141,6 +168,7 @@ export async function getDrills() {
     store = await readJson(path.join(DATA_DIR, 'drills.json'), { drills: [] });
   }
   store.guesses = store.guesses || {}; // guess-first attempts, keyed gameId:ply
+  store.rev = store.rev || 0;          // CAS revision (0 = new store or legacy row)
   return store;
 }
 
@@ -164,15 +192,34 @@ export async function savePatternNotes(notes) {
 
 export async function saveDrills(value) {
   const s = sb();
-  if (s) {
-    const r = await fetch(`${s.url}/rest/v1/chess_kv`, {
-      method: 'POST',
-      headers: { ...s.headers, prefer: 'resolution=merge-duplicates' },
-      body: JSON.stringify([{ key: 'drills', value }]),
-    });
-    if (!r.ok) throw new Error(`drill store write failed (${r.status})`);
+  if (!s) {
+    await writeJson(path.join(DATA_DIR, 'drills.json'), value);
     return value;
   }
-  await writeJson(path.join(DATA_DIR, 'drills.json'), value);
-  return value;
+  // Claim the next revision only if the row still holds the one we read; an
+  // empty result means another instance wrote first (throw DrillConflict so
+  // the drill lock re-reads and reapplies). rev 0 matches a legacy row that
+  // predates the counter, or no row at all.
+  const prevRev = value.rev || 0;
+  const next = { ...value, rev: prevRev + 1 };
+  const filter = prevRev ? `value->>rev=eq.${prevRev}` : 'value->>rev=is.null';
+  const patch = await fetch(`${s.url}/rest/v1/chess_kv?key=eq.drills&${filter}`, {
+    method: 'PATCH',
+    headers: { ...s.headers, prefer: 'return=representation' },
+    body: JSON.stringify({ value: next }),
+  });
+  if (!patch.ok) throw new Error(`drill store write failed (${patch.status})`);
+  if ((await patch.json()).length) return next;
+  if (!prevRev) {
+    // No row matched: usually the first ever write. Insert without clobbering
+    // a row another instance created in the meantime.
+    const post = await fetch(`${s.url}/rest/v1/chess_kv`, {
+      method: 'POST',
+      headers: { ...s.headers, prefer: 'resolution=ignore-duplicates,return=representation' },
+      body: JSON.stringify([{ key: 'drills', value: next }]),
+    });
+    if (!post.ok) throw new Error(`drill store write failed (${post.status})`);
+    if ((await post.json()).length) return next;
+  }
+  throw new DrillConflict('drill store was updated by another writer');
 }

@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-09-07 (backend: fair quick evals, win-probability acceptance, index cache, hosted CAS)
+
+- Quick evals of off-list guesses now search the guess and the stored best move together (UCI searchmoves, one search, same depth), instead of judging a depth-12 eval of the guess against the stored depth-18 lines. The endpoint also returns the difference in win-probability points.
+- Drill and guess acceptance moved from a fixed 30cp band to 3 win-probability points, the same currency as judgments and thresholds: strict in balanced positions, forgiving in already-decided ones. An off-list drill answer within the band now counts as correct (the paired search makes that verdict trustworthy).
+- The games index is cached per file (mtime+size): listGames no longer re-parses every full game file, including all engine lines, on every poll and report. Our own writes invalidate explicitly; git-synced files fall through the cache via their new mtimes.
+- Hosted drill writes are compare-and-swap on a revision counter inside the Supabase row; a lost race re-reads and reapplies the mutation instead of silently overwriting another function instance's write (the in-process lock never covered concurrent instances).
+
 ## 2026-09-07 (guess recording waits for the quick eval)
 
 - Off-list guesses in the game view were recorded as incorrect immediately, while the quick engine eval was still running; a guess the eval then called "Playable" had already seeded its drill at step 0 as a wrong answer. The attempt is now recorded after the eval resolves (immediately for moves the stored lines already cover).

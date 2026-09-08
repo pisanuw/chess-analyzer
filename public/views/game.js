@@ -1,5 +1,5 @@
 // Single game: board, eval graph, moves, critical moments with guess-first reveal, summary.
-import { api, esc, toast, formatEval, moveLabel, movePrefix, JUDGE_MARK } from '../api.js';
+import { api, esc, toast, formatEval, moveLabel, movePrefix, winProb, WP_ACCEPT, JUDGE_MARK } from '../api.js';
 import { Board, applyMove, walkSans, lineShapes } from '../board.js';
 import { evalGraph } from '../charts.js';
 
@@ -227,8 +227,8 @@ export async function gameView(root, id, startPly) {
     let recordLater = false;
     if (res.uci === t.bestUci || rank === 0) g.verdict = { good: true, text: `${res.san}: the engine's first choice (${formatEval(t.lines[0]?.cp ?? t.evalBefore)}).` };
     else if (rank > 0) {
-      const diff = ((t.lines[0].cp - t.lines[rank].cp) * sign) / 100;
-      g.verdict = { good: diff <= 0.3, text: `${res.san}: engine line ${rank + 1} (${formatEval(t.lines[rank].cp)}, ${diff.toFixed(2)} behind ${t.lines[0].san[0]}).` };
+      const wpDiff = winProb(t.lines[0].cp * sign) - winProb(t.lines[rank].cp * sign);
+      g.verdict = { good: wpDiff <= WP_ACCEPT, text: `${res.san}: engine line ${rank + 1} (${formatEval(t.lines[rank].cp)}, ${wpDiff.toFixed(1)} win-% behind ${t.lines[0].san[0]}).` };
     } else if (res.uci === t.uci) g.verdict = scout
       ? { good: false, text: `${res.san}: that is what was played in the game, but the engine found stronger: ${t.bestSan}.` }
       : { good: false, text: `${res.san}: that is the move played in the game, which the engine marks as ${m.judgment === 'inaccuracy' ? 'an' : 'a'} ${m.judgment}.` };
@@ -237,8 +237,8 @@ export async function gameView(root, id, startPly) {
       const verdict = g.verdict = { good: false, text: `${res.san}: not among the engine's top ${t.lines.length} lines. Checking with the engine…` };
       // Quick engine eval so an off-list guess gets a real answer (best effort).
       api.evalMove(id, scout ? g.ply + 1 : g.ply, res.uci).then(r => {
-        verdict.good = r.diff <= 0.3;
-        verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (t.color === 'white' ? 1 : -1))}, ${r.diff.toFixed(2)} behind the best move.${verdict.good ? ' Playable.' : ''}`;
+        verdict.good = r.wpDiff <= WP_ACCEPT;
+        verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (t.color === 'white' ? 1 : -1))}, ${r.wpDiff.toFixed(1)} win-% behind the best move.${verdict.good ? ' Playable.' : ''}`;
         record(verdict.good);
         if (state.guess?.verdict === verdict) renderPanel();
       }).catch(() => {

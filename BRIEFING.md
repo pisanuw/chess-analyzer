@@ -22,7 +22,7 @@ Help a FIDE ~2000 player (Yusuf's son) improve: the engine finds the critical mo
 
 - One engine process, one job at a time. Fine for a few games per week.
 - Phase classification is a material/move-number heuristic (`phaseOf` in analyze.js).
-- Drill correctness is "engine best or a top line within 0.30"; no tablebase check for endgames.
+- Drill correctness is "engine best or within 3 win-probability points"; no tablebase check for endgames.
 - The manual LLM flow works but is clunky (copy prompt, paste JSON).
 - No lichess/chess.com import yet (public APIs, no auth needed; was descoped for v1).
 - Explanations take about a minute each with the default model; the queue is background but a 6-moment game is 7 minutes.

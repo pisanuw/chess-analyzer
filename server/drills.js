@@ -1,15 +1,41 @@
 // Drills: positions from the player's own mistakes, scheduled with a small spaced-repetition ladder.
-import { getDrills, saveDrills, getSettings, listGames, getGame } from './store.js';
+import { getDrills, saveDrills, getSettings, listGames, getGame, DrillConflict } from './store.js';
+import { winProb } from './analyze.js';
 
 const LADDER_DAYS = [1, 3, 7, 14, 30, 60];
 const DAY = 86400000;
 
+// Accept any stored line within this many win-probability points of the best
+// move: the same currency as judgments and thresholds, so acceptance is strict
+// in balanced positions and forgiving in already-decided ones (a fixed cp band
+// was the opposite). Mirrored by WP_ACCEPT in public/api.js; keep in sync.
+const WP_ACCEPT = 3;
+
+/** UCI moves of the lines close enough to best. `sign` converts the stored
+ * White-perspective cp to the mover's perspective. */
+function acceptedLines(lines, sign) {
+  const bestCp = lines[0]?.cp;
+  if (bestCp == null) return [];
+  const bestWp = winProb(bestCp * sign);
+  return lines.filter(l => l.cp != null && bestWp - winProb(l.cp * sign) <= WP_ACCEPT).map(l => l.uci);
+}
+
 // All drill-store mutations run through one chain: the store is a single JSON
 // file read-modified-written whole, so concurrent mutations (job sync vs a
 // review vs a delete) would silently drop each other's changes otherwise.
+// On the hosted store the chain cannot serialize other function instances, so
+// a write can lose a compare-and-swap race (DrillConflict from saveDrills);
+// re-running fn re-reads the store and reapplies the mutation.
 let chain = Promise.resolve();
 function locked(fn) {
-  const p = chain.then(fn, fn);
+  const run = async () => {
+    for (let attempt = 0; ; attempt++) {
+      try { return await fn(); } catch (err) {
+        if (!(err instanceof DrillConflict) || attempt >= 2) throw err;
+      }
+    }
+  };
+  const p = chain.then(run, run);
   chain = p.then(() => {}, () => {});
   return p;
 }
@@ -22,11 +48,7 @@ export function drillId(gameId, ply) {
 function makeDrill(game, ply, tier, existing) {
   const m = game.analysis.moves[ply - 1];
   const e = game.explanations?.[ply];
-  const bestCp = m.lines[0]?.cp;
-  const sign = m.color === 'white' ? 1 : -1;
-  const accepted = m.lines
-    .filter(l => bestCp != null && (bestCp - l.cp) * sign <= 30)
-    .map(l => l.uci);
+  const accepted = acceptedLines(m.lines, m.color === 'white' ? 1 : -1);
   return {
     id: drillId(game.id, ply),
     gameId: game.id,
@@ -61,11 +83,7 @@ function makePunishDrill(game, ply, tier, existing) {
   const next = game.analysis.moves[ply];  // the reply position: student to move
   if (!next?.lines?.length) return null;
   const e = game.explanations?.[ply];
-  const bestCp = next.lines[0]?.cp;
-  const sign = next.color === 'white' ? 1 : -1;
-  const accepted = next.lines
-    .filter(l => bestCp != null && (bestCp - l.cp) * sign <= 30)
-    .map(l => l.uci);
+  const accepted = acceptedLines(next.lines, next.color === 'white' ? 1 : -1);
   return {
     id: drillId(game.id, ply),
     kind: 'punish',

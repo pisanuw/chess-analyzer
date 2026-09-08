@@ -1,5 +1,5 @@
 // Drills: replay your own critical moments, spaced repetition.
-import { api, esc, toast, formatEval } from '../api.js';
+import { api, esc, toast, formatEval, WP_ACCEPT } from '../api.js';
 import { Board, applyMove, walkSans, lineShapes } from '../board.js';
 
 const MAX_FOLLOWUPS = 2; // player moves asked beyond the first, along the engine's PV
@@ -102,15 +102,19 @@ export async function drillsView(root) {
     const rank = d.lines.findIndex(l => l.uci === res.uci);
     let text;
     if (res.uci === d.bestUci) text = `${res.san}: correct, the engine's first choice.`;
-    else if (correct) text = `${res.san}: accepted (engine line ${rank + 1}, within 0.30 of the best move ${d.bestSan}).`;
+    else if (correct) text = `${res.san}: accepted (engine line ${rank + 1}, within ${WP_ACCEPT} win-% of the best move ${d.bestSan}).`;
     else if (res.uci === d.playedUci) text = d.kind === 'punish' ? `${res.san}: that is what was played in the game, but the engine prefers ${d.bestSan}.` : `${res.san}: that is what you played in the game (${d.judgment}). Engine: ${d.bestSan}.`;
     else if (rank > 0) text = `${res.san}: engine line ${rank + 1}, but clearly worse than ${d.bestSan}.`;
     else text = `${res.san}: not among the engine's top lines. Engine: ${d.bestSan}.`;
     const verdict = { correct, text, followUps: 0, foundSans: [] };
-    // Off-list move: ask the server for a quick engine eval (best effort; needs Stockfish).
+    // Off-list move: ask the server for a quick engine eval (best effort; needs
+    // Stockfish). The paired same-depth search is trustworthy enough to accept
+    // a move the stored lines simply did not cover.
     if (!correct && rank < 0 && res.uci !== d.playedUci) {
       api.evalMove(d.gameId, d.kind === 'punish' ? d.ply + 1 : d.ply, res.uci).then(r => {
-        verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (d.sideToMove === 'white' ? 1 : -1))}, ${r.diff.toFixed(2)} behind ${d.bestSan}.${r.diff <= 0.3 ? ' Close enough to be playable.' : ''}`;
+        const good = r.wpDiff <= WP_ACCEPT;
+        if (good) verdict.correct = true;
+        verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (d.sideToMove === 'white' ? 1 : -1))}, ${r.wpDiff.toFixed(1)} win-% behind ${d.bestSan}.${good ? ' Accepted.' : ''}`;
         if (state?.verdict === verdict) renderPanel();
       }).catch(() => {});
     }

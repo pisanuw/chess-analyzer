@@ -74,6 +74,16 @@ export function formatEval(cp) {
   return (cp >= 0 ? '+' : '') + (cp / 100).toFixed(2);
 }
 
+/** Lichess win-probability model, 0..100, from the perspective of the side the cp is for. */
+export function winProb(cp) {
+  const c = Math.max(-1500, Math.min(1500, cp));
+  return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * c)) - 1);
+}
+
+// "Close enough to best" band for guesses and drills, in win-probability
+// points. Mirrors WP_ACCEPT in server/drills.js; keep the two in sync.
+export const WP_ACCEPT = 3;
+
 /** "12." for White moves, "12..." for Black. */
 export function movePrefix(m) {
   return `${m.moveNumber}${m.color === 'white' ? '.' : '...'}`;

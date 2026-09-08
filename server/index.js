@@ -10,7 +10,7 @@ import { findStockfish, getEngine } from './engine.js';
 import { checkClaudeCli, complete } from './llm.js';
 import { buildReport } from './report.js';
 import { buildRepertoire } from './repertoire.js';
-import { scoreToCp } from './analyze.js';
+import { scoreToCp, winProb } from './analyze.js';
 import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess } from './drills.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, patternSynthesisPrompt, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { authMiddleware, loginRoute } from './auth.js';
@@ -230,6 +230,9 @@ app.post('/api/games/:id/moments/:ply/guess', wrap(async (req, res) => {
 }));
 
 // Quick engine evaluation of a move the stored MultiPV lines do not cover.
+// The guess and the stored best move are searched together (searchmoves, same
+// depth, one search) so the verdict compares like with like; a shallow eval of
+// the guess is never measured against the stored deep eval of the best move.
 app.post('/api/games/:id/moments/:ply/eval', wrap(async (req, res) => {
   const game = await getGame(req.params.id);
   const ply = Number(req.params.ply);
@@ -242,11 +245,20 @@ app.post('/api/games/:id/moments/:ply/eval', wrap(async (req, res) => {
   if (!mv) return res.status(400).json({ error: 'illegal move' });
   const settings = await getSettings();
   const engine = await getEngine(settings);
-  const r = await engine.analyse(chess.fen(), { depth: 12, multipv: 1, movetimeMs: 2000 });
   const sign = m.color === 'white' ? 1 : -1;
-  const moverCp = -scoreToCp(r.lines[0]); // reply eval is from the opponent's perspective
-  const bestCp = (m.lines[0]?.cp ?? m.evalBefore) * sign;
-  res.json({ san: mv.san, cp: moverCp, bestCp, diff: +((bestCp - moverCp) / 100).toFixed(2) });
+  let moverCp, bestCp; // both from the mover's perspective
+  if (m.bestUci && m.bestUci !== uci) {
+    const r = await engine.analyse(m.fenBefore, { depth: 12, multipv: 2, movetimeMs: 3000, searchMoves: [m.bestUci, uci] });
+    const lineFor = u => r.lines.find(l => l.pv[0] === u);
+    const guessLine = lineFor(uci), bestLine = lineFor(m.bestUci);
+    if (!guessLine || !bestLine) throw new Error('engine did not evaluate both moves');
+    moverCp = scoreToCp(guessLine);
+    bestCp = scoreToCp(bestLine);
+  } else {
+    moverCp = bestCp = (m.lines[0]?.cp ?? m.evalBefore) * sign;
+  }
+  const wpDiff = Math.max(0, winProb(bestCp) - winProb(moverCp));
+  res.json({ san: mv.san, cp: moverCp, bestCp, diff: +((bestCp - moverCp) / 100).toFixed(2), wpDiff: +wpDiff.toFixed(1) });
 }));
 
 // --- jobs, report, drills ----------------------------------------------------

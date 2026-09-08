@@ -91,8 +91,10 @@ export class Engine {
   /**
    * Analyse one position. Returns { lines: [{ multipv, cp, mate, pv: [uci...] }], bestmove }.
    * Scores are from the side-to-move perspective (UCI convention).
+   * `searchMoves` restricts the search to those root moves (UCI searchmoves), so
+   * two candidate moves can be compared at the same depth in one search.
    */
-  analyse(fen, { depth = 18, multipv = 3, movetimeMs = 120000, onDepth = null } = {}) {
+  analyse(fen, { depth = 18, multipv = 3, movetimeMs = 120000, onDepth = null, searchMoves = null } = {}) {
     const run = async () => {
       this.send(`setoption name MultiPV value ${multipv}`);
       this.send(`position fen ${fen}`);
@@ -114,8 +116,9 @@ export class Engine {
       // movetime caps pathological positions where reaching the depth takes forever;
       // the command timeout is only a backstop for an unresponsive engine.
       let best;
+      const restrict = searchMoves?.length ? ` searchmoves ${searchMoves.join(' ')}` : '';
       try {
-        best = await this.command(`go depth ${depth} movetime ${movetimeMs}`, l => l.startsWith('bestmove'), onInfo, movetimeMs + 30000);
+        best = await this.command(`go depth ${depth} movetime ${movetimeMs}${restrict}`, l => l.startsWith('bestmove'), onInfo, movetimeMs + 30000);
       } catch (err) {
         // Interrupt the search so the process is idle for the next position, and
         // salvage the depth reached so far. A search left running would swallow

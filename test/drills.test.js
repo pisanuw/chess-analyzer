@@ -18,7 +18,27 @@ test('sync creates tiered drills and copies category/pattern', async () => {
   assert.equal(sharpen.tier, 'sharpen');
   assert.equal(core.category, 'calculation');
   assert.equal(core.pattern, 'Test pattern');
-  assert.deepEqual(core.acceptedUci, ['d2d4', 'g1f3']); // both within 30cp of best
+  assert.deepEqual(core.acceptedUci, ['d2d4', 'g1f3']); // both within 3 win-% of best
+});
+
+test('acceptance band is win-probability, not fixed centipawns', async () => {
+  // At equality, 50cp behind is a real concession (about 4.6 win-%): rejected.
+  const tight = makeGame({ id: 'aaaaaaaaaa05', moments: [{ ply: 1, loss: 25 }] });
+  tight.analysis.moves[0].lines = [
+    { multipv: 1, cp: 50, uci: 'd2d4', san: ['d4'] },
+    { multipv: 2, cp: 0, uci: 'g1f3', san: ['Nf3'] },
+  ];
+  await syncDrillsForGame(tight, settings);
+  // Already winning by 4+ pawns, the same 50cp is noise (under 3 win-%): accepted.
+  const winning = makeGame({ id: 'aaaaaaaaaa06', moments: [{ ply: 1, loss: 25 }] });
+  winning.analysis.moves[0].lines = [
+    { multipv: 1, cp: 450, uci: 'd2d4', san: ['d4'] },
+    { multipv: 2, cp: 400, uci: 'g1f3', san: ['Nf3'] },
+  ];
+  await syncDrillsForGame(winning, settings);
+  const { drills } = await getDrills();
+  assert.deepEqual(drills.find(d => d.id === 'aaaaaaaaaa05:1').acceptedUci, ['d2d4']);
+  assert.deepEqual(drills.find(d => d.id === 'aaaaaaaaaa06:1').acceptedUci, ['d2d4', 'g1f3']);
 });
 
 test('re-sync preserves review state', async () => {
