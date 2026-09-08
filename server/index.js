@@ -11,8 +11,9 @@ import { checkClaudeCli, complete } from './llm.js';
 import { buildReport, buildPrepCard } from './report.js';
 import { buildRepertoire } from './repertoire.js';
 import { scoreToCp, winProb, summarize } from './analyze.js';
-import { dueDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback } from './drills.js';
-import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, patternSynthesisPrompt, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
+import { dueDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback, clearFeedback } from './drills.js';
+import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
+import { knownPatterns } from './jobs.js';
 import { authMiddleware, loginRoute } from './auth.js';
 
 // import.meta.url is undefined when bundled to CJS (Netlify function); there,
@@ -305,6 +306,37 @@ app.post('/api/games/:id/moments/:ply/eval', wrap(async (req, res) => {
   }
   const wpDiff = Math.max(0, winProb(bestCp) - winProb(moverCp));
   res.json({ san: mv.san, cp: moverCp, bestCp, diff: +((bestCp - moverCp) / 100).toFixed(2), wpDiff: +wpDiff.toFixed(1) });
+}));
+
+// A "not really" vote should be actionable: re-run the moment with the
+// rejected text quoted in the prompt and replace the explanation. The vote is
+// cleared so the new text starts unrated; drills re-sync because the category
+// (and with it a threat drill) may change. Synchronous like the prep sheet:
+// the caller shows "about a minute".
+app.post('/api/games/:id/moments/:ply/reexplain', wrap(async (req, res) => {
+  const game = await getGame(req.params.id);
+  const ply = Number(req.params.ply);
+  if (!game?.analysis || !game.analysis.summary.moments.includes(ply)) return res.status(404).json({ error: 'not a moment' });
+  const prior = game.explanations?.[ply];
+  if (!prior) return res.status(400).json({ error: 'no explanation to redo; run the explain flow first' });
+  const settings = await getSettings();
+  if (settings.llmProvider === 'manual') return res.status(400).json({ error: 'manual provider: copy the prompt and paste a new explanation instead' });
+  const scout = (game.purpose || 'own') === 'scout';
+  const known = await knownPatterns(game);
+  const args = [game, ply, [...known.patterns], [...known.concepts]];
+  const { output, costUsd, model } = await complete(settings, {
+    system: scout ? scoutSystemPrompt(settings.playerRating) : systemPrompt(settings.playerRating),
+    prompt: (scout ? scoutMomentPrompt(...args) : momentPrompt(...args)) + reExplainSuffix(prior.explanation),
+    schema: scout ? SCOUT_EXPLANATION_SCHEMA : EXPLANATION_SCHEMA,
+  });
+  const fresh = await getGame(game.id);
+  if (!fresh) return res.status(404).json({ error: 'game deleted' });
+  fresh.explanations = fresh.explanations || {};
+  fresh.explanations[ply] = { ...output, model, costUsd, createdAt: new Date().toISOString(), redone: true };
+  await saveGame(fresh);
+  await clearFeedback(game.id, ply);
+  await syncDrillsForGame(fresh, settings);
+  res.json({ game: fresh });
 }));
 
 // Was the explanation useful? Per-machine, like drill reviews; the report

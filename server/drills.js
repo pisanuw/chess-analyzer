@@ -396,6 +396,15 @@ export function recordFeedback(gameId, ply, helpful) {
   });
 }
 
+/** Drop the vote on a moment (it was re-explained: the new text starts unrated). */
+export function clearFeedback(gameId, ply) {
+  return locked(async () => {
+    const store = await getDrills();
+    delete store.feedback[drillId(gameId, ply)];
+    await saveDrills(store);
+  });
+}
+
 // About one decoy per this many real due drills in a session.
 const DECOY_RATIO = 4;
 

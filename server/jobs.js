@@ -240,8 +240,9 @@ async function runExplain(job) {
 }
 
 /** Pattern and concept names used so far (most frequent first, capped), so the
- * model reuses them and recurring themes aggregate instead of fragmenting. */
-async function knownPatterns(currentGame) {
+ * model reuses them and recurring themes aggregate instead of fragmenting.
+ * Exported for the re-explain route. */
+export async function knownPatterns(currentGame) {
   const patterns = new Map(), concepts = new Map();
   const add = (map, key) => { if (key) map.set(key, (map.get(key) || 0) + 1); };
   for (const entry of await listGames()) {

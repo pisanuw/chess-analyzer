@@ -391,7 +391,8 @@ export async function gameView(root, id, startPly) {
           ${e.concept ? `<p><small>Concept to study: ${esc(e.concept)}</small></p>` : ''}
           <div class="row" style="margin-top: 6px; gap: 6px"><small class="muted">Was this explanation useful?</small>
             <button class="small${feedback[g.ply]?.helpful === true ? ' primary' : ''}" data-g="fb-yes">Yes</button>
-            <button class="small${feedback[g.ply]?.helpful === false ? ' primary' : ''}" data-g="fb-no">Not really</button></div>
+            <button class="small${feedback[g.ply]?.helpful === false ? ' primary' : ''}" data-g="fb-no">Not really</button>
+            ${feedback[g.ply]?.helpful === false && !readonly && settings.llmProvider !== 'manual' ? `<button class="small" data-g="reexplain" title="Ask for a better explanation; the rejected one is quoted in the prompt">Re-explain (about a minute)</button>` : ''}</div>
         </div>` : renderNoExplanation(g.ply)}
     </div>`;
   }
@@ -436,6 +437,18 @@ export async function gameView(root, id, startPly) {
           feedback[g.ply] = { helpful: act === 'fb-yes' };
           renderPanel();
         } catch (err) { toast(err.message, true); }
+      }
+      if (act === 'reexplain') {
+        b.disabled = true; b.textContent = 'Re-explaining…';
+        try {
+          ({ game } = await api.reexplain(id, g.ply));
+          delete feedback[g.ply]; // the new explanation starts unrated
+          toast('Explanation replaced');
+          renderPanel();
+        } catch (err) {
+          toast(err.message, true);
+          b.disabled = false; b.textContent = 'Re-explain (about a minute)';
+        }
       }
       if (act === 'before') { showPly(guessPly); board.shapes(lineShapes(t.lines, scout ? t.uci : m.uci)); }
       if (act === 'played') { showPly(guessPly + 1); }

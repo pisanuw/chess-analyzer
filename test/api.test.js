@@ -135,6 +135,19 @@ test('playout endpoints validate input without touching the engine', async () =>
   assert.ok(mate.data.cp > 9000, 'mated side to move means a winning score for the other side');
 });
 
+test('reexplain guards: not a moment, no prior explanation, manual provider', async () => {
+  assert.equal((await req('POST', '/api/games/abcdefabcdef/moments/2/reexplain')).status, 404, 'ply 2 is not a moment');
+  await req('PUT', '/api/settings', { llmProvider: 'manual' });
+  const manual = await req('POST', '/api/games/abcdefabcdef/moments/1/reexplain');
+  assert.equal(manual.status, 400);
+  assert.match(manual.data.error, /manual/);
+  await req('PUT', '/api/settings', { llmProvider: 'claude-cli' });
+  writeGame(process.env.DATA_DIR, makeGame({ id: 'abc999abc999', moments: [{ ply: 1, loss: 25 }], explained: false }));
+  const noPrior = await req('POST', '/api/games/abc999abc999/moments/1/reexplain');
+  assert.equal(noPrior.status, 400, 'nothing to redo without a prior explanation');
+  assert.match(noPrior.data.error, /no explanation/);
+});
+
 test('review think time, undo, suspend, and restore over HTTP', async () => {
   const passed = await req('POST', '/api/drills/abcdefabcdef%3A1/review', { grade: 'good', correct: true, ms: 1500 });
   assert.equal(passed.data.drill.reviews.at(-1).ms, 1500);

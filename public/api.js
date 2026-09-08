@@ -68,6 +68,7 @@ export const api = {
   undoDrill: id => req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {}),
   restoreSuspended: () => req('POST', '/api/drills/restore-suspended', {}),
   feedback: (id, ply, helpful) => req('POST', `/api/games/${id}/moments/${ply}/feedback`, { helpful }),
+  reexplain: (id, ply) => req('POST', `/api/games/${id}/moments/${ply}/reexplain`, {}),
   playoutMove: (fen, elo) => req('POST', '/api/playout/move', { fen, elo }),
   playoutAssess: fen => req('POST', '/api/playout/assess', { fen }),
   card: async () => {

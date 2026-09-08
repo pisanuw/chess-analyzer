@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-08 (re-explain unhelpful explanations)
+
+- A "not really" vote on an explanation now offers a Re-explain button (game view): `POST /api/games/:id/moments/:ply/reexplain` re-runs the moment with the rejected text quoted in the prompt ("rated NOT helpful ... do not repeat the old wording") and replaces the stored explanation. The vote is cleared so the new text starts unrated, and drills re-sync in case the category changed. Blocked in manual mode and on the read-only mirror (no CLI there); the report's list of unhelpful moments links straight to where the button lives.
+
 ## 2026-09-08 (detection training: quiet-position decoys, opening prep drills)
 
 - Decoys: drill sessions (not the badge poll) now mix in quiet positions from the player's own games, roughly 1 per 4 due drills, never first in the queue. A decoy is a position he HANDLED (judgment best) where the stored lines show a real way to go wrong (10+ win-prob spread); it is asked exactly like a normal drill and accepts his actual game move. Every stored drill is a position where an error is known to exist, so the deck alone teaches "there is always something here" and does the hardest real-game skill, spotting the critical moment, for the player; decoys train that detection. They are ephemeral (never stored, never graded into the ladder) and the session recap reports the detection rate separately.
