@@ -13,7 +13,7 @@ export async function gamesView(root) {
 
   root.innerHTML = `
     <h1>Games</h1>
-    ${!status.engineOk && (pendingAnalysis || !games.length) ? `<div class="card" style="border-color: var(--critical)"><b>Stockfish not found.</b> Install it (<code>brew install stockfish</code>) or set the path in <a href="#/settings">Settings</a>.</div>` : ''}
+    ${!status.readonly && !status.engineOk && (pendingAnalysis || !games.length) ? `<div class="card" style="border-color: var(--critical)"><b>Stockfish not found.</b> Install it (<code>brew install stockfish</code>) or set the path in <a href="#/settings">Settings</a>.</div>` : ''}
     ${settings.llmProvider === 'claude-cli' && !status.claude.ok && pendingExplanations ? `<div class="card" style="border-color: var(--warning); margin-top: 10px"><b>claude CLI not found.</b> Explanations will fail until it is installed, or switch the LLM provider to manual in <a href="#/settings">Settings</a>.</div>` : ''}
     ${!settings.playerNames.length && !games.length ? `<div class="card" style="margin-top: 10px">Set the player's name in <a href="#/settings">Settings</a> so imported games get the right colour automatically.</div>` : ''}
     ${status.readonly ? '<div class="card" style="margin-top: 12px"><small class="muted">Read-only mirror: games are imported and analysed on the home machine, then published here. Drills and guessing work normally.</small></div>' : `<div class="card" style="margin-top: 12px">
