@@ -12,8 +12,8 @@ export async function drillsView(root, query) {
   let { due, total, dueCount, feedback = {} } = await api.drills({ pattern: lightning, limit: lightning ? 100 : 20, session: true });
   let idx = 0;
   let board = null;
-  let state = null; // { drill, status, verdict, game, hintShown }
-  const session = { attempts: 0, correct: 0, missed: [] }; // missed: first-attempt failures
+  let state = null; // { drill, status, verdict, game, hintShown, startedAt, answerMs }
+  const session = { attempts: 0, correct: 0, missed: [], decoys: { seen: 0, right: 0 } }; // missed: first-attempt failures
 
   root.innerHTML = `
     <div class="row" style="justify-content: space-between"><h1 style="margin:0">${lightning ? 'Lightning round' : 'Drills'}</h1><span class="muted" id="counts"></span></div>
@@ -45,8 +45,8 @@ export async function drillsView(root, query) {
       return;
     }
     const drill = due[idx];
-    counts.textContent = lightning ? `${due.length - idx} left · ${due.length} in this round` : `${dueCount - idx} due · ${total} total`;
-    state = { drill, status: 'guessing', verdict: null, game: null, follow: null, hintShown: false };
+    counts.textContent = lightning ? `${due.length - idx} left · ${due.length} in this round` : `${due.length - idx} left · ${total} total`;
+    state = { drill, status: 'guessing', verdict: null, game: null, follow: null, hintShown: false, startedAt: Date.now(), answerMs: null };
     el.innerHTML = `<div class="drill-layout">
       <div>
         <div class="board-wrap"><div id="dboard"></div></div>
@@ -71,22 +71,24 @@ export async function drillsView(root, query) {
 
   /** Close the loop at the end of a session: how it went, what to revisit. */
   function sessionRecap() {
-    if (!session.attempts) return '';
+    if (!session.attempts && !session.decoys.seen) return '';
     const missCounts = new Map();
     for (const d of session.missed) {
       const k = d.category ? (CATEGORY_LABEL[d.category] || d.category) : (d.pattern || d.phase);
       missCounts.set(k, (missCounts.get(k) || 0) + 1);
     }
     const missed = [...missCounts.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n}× ${esc(k)}`).join(', ');
-    const pct = Math.round((session.correct / session.attempts) * 100);
+    const pct = session.attempts ? Math.round((session.correct / session.attempts) * 100) : 0;
     return `<div class="card" style="margin-bottom: 12px"><h3 style="margin-top:0">Session done</h3>
-      <p>${session.attempts} answer${session.attempts === 1 ? '' : 's'}, ${session.correct} correct (${pct}%).</p>
-      ${missed ? `<p class="muted">Missed on the first try: ${missed}.</p>` : '<p class="muted">Clean session, nothing missed.</p>'}</div>`;
+      ${session.attempts ? `<p>${session.attempts} answer${session.attempts === 1 ? '' : 's'}, ${session.correct} correct (${pct}%).</p>` : ''}
+      ${missed ? `<p class="muted">Missed on the first try: ${missed}.</p>` : (session.attempts ? '<p class="muted">Clean session, nothing missed.</p>' : '')}
+      ${session.decoys.seen ? `<p class="muted">Quiet-position check: ${session.decoys.right} of ${session.decoys.seen} handled correctly (these were positions where your game move was fine).</p>` : ''}</div>`;
   }
 
   function reveal(verdict) {
     state.status = 'revealed';
     state.verdict = verdict;
+    if (state.answerMs == null) state.answerMs = Date.now() - state.startedAt;
     renderPanel();
     loadGame();
   }
@@ -167,8 +169,15 @@ export async function drillsView(root, query) {
     const side = d.sideToMove === 'white' ? 'White' : 'Black';
     const punish = d.kind === 'punish';
     const threat = d.kind === 'threat';
-    const chips = `<span class="chip ${d.judgment}">${d.judgment}${punish || threat ? '' : ' in the game'}</span>${punish ? ` <span class="chip">punish</span> <span class="chip">vs ${esc(d.subject || '?')}</span>` : ''}${threat ? ' <span class="chip">see the threat</span>' : ''}${d.tier === 'sharpen' ? ' <span class="chip">sharpener</span>' : ''}${d.category ? ` <span class="chip cat">${esc(d.category)}</span>` : ''}`;
+    const decoy = d.kind === 'decoy';
+    const opening = d.kind === 'opening';
+    const chips = `${decoy ? '<span class="chip">quiet position</span>' : `<span class="chip ${d.judgment}">${d.judgment}${punish || threat ? '' : ' in the game'}</span>`}${punish ? ` <span class="chip">punish</span> <span class="chip">vs ${esc(d.subject || '?')}</span>` : ''}${threat ? ' <span class="chip">see the threat</span>' : ''}${opening ? ' <span class="chip">opening prep</span>' : ''}${d.tier === 'sharpen' ? ' <span class="chip">sharpener</span>' : ''}${d.category ? ` <span class="chip cat">${esc(d.category)}</span>` : ''}`;
     if (state.status === 'guessing') {
+      // While guessing, show nothing that answers the detection question: with
+      // decoys in the mix, "blunder" or a category name would tell the player
+      // whether (and how) this position went wrong in the game.
+      const guessChips = punish || threat ? chips
+        : `${opening ? '<span class="chip">opening prep</span> ' : ''}${d.tier === 'sharpen' ? '<span class="chip">sharpener</span>' : ''}`;
       // Question-first: from the second review on, invite the player to generate
       // the key question themselves before comparing with the coach's.
       const kq = d.reviews?.length ? state.game?.explanations?.[d.ply]?.key_question : null;
@@ -179,9 +188,11 @@ export async function drillsView(root, query) {
         ? `${esc(d.subject || 'The opponent')} just played ${esc(d.mistakeSan)}. ${side} to move: find the punishment.`
         : threat
           ? `In the game you played ${esc(d.mistakeSan)} here (${d.judgment}). What did it allow? Find ${side}'s strongest reply.`
-          : `${side} to move. Find the best move.`;
+          : opening
+            ? `${side} to move. Your preparation ran out around here in the game: find the move.`
+            : `${side} to move. Find the best move.`;
       p.innerHTML = `<div class="guess"><b>${task}</b>
-        <p class="muted">Drill ${idx + 1} of ${due.length}. ${chips}${d.clock != null ? ` · clock in the game: ${fmtClock(d.clock)}` : ''}</p>
+        <p class="muted">Drill ${idx + 1} of ${due.length}. ${guessChips}${d.clock != null ? ` · clock in the game: ${fmtClock(d.clock)}` : ''}</p>
         ${hint}
         <button class="small" id="giveup">Show answer</button></div>`;
       const sh = p.querySelector('#showhint');
@@ -204,17 +215,23 @@ export async function drillsView(root, query) {
       return;
     }
     const e = state.game?.explanations?.[d.ply];
-    // Grading honesty: a wrong answer can only be graded Again.
-    const gradeButtons = state.verdict.correct
-      ? `<span class="muted">How well did you know it?</span>
-         <button data-grade="again">Again <span class="kbd">1</span></button>
-         <button data-grade="good">Good <span class="kbd">2</span></button>
-         <button data-grade="easy">Easy <span class="kbd">3</span></button>`
-      : `<span class="muted">Missed: it comes back at the end of this session.</span>
-         <button data-grade="again">Continue <span class="kbd">1</span></button>`;
+    // Grading honesty: a wrong answer can only be graded Again. Decoys are
+    // detection checks with no schedule: a single Continue.
+    const gradeButtons = decoy
+      ? `<span class="muted">Detection check: no schedule to grade.</span>
+         <button data-grade="again">Continue <span class="kbd">1</span></button>`
+      : state.verdict.correct
+        ? `<span class="muted">How well did you know it?</span>
+           <button data-grade="again">Again <span class="kbd">1</span></button>
+           <button data-grade="good">Good <span class="kbd">2</span></button>
+           <button data-grade="easy">Easy <span class="kbd">3</span></button>`
+        : `<span class="muted">Missed: it comes back at the end of this session.</span>
+           <button data-grade="again">Continue <span class="kbd">1</span></button>`;
+    const decoyNote = decoy ? `<p class="muted">This was a quiet position from your game: you played ${esc(d.playedSan)}, which was fine. Most drills show positions where something went wrong; recognising when nothing is wrong is the other half of the skill.</p>` : '';
     p.innerHTML = `<div class="guess">
       <div class="result ${state.verdict.correct ? 'good' : 'bad'}">${esc(state.verdict.text)}</div>
       ${state.verdict.followMiss ? `<div class="result bad">${esc(state.verdict.followMiss)}</div>` : ''}
+      ${decoyNote}
       <p style="margin: 6px 0">${chips}</p>
       <ul class="lines">${d.lines.map((l, i) => `<li class="${l.uci === d.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === d.playedUci ? '<span class="chip mistake">played</span>' : ''}</li>`).join('')}</ul>
       ${e ? `<div class="explanation"><div class="row"><span class="chip cat">${esc(e.category)}</span> <b>${esc(e.pattern)}</b></div><p>${esc(e.explanation)}</p><div class="kq">Ask yourself: ${esc(e.key_question)}</div>
@@ -239,11 +256,17 @@ export async function drillsView(root, query) {
     if (!state || state.status !== 'revealed' || grading) return; // no double-grades from rapid clicks/keys
     grading = true;
     try {
-      await api.reviewDrill(state.drill.id, g, state.verdict.correct, !!lightning);
-      session.attempts++;
-      if (state.verdict.correct) session.correct++;
-      else if (!session.missed.some(x => x.id === state.drill.id)) session.missed.push(state.drill);
-      import('../app.js').then(m => m.updateDrillBadge());
+      if (state.drill.kind === 'decoy') {
+        // Ephemeral detection check: nothing to persist, count it separately.
+        session.decoys.seen++;
+        if (state.verdict.correct) session.decoys.right++;
+      } else {
+        await api.reviewDrill(state.drill.id, g, state.verdict.correct, !!lightning, state.answerMs);
+        session.attempts++;
+        if (state.verdict.correct) session.correct++;
+        else if (!session.missed.some(x => x.id === state.drill.id)) session.missed.push(state.drill);
+        import('../app.js').then(m => m.updateDrillBadge());
+      }
       idx++;
       await load();
     } catch (err) { toast(err.message, true); }

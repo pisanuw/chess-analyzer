@@ -42,12 +42,34 @@ export function threatDrillId(gameId, ply) {
   return `${gameId}:${ply}:threat`;
 }
 
+export function openingDrillId(gameId, ply) {
+  return `${gameId}:${ply}:opening`;
+}
+
 /** A tactics-allowed moment gets a second drill: see the threat you missed.
  * Needs the analysed reply position (the punishment) to exist. */
 export function wantsThreatDrill(game, ply) {
   return (game.purpose || 'own') !== 'scout'
     && game.explanations?.[ply]?.category === 'tactics-allowed'
     && !!game.analysis.moves[ply]?.lines?.length;
+}
+
+/** The first opening move where preparation visibly ran out (left the engine's
+ * list or lost 10+ points) AND it cost something real (5+ win-prob points)
+ * without already being a critical moment. One per game: the "your prep ended
+ * here, what is the move" flashcard. Returns the ply or null. */
+export function openingDrillPly(game) {
+  if ((game.purpose || 'own') === 'scout') return null;
+  const moments = new Set(game.analysis.summary.moments);
+  const dev = game.analysis.moves.find(m => m.isPlayer && m.phase === 'opening'
+    && (m.playedRank == null || m.loss >= 10));
+  if (!dev || dev.loss < 5 || moments.has(dev.ply)) return null;
+  return dev.ply;
+}
+
+function makeOpeningDrill(game, ply, existing) {
+  const d = makeDrill(game, ply, 'opening', existing);
+  return { ...d, id: openingDrillId(game.id, ply), kind: 'opening' };
 }
 
 /** Build one drill record for a moment, preserving spaced-repetition state from `existing`. */
@@ -197,6 +219,18 @@ async function syncGameUnlocked(game, settings) {
       }
     }
   }
+  if (!scout) {
+    // Opening flashcard for the game's prep-end deviation; pruned when a
+    // re-analysis or threshold change moves or removes the deviation.
+    const devPly = openingDrillPly(game);
+    for (const [id, d] of byId) {
+      if (d.gameId === game.id && d.kind === 'opening' && (!devPly || id !== openingDrillId(game.id, devPly))) byId.delete(id);
+    }
+    if (devPly) {
+      const oid = openingDrillId(game.id, devPly);
+      byId.set(oid, makeOpeningDrill(game, devPly, byId.get(oid)));
+    }
+  }
   store.drills = [...byId.values()];
   await saveDrills(store);
   return store;
@@ -252,6 +286,8 @@ export function syncAllDrills() {
         validIds.add(drillId(game.id, ply));
         if (wantsThreatDrill(game, ply)) validIds.add(threatDrillId(game.id, ply));
       }
+      const devPly = openingDrillPly(game);
+      if (devPly) validIds.add(openingDrillId(game.id, devPly));
     }
     const store = await getDrills();
     // Prune drills for deleted games AND for plies that are no longer moments
@@ -360,12 +396,79 @@ export function recordFeedback(gameId, ply, helpful) {
   });
 }
 
+// About one decoy per this many real due drills in a session.
+const DECOY_RATIO = 4;
+
+/** Would this move make a decoy? A quiet position the player HANDLED: his move
+ * was genuinely fine, but the stored lines show real ways to go wrong. */
+function decoyCandidate(m, moments) {
+  if (!m.isPlayer || moments.has(m.ply)) return false;
+  if (m.judgment !== 'best') return false; // his move was genuinely fine
+  if (m.ply <= 10) return false;           // skip rote opening moves
+  if (!m.lines || m.lines.length < 2) return false;
+  const sign = m.color === 'white' ? 1 : -1;
+  const spread = winProb(m.lines[0].cp * sign) - winProb(m.lines[m.lines.length - 1].cp * sign);
+  return spread >= 10;                     // wrong choices existed
+}
+
+function makeDecoy(game, m) {
+  const accepted = acceptedLines(m.lines, m.color === 'white' ? 1 : -1);
+  return {
+    id: `${game.id}:${m.ply}:decoy`,
+    kind: 'decoy',
+    ephemeral: true, // never stored, never graded into the ladder
+    gameId: game.id,
+    ply: m.ply,
+    fen: m.fenBefore,
+    sideToMove: m.color,
+    playedUci: m.uci,
+    playedSan: m.san,
+    bestUci: m.bestUci,
+    bestSan: m.bestSan,
+    acceptedUci: [...new Set([...(accepted.length ? accepted : [m.bestUci].filter(Boolean)), m.uci])],
+    lines: m.lines,
+    phase: m.phase,
+    judgment: m.judgment,
+    loss: m.loss,
+    clock: m.clock ?? null,
+    tier: 'decoy',
+    category: null,
+    pattern: null,
+    label: `${game.headers.White || '?'} vs ${game.headers.Black || '?'}${game.headers.Date ? ', ' + game.headers.Date : ''}`,
+  };
+}
+
+/** Ephemeral detection drills, built fresh from the player's own games. Every
+ * stored drill is a position where an error is KNOWN to exist, so the deck
+ * alone teaches "there is always something here" and does the hardest
+ * real-game skill (spotting that this is a critical moment) for the player.
+ * Decoys are quiet positions he handled correctly, asked exactly the same
+ * way; the accepted answers include the fine move he actually played. */
+export async function buildDecoys(count, rand = Math.random) {
+  if (count <= 0) return [];
+  const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose !== 'scout' && g.playerColor);
+  const order = [...index].sort(() => rand() - 0.5);
+  const out = [];
+  for (const entry of order) {
+    if (out.length >= count) break;
+    const game = await getGame(entry.id);
+    if (!game?.analysis) continue;
+    const moments = new Set(game.analysis.summary.moments);
+    const candidates = game.analysis.moves.filter(m => decoyCandidate(m, moments));
+    if (!candidates.length) continue;
+    out.push(makeDecoy(game, candidates[Math.floor(rand() * candidates.length) % candidates.length]));
+  }
+  return out;
+}
+
 /** Due drills, core tier first, then opening flashcards, then near-miss
  * sharpeners. Consecutive drills from the same game are spread apart so one
  * game's context cannot prime the answers to its own next positions. With
  * `pattern` or `category`, a practice round instead: every matching drill,
- * due or not, back to back (blocked practice). Suspended drills never serve. */
-export async function dueDrills(limit = 20, { pattern = null, category = null } = {}) {
+ * due or not, back to back (blocked practice). Suspended drills never serve.
+ * With `session` (a real sitting, not the badge poll), quiet-position decoys
+ * are mixed into the queue, never first. */
+export async function dueDrills(limit = 20, { pattern = null, category = null, session = false, rand = Math.random } = {}) {
   const store = await getDrills();
   const now = Date.now();
   const pool = store.drills.filter(d => !d.suspended);
@@ -385,7 +488,15 @@ export async function dueDrills(limit = 20, { pattern = null, category = null } 
     const j = due.findIndex((d, k) => k > i && d.gameId !== due[i].gameId && rank(d) === rank(due[i]));
     if (j > i) [due[i], due[j]] = [due[j], due[i]];
   }
-  return { due: due.slice(0, limit), total: store.drills.length, dueCount: due.length, suspendedCount, feedback: store.feedback };
+  const list = due.slice(0, limit);
+  if (session && list.length >= 3) {
+    const built = await buildDecoys(Math.max(1, Math.floor(list.length / DECOY_RATIO)), rand);
+    built.forEach((d, i) => {
+      const pos = Math.min(list.length, 1 + Math.floor((i + 1) * list.length / (built.length + 1)));
+      list.splice(pos, 0, d);
+    });
+  }
+  return { due: list, total: store.drills.length, dueCount: due.length, suspendedCount, feedback: store.feedback };
 }
 
 function normalizeKey(s) {

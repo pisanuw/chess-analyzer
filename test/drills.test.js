@@ -181,6 +181,48 @@ test('category rounds serve every drill of an error type regardless of due date'
   assert.equal(round.category, 'endgame-technique');
 });
 
+test('an opening deviation below the moment threshold becomes an opening drill', async () => {
+  const game = makeGame({ id: 'aaaaaaaaaa12', moments: [], plies: 6 });
+  const dev = game.analysis.moves[4]; // ply 5, player move
+  dev.phase = 'opening'; dev.playedRank = null; dev.loss = 6; dev.judgment = 'good';
+  await syncDrillsForGame(game, settings);
+  const od = (await getDrills()).drills.find(d => d.id === 'aaaaaaaaaa12:5:opening');
+  assert.ok(od, 'opening drill created');
+  assert.equal(od.kind, 'opening');
+  assert.equal(od.tier, 'opening');
+
+  // The deviation healed (re-analysis found the move fine): the drill goes away.
+  dev.playedRank = 1; dev.loss = 0;
+  await syncDrillsForGame(game, settings);
+  assert.ok(!(await getDrills()).drills.find(d => d.id === 'aaaaaaaaaa12:5:opening'), 'stale opening drill pruned');
+
+  // A cheap off-list deviation (lost under 5 points) is noise, not a drill.
+  dev.playedRank = null; dev.loss = 2;
+  await syncDrillsForGame(game, settings);
+  assert.ok(!(await getDrills()).drills.find(d => d.id === 'aaaaaaaaaa12:5:opening'));
+});
+
+test('session queues mix in ephemeral decoys from quiet positions', async () => {
+  const dir = process.env.DATA_DIR;
+  const game = makeGame({ id: 'aaaaaaaaaa13', moments: [{ ply: 1, loss: 25 }], plies: 14 });
+  const q = game.analysis.moves[12]; // ply 13, player move, handled correctly
+  q.judgment = 'best'; q.loss = 0;
+  q.lines = [
+    { multipv: 1, cp: 60, uci: 'd2d4', san: ['d4'] },
+    { multipv: 2, cp: -80, uci: 'a2a3', san: ['a3'] }, // a real way to go wrong
+  ];
+  writeGame(dir, game); // decoys are built from the game files
+  const r = await dueDrills(50, { session: true, rand: () => 0 });
+  const decoy = r.due.find(d => d.kind === 'decoy');
+  assert.ok(decoy, 'a decoy is mixed into the session');
+  assert.ok(decoy.ephemeral);
+  assert.ok(decoy.acceptedUci.includes(decoy.playedUci), 'his actual fine move is an accepted answer');
+  assert.notEqual(r.due[0].kind, 'decoy', 'the session opens with a real drill');
+  assert.ok(!(await getDrills()).drills.some(d => d.kind === 'decoy'), 'decoys are never persisted');
+  const badge = await dueDrills(50); // no session flag: the badge poll stays cheap and decoy-free
+  assert.ok(!badge.due.some(d => d.kind === 'decoy'));
+});
+
 test('drill saves mirror to a per-machine file for the data repo', async () => {
   const files = readdirSync(process.env.DATA_DIR);
   assert.ok(files.some(f => /^drills-.+\.json$/.test(f)), 'mirror file exists next to drills.json');

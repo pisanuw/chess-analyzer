@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-09-08 (detection training: quiet-position decoys, opening prep drills)
+
+- Decoys: drill sessions (not the badge poll) now mix in quiet positions from the player's own games, roughly 1 per 4 due drills, never first in the queue. A decoy is a position he HANDLED (judgment best) where the stored lines show a real way to go wrong (10+ win-prob spread); it is asked exactly like a normal drill and accepts his actual game move. Every stored drill is a position where an error is known to exist, so the deck alone teaches "there is always something here" and does the hardest real-game skill, spotting the critical moment, for the player; decoys train that detection. They are ephemeral (never stored, never graded into the ladder) and the session recap reports the detection rate separately.
+- To keep detection honest, the guessing panel no longer shows the judgment or category chips for plain drills ("blunder" or "tactics-allowed" answers the question before the player does); they appear on reveal. Punish and threat drills keep their framing, which is inherently explicit.
+- Opening prep flashcards: the repertoire's "prep ends" deviation (first opening move off the engine list or losing 10+) becomes an `opening`-tier drill when it cost at least 5 win-prob points without reaching the moment threshold. One per game, pruned automatically when a re-analysis moves or heals the deviation. Serves after core drills, before sharpeners.
+- Drill reviews now carry the answer time captured in the view (see the drill store entry below).
+
 ## 2026-09-08 (drill store: think time, undo, suspend, category rounds, cross-machine history)
 
 - Every drill review now records the time from seeing the position to answering (`ms` in `reviews[]`), plus the ladder position it advanced from. Recognition speed is the real signal of pattern acquisition and the raw material for the planned per-drill ease fit; it cannot be backfilled later.
