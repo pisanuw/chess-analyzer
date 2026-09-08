@@ -220,6 +220,11 @@ export async function gameView(root, id, startPly) {
     g.status = 'revealed';
     const rank = t.lines.findIndex(l => l.uci === res.uci);
     const sign = t.color === 'white' ? 1 : -1;
+    // Record the attempt: correct first-try guesses start this drill higher up the
+    // ladder. For off-list moves this must wait for the quick eval, or a playable
+    // guess would be recorded as wrong while the engine is still checking it.
+    const record = good => api.guess(id, g.ply, res.uci, good).catch(() => {});
+    let recordLater = false;
     if (res.uci === t.bestUci || rank === 0) g.verdict = { good: true, text: `${res.san}: the engine's first choice (${formatEval(t.lines[0]?.cp ?? t.evalBefore)}).` };
     else if (rank > 0) {
       const diff = ((t.lines[0].cp - t.lines[rank].cp) * sign) / 100;
@@ -228,19 +233,21 @@ export async function gameView(root, id, startPly) {
       ? { good: false, text: `${res.san}: that is what was played in the game, but the engine found stronger: ${t.bestSan}.` }
       : { good: false, text: `${res.san}: that is the move played in the game, which the engine marks as ${m.judgment === 'inaccuracy' ? 'an' : 'a'} ${m.judgment}.` };
     else {
+      recordLater = true;
       const verdict = g.verdict = { good: false, text: `${res.san}: not among the engine's top ${t.lines.length} lines. Checking with the engine…` };
       // Quick engine eval so an off-list guess gets a real answer (best effort).
       api.evalMove(id, scout ? g.ply + 1 : g.ply, res.uci).then(r => {
         verdict.good = r.diff <= 0.3;
         verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (t.color === 'white' ? 1 : -1))}, ${r.diff.toFixed(2)} behind the best move.${verdict.good ? ' Playable.' : ''}`;
+        record(verdict.good);
         if (state.guess?.verdict === verdict) renderPanel();
       }).catch(() => {
         verdict.text = `${res.san}: not among the engine's top ${t.lines.length} lines.`;
+        record(false);
         if (state.guess?.verdict === verdict) renderPanel();
       });
     }
-    // Record the attempt: correct first-try guesses start this drill higher up the ladder.
-    api.guess(id, g.ply, res.uci, g.verdict.good).catch(() => {});
+    if (!recordLater) record(g.verdict.good);
     renderPanel();
     showPreview(res.fen, res.uci);
     board.shapes(lineShapes(t.lines, scout ? t.uci : m.uci));

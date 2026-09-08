@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-07 (guess recording waits for the quick eval)
+
+- Off-list guesses in the game view were recorded as incorrect immediately, while the quick engine eval was still running; a guess the eval then called "Playable" had already seeded its drill at step 0 as a wrong answer. The attempt is now recorded after the eval resolves (immediately for moves the stored lines already cover).
+
 ## 2026-09-07 (hosted read-only mirror on Netlify)
 
 - The app now deploys to Netlify as a password-protected mirror for Kai (https://chess-analyzer-app.netlify.app): static frontend on the CDN, the same Express app as one serverless function, game data bundled into each deploy, drill/guess state in Supabase (one jsonb row, table chess_kv) behind the existing drill mutation lock.
