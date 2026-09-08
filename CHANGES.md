@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-09-08 (training: threat drills, play-it-out, lightning rounds, question-first, feedback, prep card)
+
+- See-the-threat drills: a tactics-allowed moment now creates a second drill from the position AFTER the mistake, played from the opponent's side (find the punishment you overlooked) but oriented from the player's side of the board, where threats must be spotted. Created once the moment is explained; removed if a re-explanation changes the category.
+- Play it out: from any revealed critical moment, finish the position against a strength-limited Stockfish (UCI_Elo, defaults to the opponent's rating, editable 1320-3190). Runs on a separate one-thread engine process so analysis jobs never block a human. Evals stay hidden while playing; "Assess position" gives a full-strength verdict comparing your winning chances now vs at the start. Trains conversion, defence, and endgame technique, which single-move drills cannot.
+- Pattern lightning rounds: the report's recurring patterns link to `#/drills?pattern=...`, which serves every drill of that pattern back to back (blocked practice). Practice passes do not advance the spaced-repetition ladder; a miss still resets its drill.
+- Question-first hints: from the second review of a drill, the key question is no longer shown automatically; the player is invited to form the question themselves, then compare with the coach's. Generating the question is the transferable habit.
+- Explanation feedback: a helpful / not-really vote on every explanation (game view and drills), stored per machine alongside reviews (Supabase on the mirror). The report shows the tallies and lists the moments worth re-explaining, so prompt tuning can follow real use.
+- Pre-tournament card: `GET /api/report/card` renders a one-page markdown card (focus areas, synthesized pattern rules, clock line, study list); download button on the Report page.
+
 ## 2026-09-07 (frontend: promotion picker, clocks in drills, time strip, recap, repertoire transpositions)
 
 - Promotions get a click overlay (queen, rook, bishop, knight; keys q/r/b/n, Escape cancels) instead of a window.prompt; a dismissed pick re-sets the board.

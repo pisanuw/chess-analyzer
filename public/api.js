@@ -60,8 +60,16 @@ export const api = {
   prepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet`),
   patterns: () => req('GET', '/api/patterns'),
   synthesizePattern: pattern => req('POST', '/api/patterns/synthesize', { pattern }),
-  drills: () => req('GET', '/api/drills'),
-  reviewDrill: (id, grade, correct) => req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct }),
+  drills: (pattern, limit) => req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}`),
+  reviewDrill: (id, grade, correct, practice = false) => req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice }),
+  feedback: (id, ply, helpful) => req('POST', `/api/games/${id}/moments/${ply}/feedback`, { helpful }),
+  playoutMove: (fen, elo) => req('POST', '/api/playout/move', { fen, elo }),
+  playoutAssess: fen => req('POST', '/api/playout/assess', { fen }),
+  card: async () => {
+    const res = await fetch('/api/report/card');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'card generation failed');
+    return res.text();
+  },
 };
 
 export function esc(s) {

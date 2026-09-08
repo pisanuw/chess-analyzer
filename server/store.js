@@ -167,8 +167,9 @@ export async function getDrills() {
   } else {
     store = await readJson(path.join(DATA_DIR, 'drills.json'), { drills: [] });
   }
-  store.guesses = store.guesses || {}; // guess-first attempts, keyed gameId:ply
-  store.rev = store.rev || 0;          // CAS revision (0 = new store or legacy row)
+  store.guesses = store.guesses || {};   // guess-first attempts, keyed gameId:ply
+  store.feedback = store.feedback || {}; // explanation feedback, keyed gameId:ply
+  store.rev = store.rev || 0;            // CAS revision (0 = new store or legacy row)
   return store;
 }
 

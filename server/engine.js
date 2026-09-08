@@ -93,9 +93,12 @@ export class Engine {
    * Scores are from the side-to-move perspective (UCI convention).
    * `searchMoves` restricts the search to those root moves (UCI searchmoves), so
    * two candidate moves can be compared at the same depth in one search.
+   * `options` are extra UCI options sent before the search (inside the queue, so
+   * concurrent callers with different options cannot interleave).
    */
-  analyse(fen, { depth = 18, multipv = 3, movetimeMs = 120000, onDepth = null, searchMoves = null } = {}) {
+  analyse(fen, { depth = 18, multipv = 3, movetimeMs = 120000, onDepth = null, searchMoves = null, options = null } = {}) {
     const run = async () => {
+      if (options) for (const [k, v] of Object.entries(options)) this.send(`setoption name ${k} value ${v}`);
       this.send(`setoption name MultiPV value ${multipv}`);
       this.send(`position fen ${fen}`);
       const lines = new Map();
@@ -153,4 +156,18 @@ export async function getEngine(settings) {
   if (shared) shared.stop();
   shared = await new Engine(path, { threads: settings.engineThreads, hash: settings.engineHash }).start();
   return shared;
+}
+
+// Separate small engine for interactive sparring (play-it-out): its own process
+// so a background analysis job never queues in front of a human waiting for a
+// reply, and one thread with a small hash so it never fights that job for the
+// machine either.
+let sparring = null;
+export async function getSparringEngine(settings) {
+  const path = findStockfish(settings.enginePath);
+  if (!path) throw new Error('Stockfish not found. Install it (brew install stockfish) or set the engine path in Settings.');
+  if (sparring && sparring.proc && sparring.path === path) return sparring;
+  if (sparring) sparring.stop();
+  sparring = await new Engine(path, { threads: 1, hash: 64 }).start();
+  return sparring;
 }

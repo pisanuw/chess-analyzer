@@ -4,14 +4,14 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Chess } from 'chess.js';
 import { parsePgnFile, detectPlayerColor } from './pgn.js';
-import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { enqueue, listJobs, resumeInterrupted, cancelJobs } from './jobs.js';
-import { findStockfish, getEngine } from './engine.js';
+import { findStockfish, getEngine, getSparringEngine } from './engine.js';
 import { checkClaudeCli, complete } from './llm.js';
-import { buildReport } from './report.js';
+import { buildReport, buildPrepCard } from './report.js';
 import { buildRepertoire } from './repertoire.js';
 import { scoreToCp, winProb } from './analyze.js';
-import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess } from './drills.js';
+import { dueDrills, reviewDrill, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback } from './drills.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, patternSynthesisPrompt, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { authMiddleware, loginRoute } from './auth.js';
 
@@ -28,7 +28,7 @@ app.post('/api/login', loginRoute);
 // Read-only mirror (hosted copy): game data is managed on the analysing machine
 // and published; only training state (drill reviews, guesses) is writable.
 const READONLY = !!process.env.READONLY_DATA;
-const RO_ALLOW = [/^\/api\/login$/, /^\/api\/drills\/[^/]+\/review$/, /^\/api\/games\/[a-f0-9]{12}\/moments\/\d+\/(guess|eval)$/];
+const RO_ALLOW = [/^\/api\/login$/, /^\/api\/drills\/[^/]+\/review$/, /^\/api\/games\/[a-f0-9]{12}\/moments\/\d+\/(guess|eval|feedback)$/];
 app.use((req, res, next) => {
   if (!READONLY || req.method === 'GET' || RO_ALLOW.some(re => re.test(req.path))) return next();
   res.status(405).json({ error: 'read-only mirror: manage games on the analysing machine, then publish' });
@@ -111,7 +111,14 @@ app.post('/api/games/import', wrap(async (req, res) => {
 app.get('/api/games/:id', wrap(async (req, res) => {
   const game = await getGame(req.params.id);
   if (!game) return res.status(404).json({ error: 'not found' });
-  res.json({ game });
+  // Explanation feedback lives in the per-machine drill store; hand this game's
+  // slice to the view so the thumbs reflect earlier votes.
+  const all = (await getDrills()).feedback;
+  const feedback = {};
+  for (const ply of game.analysis?.summary?.moments || []) {
+    if (all[`${game.id}:${ply}`]) feedback[ply] = all[`${game.id}:${ply}`];
+  }
+  res.json({ game, feedback });
 }));
 
 app.delete('/api/games/:id', wrap(async (req, res) => {
@@ -261,9 +268,61 @@ app.post('/api/games/:id/moments/:ply/eval', wrap(async (req, res) => {
   res.json({ san: mv.san, cp: moverCp, bestCp, diff: +((bestCp - moverCp) / 100).toFixed(2), wpDiff: +wpDiff.toFixed(1) });
 }));
 
+// Was the explanation useful? Per-machine, like drill reviews; the report
+// aggregates it so prompt wording can be tuned from real use.
+app.post('/api/games/:id/moments/:ply/feedback', wrap(async (req, res) => {
+  const game = await getGame(req.params.id);
+  const ply = Number(req.params.ply);
+  if (!game?.explanations?.[ply]) return res.status(404).json({ error: 'no explanation for this moment' });
+  await recordFeedback(game.id, ply, !!req.body?.helpful);
+  res.json({ ok: true });
+}));
+
+// --- play it out: finish a critical position against a limited engine --------
+const ELO_LIMITS = [1320, 3190]; // Stockfish UCI_Elo range
+
+app.post('/api/playout/move', wrap(async (req, res) => {
+  let chess;
+  try { chess = new Chess(String(req.body?.fen || '')); } catch { return res.status(400).json({ error: 'bad fen' }); }
+  if (chess.isGameOver()) return res.status(400).json({ error: 'game is over' });
+  const elo = Math.min(ELO_LIMITS[1], Math.max(ELO_LIMITS[0], Number(req.body?.elo) || 2000));
+  const engine = await getSparringEngine(await getSettings());
+  const r = await engine.analyse(chess.fen(), {
+    depth: 12, multipv: 1, movetimeMs: 700,
+    options: { UCI_LimitStrength: 'true', UCI_Elo: elo },
+  });
+  if (!r.bestmove) return res.status(400).json({ error: 'no move available' });
+  const mv = chess.move({ from: r.bestmove.slice(0, 2), to: r.bestmove.slice(2, 4), promotion: r.bestmove[4] });
+  res.json({ uci: r.bestmove, san: mv.san, fen: chess.fen() });
+}));
+
+app.post('/api/playout/assess', wrap(async (req, res) => {
+  let chess;
+  try { chess = new Chess(String(req.body?.fen || '')); } catch { return res.status(400).json({ error: 'bad fen' }); }
+  const stmWhite = chess.turn() === 'w';
+  if (chess.isCheckmate()) { const cp = stmWhite ? -10000 : 10000; return res.json({ cp, wp: +winProb(cp).toFixed(1), over: 'checkmate' }); }
+  if (chess.isGameOver()) return res.json({ cp: 0, wp: 50, over: 'draw' });
+  const engine = await getSparringEngine(await getSettings());
+  // Full strength for the verdict; the sparring cap only applies while playing.
+  const r = await engine.analyse(chess.fen(), {
+    depth: 14, multipv: 1, movetimeMs: 3000,
+    options: { UCI_LimitStrength: 'false' },
+  });
+  const cp = scoreToCp(r.lines[0]) * (stmWhite ? 1 : -1); // White perspective
+  res.json({ cp, wp: +winProb(cp).toFixed(1), bestUci: r.bestmove });
+}));
+
 // --- jobs, report, drills ----------------------------------------------------
 app.get('/api/jobs', (req, res) => res.json({ jobs: listJobs() }));
 app.get('/api/report', wrap(async (req, res) => res.json({ report: await buildReport() })));
+
+// One-page markdown card: focus areas, synthesized rules, clock line, study list.
+app.get('/api/report/card', wrap(async (req, res) => {
+  const report = await buildReport();
+  if (!report.games) return res.status(400).json({ error: 'no analysed games yet' });
+  res.type('text/markdown').send(buildPrepCard(report, await getPatternNotes(), await getSettings()));
+}));
+
 app.get('/api/repertoire', wrap(async (req, res) => res.json({ repertoire: await buildRepertoire() })));
 
 // --- scouting ----------------------------------------------------------------
@@ -340,9 +399,9 @@ app.post('/api/patterns/synthesize', wrap(async (req, res) => {
   await savePatternNotes(notes);
   res.json({ note: notes[key] });
 }));
-app.get('/api/drills', wrap(async (req, res) => res.json(await dueDrills(Number(req.query.limit) || 20))));
+app.get('/api/drills', wrap(async (req, res) => res.json(await dueDrills(Number(req.query.limit) || 20, { pattern: req.query.pattern || null }))));
 app.post('/api/drills/:id/review', wrap(async (req, res) => {
-  res.json({ drill: await reviewDrill(req.params.id, req.body?.grade || 'good', req.body?.correct) });
+  res.json({ drill: await reviewDrill(req.params.id, req.body?.grade || 'good', req.body?.correct, !!req.body?.practice) });
 }));
 
 app.get(/^\/(?!api|vendor).*/, (req, res) => res.sendFile(path.join(ROOT, 'public/index.html')));

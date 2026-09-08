@@ -23,6 +23,7 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
   const byPhase = Object.fromEntries(['opening', 'middlegame', 'endgame'].map(p => [p, { moves: 0, cpl: 0, acc: 0, moments: 0, weight: 0 }]));
   const byColor = Object.fromEntries(['white', 'black'].map(c => [c, { games: 0, acc: 0, moments: 0, score: 0, scored: 0 }]));
   const endgames = new Map(); // material signature -> recurring endgame trouble spots
+  const refByKey = new Map(); // "gameId:ply" -> moment ref, for feedback lookups
   const patterns = new Map();
   const concepts = new Map();
   const timeline = [];
@@ -83,6 +84,7 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
       byPhase[m.phase].moments++;
       byPhase[m.phase].weight += w;
       const ref = { gameId: g.id, ply, san: m.san, moveNumber: m.moveNumber, color: m.color, judgment: m.judgment, phase: m.phase, loss: m.loss, label: timeline[timeline.length - 1].label, date: g.headers.Date || '', pattern: e?.pattern || null, category: e?.category || null };
+      refByKey.set(`${g.id}:${ply}`, ref);
       const cat = e && byCategory[e.category] ? e.category : 'unexplained';
       byCategory[cat].count++;
       byCategory[cat].weight += w;
@@ -159,6 +161,22 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     byCategory: drillByCategory,
   } : null;
 
+  // Explanation feedback (per machine): counts, plus the moments flagged as
+  // unhelpful so their prompts can be tuned or the moment re-explained.
+  let feedback = null;
+  const fbEntries = Object.entries(dstore.feedback || {});
+  if (fbEntries.length) {
+    feedback = { helpful: 0, unhelpful: 0, unhelpfulMoments: [] };
+    for (const [key, f] of fbEntries) {
+      if (f.helpful) feedback.helpful++;
+      else {
+        feedback.unhelpful++;
+        const ref = refByKey.get(key);
+        if (ref) feedback.unhelpfulMoments.push(ref);
+      }
+    }
+  }
+
   const timeManagement = time.moves ? {
     movesWithClock: time.moves,
     momentAvgSpent: time.momentSpentN ? Math.round(time.momentSpentTotal / time.momentSpentN) : null,
@@ -189,9 +207,54 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     timeline,
     categoryTrend,
     drillStats,
+    feedback,
     timeManagement,
     endgames: [...endgames.values()].sort((a, b) => b.weight - a.weight).slice(0, 10),
   };
+}
+
+const CATEGORY_TITLES = {
+  'tactics-allowed': 'Overlooked opponent tactics',
+  'tactics-missed': 'Missed own tactics',
+  calculation: 'Miscalculation',
+  positional: 'Positional play',
+  opening: 'Opening knowledge',
+  'endgame-technique': 'Endgame technique',
+  conversion: 'Converting wins',
+  defence: 'Defence',
+};
+
+/** One-page pre-tournament card in markdown: the distilled habits, not the full
+ * report. What a player can actually hold in mind at the board. */
+export function buildPrepCard(report, notes, settings) {
+  const out = [];
+  const name = (settings.playerNames || [])[0] || 'the player';
+  out.push(`# Pre-tournament card: ${name}`);
+  out.push('');
+  out.push(`From ${report.games} analysed game${report.games === 1 ? '' : 's'}, average accuracy ${report.overallAccuracy ?? '?'}%. Generated ${new Date().toISOString().slice(0, 10)}.`);
+  if (report.focus.length) {
+    out.push('', '## Focus areas');
+    report.focus.forEach((f, i) => out.push(`${i + 1}. ${CATEGORY_TITLES[f.category] || f.category}: ${f.count} moment${f.count === 1 ? '' : 's'} (weight ${f.weight})`));
+  }
+  const topNotes = Object.values(notes).sort((a, b) => (b.count || 0) - (a.count || 0)).slice(0, 4);
+  if (topNotes.length) {
+    out.push('', '## Rules to hold onto');
+    for (const n of topNotes) {
+      out.push(`- **${n.pattern}** (${n.count}x): ${n.rule} Watch for: ${n.triggers} Habit: ${n.advice}`);
+    }
+  }
+  const t = report.timeManagement;
+  if (t) {
+    out.push('', '## Clock');
+    out.push(`- Mistakes with over 5 minutes left: ${t.comfortBlunders}. Moments under 2 minutes: ${t.underTwoMinMoments}. Failed snap-moves: ${t.fastMoments}.`);
+    if (t.momentAvgSpent != null && t.otherAvgSpent != null) out.push(`- Average think on error moves: ${t.momentAvgSpent}s, on the rest: ${t.otherAvgSpent}s.`);
+  }
+  if (report.concepts.length) {
+    out.push('', '## Study list');
+    out.push(report.concepts.slice(0, 5).map(c => c.concept).join(', ') + '.');
+  }
+  out.push('');
+  return out.join('\n');
 }
 
 /** Compact material signature from the mover's perspective, e.g. "R+3P vs R+2P". */

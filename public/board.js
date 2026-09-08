@@ -43,6 +43,15 @@ export async function applyMove(fen, orig, dest) {
   } catch { return null; }
 }
 
+/** Terminal state of a position: { over: 'checkmate'|'stalemate'|'draw'|null, winner? }. */
+export function gameStatus(fen) {
+  const chess = new Chess(fen);
+  if (chess.isCheckmate()) return { over: 'checkmate', winner: chess.turn() === 'w' ? 'black' : 'white' };
+  if (chess.isStalemate()) return { over: 'stalemate' };
+  if (chess.isDraw()) return { over: 'draw' };
+  return { over: null };
+}
+
 /** Walk a SAN line from a FEN; returns [{ san, uci, fen }], stopping at the first illegal move. */
 export function walkSans(fen, sans) {
   const chess = new Chess(fen);

@@ -87,3 +87,35 @@ test('report and repertoire endpoints respond', async () => {
   assert.equal(rp.status, 200);
   assert.ok(Array.isArray(rp.data.repertoire));
 });
+
+test('feedback endpoint stores votes; unexplained moments are rejected', async () => {
+  const ok = await req('POST', '/api/games/abcdefabcdef/moments/1/feedback', { helpful: false });
+  assert.equal(ok.status, 200);
+  const g = await req('GET', '/api/games/abcdefabcdef');
+  assert.equal(g.data.feedback['1'].helpful, false);
+  const noExplanation = await req('POST', '/api/games/abcdefabcdef/moments/2/feedback', { helpful: true });
+  assert.equal(noExplanation.status, 404);
+});
+
+test('drills endpoint filters by pattern for lightning rounds', async () => {
+  const round = await req('GET', '/api/drills?pattern=Test%20pattern');
+  assert.equal(round.status, 200);
+  assert.ok(round.data.due.some(d => d.gameId === 'abcdefabcdef'));
+  assert.equal(round.data.pattern, 'Test pattern');
+});
+
+test('prep card endpoint returns markdown', async () => {
+  const res = await fetch(base + '/api/report/card');
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') || '', /markdown/);
+  assert.match(await res.text(), /Pre-tournament card/);
+});
+
+test('playout endpoints validate input without touching the engine', async () => {
+  assert.equal((await req('POST', '/api/playout/move', { fen: 'garbage' })).status, 400);
+  // A finished game needs no engine either: the verdict is derived directly.
+  const mate = await req('POST', '/api/playout/assess', { fen: '7k/6Q1/6K1/8/8/8/8/8 b - - 0 1' });
+  assert.equal(mate.status, 200);
+  assert.equal(mate.data.over, 'checkmate');
+  assert.ok(mate.data.cp > 9000, 'mated side to move means a winning score for the other side');
+});

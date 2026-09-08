@@ -44,6 +44,18 @@ export function drillId(gameId, ply) {
   return `${gameId}:${ply}`;
 }
 
+export function threatDrillId(gameId, ply) {
+  return `${gameId}:${ply}:threat`;
+}
+
+/** A tactics-allowed moment gets a second drill: see the threat you missed.
+ * Needs the analysed reply position (the punishment) to exist. */
+export function wantsThreatDrill(game, ply) {
+  return (game.purpose || 'own') !== 'scout'
+    && game.explanations?.[ply]?.category === 'tactics-allowed'
+    && !!game.analysis.moves[ply]?.lines?.length;
+}
+
 /** Build one drill record for a moment, preserving spaced-repetition state from `existing`. */
 function makeDrill(game, ply, tier, existing) {
   const m = game.analysis.moves[ply - 1];
@@ -115,9 +127,51 @@ function makePunishDrill(game, ply, tier, existing) {
   };
 }
 
+/** Threat drill for an own-game tactics-allowed moment: the position AFTER the
+ * player's mistake, played from the OPPONENT's side. The failure was not seeing
+ * what the move allowed, so the drill is to find the punishment the opponent
+ * had; the answer lines are the next ply's stored MultiPV. The board stays
+ * oriented from the player's own side: that is where threats must be seen. */
+function makeThreatDrill(game, ply, tier, existing) {
+  const m = game.analysis.moves[ply - 1]; // the player's mistake
+  const next = game.analysis.moves[ply];  // the reply position: the threat lands
+  if (!next?.lines?.length) return null;
+  const e = game.explanations?.[ply];
+  const accepted = acceptedLines(next.lines, next.color === 'white' ? 1 : -1);
+  return {
+    id: threatDrillId(game.id, ply),
+    kind: 'threat',
+    gameId: game.id,
+    ply,
+    fen: m.fenAfter,
+    sideToMove: next.color,
+    orientation: m.color, // see the threat from your own side of the board
+    mistakeSan: m.san,
+    playedUci: next.uci, // what the opponent actually played
+    playedSan: next.san,
+    bestUci: next.bestUci,
+    bestSan: next.bestSan,
+    acceptedUci: accepted.length ? accepted : [next.bestUci].filter(Boolean),
+    lines: next.lines,
+    phase: m.phase,
+    judgment: m.judgment,
+    loss: m.loss,
+    clock: m.clock ?? null,
+    tier,
+    category: e?.category || existing?.category || null,
+    pattern: e?.pattern || existing?.pattern || null,
+    label: `${game.headers.White || '?'} vs ${game.headers.Black || '?'}${game.headers.Date ? ', ' + game.headers.Date : ''}`,
+    createdAt: existing?.createdAt || new Date().toISOString(),
+    due: existing?.due || new Date().toISOString(),
+    step: existing?.step ?? 0,
+    reviews: existing?.reviews || [],
+  };
+}
+
 /** Create or refresh drills for a game's critical moments: every moment becomes a
  * drill, tiered 'core' at or above the drill threshold, 'sharpen' below it.
- * Own games drill the player's mistakes; scout games drill their punishment. */
+ * Own games drill the player's mistakes (plus a see-the-threat drill for
+ * tactics-allowed moments); scout games drill their punishment. */
 export function syncDrillsForGame(game, settings) {
   return locked(() => syncGameUnlocked(game, settings));
 }
@@ -133,6 +187,15 @@ async function syncGameUnlocked(game, settings) {
     const id = drillId(game.id, ply);
     const drill = scout ? makePunishDrill(game, ply, tier, byId.get(id)) : makeDrill(game, ply, tier, byId.get(id));
     if (drill) byId.set(id, drill);
+    if (!scout) {
+      const tid = threatDrillId(game.id, ply);
+      if (wantsThreatDrill(game, ply)) {
+        const td = makeThreatDrill(game, ply, tier, byId.get(tid));
+        if (td) byId.set(tid, td);
+      } else {
+        byId.delete(tid); // the explanation changed category: the threat drill no longer applies
+      }
+    }
   }
   store.drills = [...byId.values()];
   await saveDrills(store);
@@ -185,7 +248,10 @@ export function syncAllDrills() {
       const game = await getGame(entry.id);
       if (!game?.analysis) { pendingGames.add(entry.id); continue; }
       await syncGameUnlocked(game, settings);
-      for (const ply of game.analysis.summary.moments) validIds.add(drillId(game.id, ply));
+      for (const ply of game.analysis.summary.moments) {
+        validIds.add(drillId(game.id, ply));
+        if (wantsThreatDrill(game, ply)) validIds.add(threatDrillId(game.id, ply));
+      }
     }
     const store = await getDrills();
     // Prune drills for deleted games AND for plies that are no longer moments
@@ -208,34 +274,54 @@ export function removeDrillsForGame(gameId) {
 
 /** Record a review. grade: 'again' | 'good' | 'easy'. A failed drill stays due
  * today (retried at the end of the session); the ladder only advances after a
- * same-day pass. */
-export function reviewDrill(id, grade, correct) {
-  return locked(() => reviewUnlocked(id, grade, correct));
+ * same-day pass. Practice reviews (lightning rounds) are extra reps outside the
+ * schedule: a miss still resets the drill (a miss is real evidence), but a pass
+ * does not advance the ladder. */
+export function reviewDrill(id, grade, correct, practice = false) {
+  return locked(() => reviewUnlocked(id, grade, correct, practice));
 }
 
-async function reviewUnlocked(id, grade, correct) {
+async function reviewUnlocked(id, grade, correct, practice) {
   const store = await getDrills();
   const d = store.drills.find(x => x.id === id);
   if (!d) throw new Error('drill not found');
   if (grade === 'again' || correct === false) {
     d.step = 0;
     d.due = new Date().toISOString(); // due now: it comes back at the end of this session
-  } else {
+  } else if (!practice) {
     if (grade === 'easy') d.step = Math.min(LADDER_DAYS.length - 1, d.step + 2);
     else d.step = Math.min(LADDER_DAYS.length - 1, d.step + 1);
     d.due = new Date(Date.now() + LADDER_DAYS[d.step] * DAY).toISOString();
   }
-  d.reviews.push({ at: new Date().toISOString(), grade, correct: !!correct });
+  d.reviews.push({ at: new Date().toISOString(), grade, correct: !!correct, ...(practice ? { practice: true } : {}) });
   await saveDrills(store);
   return d;
 }
 
+/** Was this explanation useful? Stored per machine like reviews; the report
+ * aggregates it so prompts can be tuned from real use. */
+export function recordFeedback(gameId, ply, helpful) {
+  return locked(async () => {
+    const store = await getDrills();
+    store.feedback[drillId(gameId, ply)] = { helpful: !!helpful, at: new Date().toISOString() };
+    await saveDrills(store);
+    return store.feedback;
+  });
+}
+
 /** Due drills, core tier first, then near-miss sharpeners. Consecutive drills
  * from the same game are spread apart so one game's context cannot prime the
- * answers to its own next positions. */
-export async function dueDrills(limit = 20) {
+ * answers to its own next positions. With `pattern`, a lightning round instead:
+ * every drill of that recurring pattern, due or not, for blocked practice. */
+export async function dueDrills(limit = 20, { pattern = null } = {}) {
   const store = await getDrills();
   const now = Date.now();
+  if (pattern) {
+    const key = normalizeKey(pattern);
+    const match = store.drills.filter(d => normalizeKey(d.pattern) === key)
+      .sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
+    return { due: match.slice(0, limit), total: store.drills.length, dueCount: match.length, pattern, feedback: store.feedback };
+  }
   const rank = d => (d.tier === 'sharpen' ? 1 : 0);
   const due = store.drills.filter(d => Date.parse(d.due) <= now)
     .sort((a, b) => rank(a) - rank(b) || Date.parse(a.due) - Date.parse(b.due));
@@ -244,5 +330,9 @@ export async function dueDrills(limit = 20) {
     const j = due.findIndex((d, k) => k > i && d.gameId !== due[i].gameId && rank(d) === rank(due[i]));
     if (j > i) [due[i], due[j]] = [due[j], due[i]];
   }
-  return { due: due.slice(0, limit), total: store.drills.length, dueCount: due.length };
+  return { due: due.slice(0, limit), total: store.drills.length, dueCount: due.length, feedback: store.feedback };
+}
+
+function normalizeKey(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }

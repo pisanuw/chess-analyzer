@@ -26,7 +26,10 @@ export async function reportView(root) {
   }
   const j = r.totalJudged;
   root.innerHTML = `
-    <h1>Weakness report</h1>
+    <div class="row" style="justify-content: space-between; align-items: baseline">
+      <h1>Weakness report</h1>
+      <button class="small" id="prep-card" title="One-page markdown: focus areas, synthesized rules, clock line, study list">Pre-tournament card ↓</button>
+    </div>
     <p class="muted">${r.games} analysed game${r.games === 1 ? '' : 's'}. Critical moments are the player's moves that lost at least the configured win-probability threshold; the engine flags them, the LLM classifies them.</p>
     <div class="tiles">
       <div class="tile"><div class="v">${r.overallAccuracy ?? '–'}%</div><div class="l">Average accuracy</div></div>
@@ -90,6 +93,12 @@ export async function reportView(root) {
       <small>Endgame moments bucketed by material (your pieces vs theirs). A repeating signature is a study target.</small>
     </div>` : ''}
 
+    ${r.feedback ? `<div class="card" style="margin-top: 20px">
+      <h3 style="margin-top:0">Explanation feedback</h3>
+      <p class="muted" style="margin-top:0">${r.feedback.helpful} rated helpful, ${r.feedback.unhelpful} not.</p>
+      ${r.feedback.unhelpfulMoments.length ? `<p>Worth re-explaining or a better prompt: ${r.feedback.unhelpfulMoments.map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${movePrefix(m)}${esc(m.san)}</a>`).join(' ')}</p>` : ''}
+    </div>` : ''}
+
     ${r.drillStats ? `<div class="card" style="margin-top: 20px">
       <h3 style="margin-top:0">Drill performance</h3>
       <p class="muted" style="margin-top:0">${r.drillStats.attempts} reviews on this machine, ${r.drillStats.rate}% correct.</p>
@@ -105,9 +114,9 @@ export async function reportView(root) {
       <div class="card">
         <h3 style="margin-top:0">Recurring patterns</h3>
         ${r.patterns.length ? `<table><thead><tr><th>Pattern</th><th class="num">Count</th><th>Type</th><th>Where</th></tr></thead><tbody>
-          ${r.patterns.slice(0, 25).map(p => `<tr><td>${esc(p.pattern)}</td><td class="num">${p.count}</td><td><small>${Object.keys(p.categories).map(c => esc(CATEGORY_LABEL[c] || c)).join(', ')}</small></td>
+          ${r.patterns.slice(0, 25).map(p => `<tr><td>${esc(p.pattern)}${p.count >= 2 ? ` <a href="#/drills?pattern=${encodeURIComponent(p.pattern)}" title="Lightning round: every drill of this pattern, back to back">⚡</a>` : ''}</td><td class="num">${p.count}</td><td><small>${Object.keys(p.categories).map(c => esc(CATEGORY_LABEL[c] || c)).join(', ')}</small></td>
             <td>${p.moments.slice(0, 6).map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${movePrefix(m)}${esc(m.san)}</a>`).join(' ')}</td></tr>`).join('')}
-        </tbody></table>` : '<div class="empty">Patterns appear once moments have been explained.</div>'}
+        </tbody></table><small>⚡ drills a recurring pattern back to back (does not touch the review schedule).</small>` : '<div class="empty">Patterns appear once moments have been explained.</div>'}
       </div>
       <div class="card">
         <h3 style="margin-top:0">Concepts to study</h3>
@@ -124,6 +133,18 @@ export async function reportView(root) {
         `<button class="small" data-synth="${esc(p.pattern)}" style="margin: 2px">Synthesize: ${esc(p.pattern)} (${p.count})</button>`).join('')
         || (Object.keys(notes).length ? '' : '<div class="empty">Appears once a pattern recurs in 2+ explained moments.</div>')}
     </div>`;
+
+  root.querySelector('#prep-card').onclick = async () => {
+    try {
+      const text = await api.card();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
+      a.download = `prep-card-${new Date().toISOString().slice(0, 10)}.md`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      toast('Pre-tournament card downloaded');
+    } catch (err) { toast(err.message, true); }
+  };
 
   root.querySelectorAll('button[data-synth]').forEach(b => b.onclick = async () => {
     b.disabled = true; b.textContent = 'Synthesizing (about a minute)…';

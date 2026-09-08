@@ -4,7 +4,7 @@ import { Chess } from 'chess.js';
 import { tempData, makeGame, writeGame } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
-const { buildReport, parseTimeControl, materialSignature } = await import('../server/report.js');
+const { buildReport, buildPrepCard, parseTimeControl, materialSignature } = await import('../server/report.js');
 const { buildRepertoire } = await import('../server/repertoire.js');
 
 const dir = process.env.DATA_DIR;
@@ -112,4 +112,24 @@ test('buildRepertoire merges transpositions by position, keeping the common move
   assert.equal(merged.count, 3, 'all three games share one line');
   assert.equal(merged.moveOrders, 2);
   assert.deepEqual(merged.line, ['d4', 'd5', 'c4', 'e6'], 'most common move order shown');
+});
+
+test('explanation feedback aggregates into the report', async () => {
+  const { recordFeedback } = await import('../server/drills.js');
+  await recordFeedback('aaaaaaaaaa01', 1, false); // moment exists in the fixture games
+  await recordFeedback('aaaaaaaaaa02', 1, true);
+  const r = await buildReport();
+  assert.equal(r.feedback.helpful, 1);
+  assert.equal(r.feedback.unhelpful, 1);
+  assert.ok(r.feedback.unhelpfulMoments.some(m => m.gameId === 'aaaaaaaaaa01' && m.ply === 1));
+});
+
+test('prep card renders focus areas, rules, and the clock line', async () => {
+  const r = await buildReport();
+  const notes = { 'hanging piece': { pattern: 'Hanging piece', count: 3, rule: 'Check every capture.', triggers: 'Loose pieces on open lines.', advice: 'Scan checks and captures before moving.' } };
+  const card = buildPrepCard(r, notes, { playerNames: ['Kai Pisan'] });
+  assert.match(card, /# Pre-tournament card: Kai Pisan/);
+  assert.match(card, /## Focus areas/);
+  assert.match(card, /Hanging piece.*Check every capture/);
+  assert.match(card, /## Clock/);
 });

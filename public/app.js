@@ -17,7 +17,7 @@ const routes = [
   { re: /^#\/report$/, name: 'report', view: reportView },
   { re: /^#\/repertoire$/, name: 'repertoire', view: repertoireView },
   { re: /^#\/scout(?:\/(.*))?$/, name: 'scout', view: scoutView },
-  { re: /^#\/drills$/, name: 'drills', view: drillsView },
+  { re: /^#\/drills(?:\?(.*))?$/, name: 'drills', view: drillsView }, // optional query: ?pattern=... starts a lightning round
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
 ];
 

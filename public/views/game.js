@@ -1,15 +1,15 @@
 // Single game: board, eval graph, moves, critical moments with guess-first reveal, summary.
 import { api, esc, toast, formatEval, fmtClock, moveLabel, movePrefix, winProb, WP_ACCEPT, JUDGE_MARK } from '../api.js';
-import { Board, applyMove, walkSans, lineShapes } from '../board.js';
+import { Board, applyMove, gameStatus, walkSans, lineShapes } from '../board.js';
 import { evalGraph } from '../charts.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 export async function gameView(root, id, startPly) {
-  let { game } = await api.game(id);
+  let { game, feedback = {} } = await api.game(id);
   const { settings } = await api.settings();
-  const { readonly } = await api.status();
-  const state = { ply: 0, tab: 'moments', moment: null, guess: null, preview: null };
+  const { readonly, engineOk } = await api.status();
+  const state = { ply: 0, tab: 'moments', moment: null, guess: null, preview: null, playout: null };
 
   const h = game.headers;
   const player = game.playerColor;
@@ -60,6 +60,7 @@ export async function gameView(root, id, startPly) {
   function fenAt(ply) { return ply === 0 ? (game.moves[0]?.fenBefore || START_FEN) : game.moves[ply - 1].fenAfter; }
 
   function showPly(ply, { shapes = null } = {}) {
+    if (state.playout) return; // navigation must not clobber a live play-out board
     state.ply = Math.max(0, Math.min(game.moves.length, ply));
     state.preview = null;
     const m = state.ply ? moves()[state.ply - 1] : null;
@@ -119,7 +120,7 @@ export async function gameView(root, id, startPly) {
   root.querySelector('#last').onclick = () => showPly(game.moves.length);
   root.querySelector('#flip').onclick = () => board.flip();
   const onKey = e => {
-    if (e.target.matches('input, textarea')) return;
+    if (e.target.matches('input, textarea') || state.playout) return;
     if (e.key === 'ArrowLeft') { showPly(state.ply - 1); e.preventDefault(); }
     if (e.key === 'ArrowRight') { showPly(state.ply + 1); e.preventDefault(); }
   };
@@ -132,6 +133,7 @@ export async function gameView(root, id, startPly) {
   });
 
   function renderPanel() {
+    if (state.playout) return renderPlayout();
     root.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === state.tab));
     if (state.tab === 'moves') renderMoves();
     else if (state.tab === 'summary') renderSummary();
@@ -206,7 +208,105 @@ export async function gameView(root, id, startPly) {
     panel.querySelector('.guess')?.scrollIntoView({ block: 'nearest' });
   }
 
+  // --- play it out: finish the position against a strength-limited engine -------
+  // Single-move drills cannot train conversion or defence; playing the position
+  // out can. The engine answers at a fixed Elo and evals stay hidden until the
+  // player asks for the verdict.
+  function defaultElo() {
+    const oppElo = Number((seat === 'white' ? h.BlackElo : h.WhiteElo) || 0);
+    return Math.min(3190, Math.max(1320, oppElo || settings.playerRating || 2000));
+  }
+
+  function startPlayout() {
+    const g = state.guess;
+    const t = scout ? (moves()[g.ply] || moves()[g.ply - 1]) : moves()[g.ply - 1];
+    state.playout = { fen: t.fenBefore, sans: [], elo: defaultElo(), over: null, busy: false, startEval: t.evalBefore, assess: null };
+    renderPanel();
+    board.set(t.fenBefore, { movableFor: seat, shapes: [] });
+  }
+
+  function stopPlayout() {
+    state.playout = null;
+    renderPanel();
+    showPly(state.ply);
+  }
+
+  async function playoutMove(orig, dest) {
+    const p = state.playout;
+    if (p.busy || p.over) return;
+    const res = await applyMove(p.fen, orig, dest);
+    if (!res) return board.set(p.fen, { movableFor: seat });
+    p.fen = res.fen; p.sans.push(res.san); p.assess = null;
+    let status = gameStatus(res.fen);
+    if (status.over) { p.over = status; board.set(p.fen, { lastMove: res.uci }); return renderPanel(); }
+    p.busy = true;
+    board.set(p.fen, { lastMove: res.uci });
+    renderPanel();
+    try {
+      const r = await api.playoutMove(p.fen, p.elo);
+      if (state.playout !== p) return; // stopped while the engine was thinking
+      p.fen = r.fen; p.sans.push(r.san);
+      status = gameStatus(r.fen);
+      if (status.over) p.over = status;
+      p.busy = false;
+      board.set(p.fen, { lastMove: r.uci, movableFor: p.over ? null : seat });
+      renderPanel();
+    } catch (err) {
+      if (state.playout !== p) return;
+      p.busy = false;
+      toast(err.message, true);
+      board.set(p.fen, { movableFor: seat });
+      renderPanel();
+    }
+  }
+
+  async function assessPlayout() {
+    const p = state.playout;
+    if (p.busy) return;
+    p.busy = true;
+    renderPanel();
+    try {
+      const r = await api.playoutAssess(p.fen);
+      if (state.playout !== p) return;
+      p.assess = r;
+    } catch (err) { toast(err.message, true); }
+    if (state.playout === p) { p.busy = false; renderPanel(); }
+  }
+
+  function renderPlayout() {
+    const p = state.playout;
+    root.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+    const wpFor = cp => seat === 'white' ? winProb(cp) : 100 - winProb(cp);
+    const startWp = wpFor(p.startEval).toFixed(0);
+    let result = '';
+    if (p.over) {
+      const text = p.over.over === 'checkmate'
+        ? (p.over.winner === seat ? 'Checkmate: you converted it.' : 'Checkmate against you.')
+        : (p.over.over === 'stalemate' ? 'Stalemate.' : 'Drawn.');
+      result = `<div class="result ${p.over.over === 'checkmate' && p.over.winner === seat ? 'good' : 'bad'}">${text}</div>`;
+    } else if (p.assess) {
+      const nowWp = (seat === 'white' ? p.assess.wp : 100 - p.assess.wp).toFixed(0);
+      const held = Number(nowWp) >= Number(startWp) - WP_ACCEPT;
+      result = `<div class="result ${held ? 'good' : 'bad'}">Engine verdict: ${formatEval(p.assess.cp)}. Your winning chances: ${nowWp}% (started at ${startWp}%).${held ? '' : ' Ground given up.'}</div>`;
+    }
+    panel.innerHTML = `<div class="guess">
+      <div class="row" style="justify-content: space-between">
+        <b>Playing it out: you are ${seat}, engine at ~${p.elo} Elo</b>
+        <span><button class="small" data-po="assess" ${p.busy || p.over ? 'disabled' : ''}>Assess position</button> <button class="small" data-po="stop">${p.over ? 'Done' : 'Stop'}</button></span>
+      </div>
+      <p class="muted">Started at ${formatEval(p.startEval)} (${startWp}% for you). Play on the board; evals stay hidden until you assess or the game ends.</p>
+      ${p.sans.length ? `<p style="font-variant-numeric: tabular-nums">${esc(p.sans.join(' '))}</p>` : ''}
+      ${p.busy ? '<p class="muted">Engine is thinking…</p>' : ''}
+      ${result}
+      <label class="field" style="margin-top: 8px; max-width: 220px"><span>Engine Elo (1320 to 3190)</span><input type="number" data-po="elo" value="${p.elo}" min="1320" max="3190"></label>
+    </div>`;
+    panel.querySelector('[data-po="stop"]').onclick = stopPlayout;
+    panel.querySelector('[data-po="assess"]').onclick = assessPlayout;
+    panel.querySelector('[data-po="elo"]').onchange = e => { p.elo = Math.min(3190, Math.max(1320, Number(e.target.value) || p.elo)); };
+  }
+
   async function onUserMove(orig, dest) {
+    if (state.playout) return playoutMove(orig, dest);
     const g = state.guess;
     if (!g || g.status !== 'guessing') return;
     const m = moves()[g.ply - 1];
@@ -280,6 +380,7 @@ export async function gameView(root, id, startPly) {
         ${scout
           ? (moves()[g.ply] ? `<button class="small" data-g="played">Game continued: ${esc(t.san)} (${formatEval(t.evalAfter)})</button>` : '<span class="muted">The game ended here.</span>')
           : `<button class="small" data-g="played">Played: ${esc(m.san)} (${formatEval(m.evalAfter)})</button>`}
+        ${!readonly && engineOk ? `<button class="small" data-g="playout" title="Finish the position against a strength-limited engine">Play it out</button>` : ''}
       </div>
       <ul class="lines">${lines}</ul>
       <p class="muted" style="font-size:13px">Click a move in a line to see it on the board. Green arrow: engine's choice. Red: the move played.</p>
@@ -288,6 +389,9 @@ export async function gameView(root, id, startPly) {
           <p>${esc(e.explanation)}</p>
           <div class="kq">Ask yourself: ${esc(e.key_question)}</div>
           ${e.concept ? `<p><small>Concept to study: ${esc(e.concept)}</small></p>` : ''}
+          <div class="row" style="margin-top: 6px; gap: 6px"><small class="muted">Was this explanation useful?</small>
+            <button class="small${feedback[g.ply]?.helpful === true ? ' primary' : ''}" data-g="fb-yes">Yes</button>
+            <button class="small${feedback[g.ply]?.helpful === false ? ' primary' : ''}" data-g="fb-no">Not really</button></div>
         </div>` : renderNoExplanation(g.ply)}
     </div>`;
   }
@@ -325,6 +429,14 @@ export async function gameView(root, id, startPly) {
       if (act === 'close') { state.moment = null; state.guess = null; renderPanel(); showPly(state.ply); }
       if (act === 'reveal') { g.status = 'revealed'; g.verdict = null; renderPanel(); showPly(guessPly); board.shapes(lineShapes(t.lines, scout ? t.uci : m.uci)); }
       if (act === 'next') openMoment(Number(b.dataset.ply));
+      if (act === 'playout') startPlayout();
+      if (act === 'fb-yes' || act === 'fb-no') {
+        try {
+          await api.feedback(id, g.ply, act === 'fb-yes');
+          feedback[g.ply] = { helpful: act === 'fb-yes' };
+          renderPanel();
+        } catch (err) { toast(err.message, true); }
+      }
       if (act === 'before') { showPly(guessPly); board.shapes(lineShapes(t.lines, scout ? t.uci : m.uci)); }
       if (act === 'played') { showPly(guessPly + 1); }
       if (act === 'copyprompt' || act === 'showprompt') {
@@ -345,12 +457,12 @@ export async function gameView(root, id, startPly) {
 
   // --- refresh on job completion -----------------------------------------------------
   async function rerender() {
-    ({ game } = await api.game(id));
+    ({ game, feedback = {} } = await api.game(id));
     renderActions();
     root.querySelector('[data-tab="moments"]').textContent = `Critical moments${game.analysis ? ` (${game.analysis.summary.moments.length})` : ''}`;
     if (game.analysis) graph = evalGraph(root.querySelector('#graph'), game.analysis.moves, { currentPly: state.ply, onSelect: ply => showPly(ply), timeControl: h.TimeControl });
     renderPanel();
-    showPly(state.ply);
+    if (!state.playout) showPly(state.ply); // a job finishing must not clobber a live play-out board
   }
   const { jobEvents } = await import('../app.js');
   const onFinished = e => { if (e.detail.some(j => j.gameId === id)) rerender().catch(() => {}); };

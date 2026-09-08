@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { tempData, makeGame, writeGame } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
-const { syncDrillsForGame, syncAllDrills, reviewDrill, dueDrills, recordGuess, removeDrillsForGame } = await import('../server/drills.js');
+const { syncDrillsForGame, syncAllDrills, reviewDrill, dueDrills, recordGuess, recordFeedback, removeDrillsForGame } = await import('../server/drills.js');
 const { getDrills } = await import('../server/store.js');
 
 const settings = { drillThreshold: 20, momentThreshold: 12 };
@@ -105,4 +105,46 @@ test('syncAllDrills prunes drills for plies that are no longer moments', async (
   const { drills } = await getDrills();
   assert.ok(!drills.some(d => d.id === 'aaaaaaaaaa04:1'), 'stale ply drill removed');
   assert.ok(drills.some(d => d.id === 'aaaaaaaaaa04:3'), 'current moment drill present');
+});
+
+test('tactics-allowed moments get a see-the-threat twin drill', async () => {
+  const game = makeGame({ id: 'aaaaaaaaaa07', moments: [{ ply: 1, loss: 25 }], category: 'tactics-allowed' });
+  await syncDrillsForGame(game, settings);
+  const { drills } = await getDrills();
+  const threat = drills.find(d => d.id === 'aaaaaaaaaa07:1:threat');
+  assert.ok(threat, 'threat drill exists alongside the core drill');
+  assert.equal(threat.kind, 'threat');
+  assert.equal(threat.sideToMove, 'black'); // the opponent moves: find what the mistake allowed
+  assert.equal(threat.orientation, 'white'); // but seen from the player's side of the board
+  assert.equal(threat.fen, game.analysis.moves[0].fenAfter);
+  assert.ok(drills.find(d => d.id === 'aaaaaaaaaa07:1'), 'core drill still exists');
+
+  // Re-explained under another category: the threat drill no longer applies.
+  game.explanations[1].category = 'calculation';
+  await syncDrillsForGame(game, settings);
+  const after = await getDrills();
+  assert.ok(!after.drills.find(d => d.id === 'aaaaaaaaaa07:1:threat'), 'stale threat drill removed');
+});
+
+test('lightning round serves a pattern regardless of due; practice grades leave the ladder alone', async () => {
+  const game = makeGame({ id: 'aaaaaaaaaa08', moments: [{ ply: 1, loss: 25 }], pattern: 'Hanging piece after exchange' });
+  await syncDrillsForGame(game, settings);
+  await reviewDrill('aaaaaaaaaa08:1', 'good', true); // step 1: due in 3 days
+  const { due } = await dueDrills();
+  assert.ok(!due.some(d => d.id === 'aaaaaaaaaa08:1'), 'not in the normal due queue');
+  const round = await dueDrills(50, { pattern: 'hanging PIECE, after exchange!' }); // normalized match
+  assert.ok(round.due.some(d => d.id === 'aaaaaaaaaa08:1'), 'the lightning round includes it anyway');
+  const passed = await reviewDrill('aaaaaaaaaa08:1', 'good', true, true);
+  assert.equal(passed.step, 1, 'a practice pass does not advance the ladder');
+  assert.equal(passed.reviews.at(-1).practice, true);
+  const missed = await reviewDrill('aaaaaaaaaa08:1', 'again', false, true);
+  assert.equal(missed.step, 0, 'a practice miss still resets: a miss is real evidence');
+});
+
+test('explanation feedback is stored per moment', async () => {
+  await recordFeedback('aaaaaaaaaa08', 1, false);
+  const store = await getDrills();
+  assert.equal(store.feedback['aaaaaaaaaa08:1'].helpful, false);
+  await recordFeedback('aaaaaaaaaa08', 1, true); // changed their mind
+  assert.equal((await getDrills()).feedback['aaaaaaaaaa08:1'].helpful, true);
 });

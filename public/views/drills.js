@@ -5,38 +5,48 @@ import { CATEGORY_LABEL } from './report.js';
 
 const MAX_FOLLOWUPS = 2; // player moves asked beyond the first, along the engine's PV
 
-export async function drillsView(root) {
-  let { due, total, dueCount } = await api.drills();
+export async function drillsView(root, query) {
+  // With ?pattern=..., a lightning round: every drill of one recurring pattern,
+  // due or not, back to back (blocked practice for a struggling pattern).
+  const lightning = new URLSearchParams(query || '').get('pattern');
+  let { due, total, dueCount, feedback = {} } = await api.drills(lightning, lightning ? 100 : 20);
   let idx = 0;
   let board = null;
-  let state = null; // { drill, status, verdict, game }
+  let state = null; // { drill, status, verdict, game, hintShown }
   const session = { attempts: 0, correct: 0, missed: [] }; // missed: first-attempt failures
 
   root.innerHTML = `
-    <div class="row" style="justify-content: space-between"><h1 style="margin:0">Drills</h1><span class="muted" id="counts"></span></div>
-    <p class="muted">Positions from your own games where you went wrong. Find the engine's move, then grade how well you knew it. Correct moves move up the ladder (1, 3, 7, 14, 30, 60 days); a miss comes back at the end of the same session. Sharpener drills are near-miss moments below the mistake threshold.</p>
+    <div class="row" style="justify-content: space-between"><h1 style="margin:0">${lightning ? 'Lightning round' : 'Drills'}</h1><span class="muted" id="counts"></span></div>
+    ${lightning
+      ? `<p class="muted">Every drill of the pattern "${esc(lightning)}", back to back. Blocked practice: passes here do not advance the spaced-repetition ladder, but a miss still resets its drill. <a href="#/drills">Back to normal drills</a>.</p>`
+      : `<p class="muted">Positions from your own games where you went wrong. Find the engine's move, then grade how well you knew it. Correct moves move up the ladder (1, 3, 7, 14, 30, 60 days); a miss comes back at the end of the same session. Sharpener drills are near-miss moments below the mistake threshold.</p>`}
     <div id="drill"></div>`;
   const el = root.querySelector('#drill');
   const counts = root.querySelector('#counts');
 
   async function load() {
     if (idx >= due.length) {
-      if (due.length) {
-        // The server serves due drills in batches of 20; check for the rest.
-        ({ due, total, dueCount } = await api.drills());
+      // Normal mode re-checks the queue (failed drills are due again, and the
+      // server batches). A lightning round serves its fixed set exactly once:
+      // its drills are returned regardless of due date, so a re-fetch would
+      // hand back the same positions forever.
+      if (due.length && !lightning) {
+        ({ due, total, dueCount, feedback = {} } = await api.drills());
         idx = 0;
         if (due.length) return load();
       }
       counts.textContent = `${total} drill${total === 1 ? '' : 's'} total`;
-      el.innerHTML = `${sessionRecap()}<div class="card"><div class="empty">${total ? 'Nothing due right now. Come back later.' : 'No drills yet. Drills are created from mistakes and blunders when games are analysed.'}</div></div>`;
+      el.innerHTML = `${sessionRecap()}<div class="card"><div class="empty">${lightning
+        ? 'That was every drill for this pattern. <a href="#/drills">Back to drills</a>.'
+        : (total ? 'Nothing due right now. Come back later.' : 'No drills yet. Drills are created from mistakes and blunders when games are analysed.')}</div></div>`;
       board?.destroy();
       board = null;
       state = null; // stray keypresses must not re-grade the last drill
       return;
     }
     const drill = due[idx];
-    counts.textContent = `${dueCount - idx} due · ${total} total`;
-    state = { drill, status: 'guessing', verdict: null, game: null, follow: null };
+    counts.textContent = lightning ? `${due.length - idx} left · ${due.length} in this round` : `${dueCount - idx} due · ${total} total`;
+    state = { drill, status: 'guessing', verdict: null, game: null, follow: null, hintShown: false };
     el.innerHTML = `<div class="drill-layout">
       <div>
         <div class="board-wrap"><div id="dboard"></div></div>
@@ -45,10 +55,12 @@ export async function drillsView(root) {
       <div id="dpanel"></div>
     </div>`;
     board?.destroy();
-    board = new Board(el.querySelector('#dboard'), { orientation: drill.sideToMove, onMove });
+    // Threat drills carry an orientation: the opponent moves, but the player
+    // looks at the board from their own side, where threats must be spotted.
+    board = new Board(el.querySelector('#dboard'), { orientation: drill.orientation || drill.sideToMove, onMove });
     board.set(drill.fen, { movableFor: drill.sideToMove });
     renderPanel();
-    // From the second review on, surface the key question BEFORE the move: the
+    // From the second review on, offer the key question BEFORE the move: the
     // goal is training the thinking habit, not recall of a memorised answer.
     if (drill.reviews?.length) loadGame();
   }
@@ -121,7 +133,7 @@ export async function drillsView(root) {
     let text;
     if (res.uci === d.bestUci) text = `${res.san}: correct, the engine's first choice.`;
     else if (correct) text = `${res.san}: accepted (engine line ${rank + 1}, within ${WP_ACCEPT} win-% of the best move ${d.bestSan}).`;
-    else if (res.uci === d.playedUci) text = d.kind === 'punish' ? `${res.san}: that is what was played in the game, but the engine prefers ${d.bestSan}.` : `${res.san}: that is what you played in the game (${d.judgment}). Engine: ${d.bestSan}.`;
+    else if (res.uci === d.playedUci) text = d.kind === 'punish' || d.kind === 'threat' ? `${res.san}: that is what was played in the game, but the engine prefers ${d.bestSan}.` : `${res.san}: that is what you played in the game (${d.judgment}). Engine: ${d.bestSan}.`;
     else if (rank > 0) text = `${res.san}: engine line ${rank + 1}, but clearly worse than ${d.bestSan}.`;
     else text = `${res.san}: not among the engine's top lines. Engine: ${d.bestSan}.`;
     const verdict = { correct, text, followUps: 0, foundSans: [] };
@@ -129,7 +141,9 @@ export async function drillsView(root) {
     // Stockfish). The paired same-depth search is trustworthy enough to accept
     // a move the stored lines simply did not cover.
     if (!correct && rank < 0 && res.uci !== d.playedUci) {
-      api.evalMove(d.gameId, d.kind === 'punish' ? d.ply + 1 : d.ply, res.uci).then(r => {
+      // Punish and threat drills play in the position after the mistake, so the
+      // answer is checked against the NEXT ply's stored analysis.
+      api.evalMove(d.gameId, d.kind === 'punish' || d.kind === 'threat' ? d.ply + 1 : d.ply, res.uci).then(r => {
         const good = r.wpDiff <= WP_ACCEPT;
         if (good) verdict.correct = true;
         verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (d.sideToMove === 'white' ? 1 : -1))}, ${r.wpDiff.toFixed(1)} win-% behind ${d.bestSan}.${good ? ' Accepted.' : ''}`;
@@ -152,13 +166,26 @@ export async function drillsView(root) {
     const p = el.querySelector('#dpanel');
     const side = d.sideToMove === 'white' ? 'White' : 'Black';
     const punish = d.kind === 'punish';
-    const chips = `<span class="chip ${d.judgment}">${d.judgment}${punish ? '' : ' in the game'}</span>${punish ? ` <span class="chip">punish</span> <span class="chip">vs ${esc(d.subject || '?')}</span>` : ''}${d.tier === 'sharpen' ? ' <span class="chip">sharpener</span>' : ''}${d.category ? ` <span class="chip cat">${esc(d.category)}</span>` : ''}`;
+    const threat = d.kind === 'threat';
+    const chips = `<span class="chip ${d.judgment}">${d.judgment}${punish || threat ? '' : ' in the game'}</span>${punish ? ` <span class="chip">punish</span> <span class="chip">vs ${esc(d.subject || '?')}</span>` : ''}${threat ? ' <span class="chip">see the threat</span>' : ''}${d.tier === 'sharpen' ? ' <span class="chip">sharpener</span>' : ''}${d.category ? ` <span class="chip cat">${esc(d.category)}</span>` : ''}`;
     if (state.status === 'guessing') {
-      const hint = d.reviews?.length ? state.game?.explanations?.[d.ply]?.key_question : null;
-      p.innerHTML = `<div class="guess"><b>${punish ? `${esc(d.subject || 'The opponent')} just played ${esc(d.mistakeSan)}. ${side} to move: find the punishment.` : `${side} to move. Find the best move.`}</b>
+      // Question-first: from the second review on, invite the player to generate
+      // the key question themselves before comparing with the coach's.
+      const kq = d.reviews?.length ? state.game?.explanations?.[d.ply]?.key_question : null;
+      const hint = kq ? (state.hintShown
+        ? `<div class="kq">Ask yourself: ${esc(kq)}</div>`
+        : `<p class="muted" style="margin:8px 0">What is the question in this position? Form it first, then <button class="small" id="showhint">compare with the coach's</button></p>`) : '';
+      const task = punish
+        ? `${esc(d.subject || 'The opponent')} just played ${esc(d.mistakeSan)}. ${side} to move: find the punishment.`
+        : threat
+          ? `In the game you played ${esc(d.mistakeSan)} here (${d.judgment}). What did it allow? Find ${side}'s strongest reply.`
+          : `${side} to move. Find the best move.`;
+      p.innerHTML = `<div class="guess"><b>${task}</b>
         <p class="muted">Drill ${idx + 1} of ${due.length}. ${chips}${d.clock != null ? ` · clock in the game: ${fmtClock(d.clock)}` : ''}</p>
-        ${hint ? `<div class="kq">Ask yourself: ${esc(hint)}</div>` : ''}
+        ${hint}
         <button class="small" id="giveup">Show answer</button></div>`;
+      const sh = p.querySelector('#showhint');
+      if (sh) sh.onclick = () => { state.hintShown = true; renderPanel(); };
       p.querySelector('#giveup').onclick = () => { board.set(d.fen, { shapes: lineShapes(d.lines, d.playedUci) }); reveal({ correct: false, text: `Engine: ${d.bestSan}.`, followUps: 0, foundSans: [] }); };
       return;
     }
@@ -190,10 +217,21 @@ export async function drillsView(root) {
       ${state.verdict.followMiss ? `<div class="result bad">${esc(state.verdict.followMiss)}</div>` : ''}
       <p style="margin: 6px 0">${chips}</p>
       <ul class="lines">${d.lines.map((l, i) => `<li class="${l.uci === d.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === d.playedUci ? '<span class="chip mistake">played</span>' : ''}</li>`).join('')}</ul>
-      ${e ? `<div class="explanation"><div class="row"><span class="chip cat">${esc(e.category)}</span> <b>${esc(e.pattern)}</b></div><p>${esc(e.explanation)}</p><div class="kq">Ask yourself: ${esc(e.key_question)}</div></div>` : (state.game ? '<p class="muted">No explanation for this moment yet.</p>' : '')}
+      ${e ? `<div class="explanation"><div class="row"><span class="chip cat">${esc(e.category)}</span> <b>${esc(e.pattern)}</b></div><p>${esc(e.explanation)}</p><div class="kq">Ask yourself: ${esc(e.key_question)}</div>
+        <div class="row" style="margin-top: 6px; gap: 6px"><small class="muted">Was this explanation useful?</small>
+          <button class="small${feedback[`${d.gameId}:${d.ply}`]?.helpful === true ? ' primary' : ''}" data-fb="yes">Yes</button>
+          <button class="small${feedback[`${d.gameId}:${d.ply}`]?.helpful === false ? ' primary' : ''}" data-fb="no">Not really</button></div></div>` : (state.game ? '<p class="muted">No explanation for this moment yet.</p>' : '')}
       <div class="row" style="margin-top: 12px">${gradeButtons}</div>
     </div>`;
     p.querySelectorAll('button[data-grade]').forEach(b => b.onclick = () => grade(b.dataset.grade));
+    p.querySelectorAll('button[data-fb]').forEach(b => b.onclick = async () => {
+      const helpful = b.dataset.fb === 'yes';
+      try {
+        await api.feedback(d.gameId, d.ply, helpful);
+        feedback[`${d.gameId}:${d.ply}`] = { helpful }; // feedback is per moment, shared by a moment's twin drills
+        renderPanel();
+      } catch (err) { toast(err.message, true); }
+    });
   }
 
   let grading = false;
@@ -201,7 +239,7 @@ export async function drillsView(root) {
     if (!state || state.status !== 'revealed' || grading) return; // no double-grades from rapid clicks/keys
     grading = true;
     try {
-      await api.reviewDrill(state.drill.id, g, state.verdict.correct);
+      await api.reviewDrill(state.drill.id, g, state.verdict.correct, !!lightning);
       session.attempts++;
       if (state.verdict.correct) session.correct++;
       else if (!session.missed.some(x => x.id === state.drill.id)) session.missed.push(state.drill);
