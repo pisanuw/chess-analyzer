@@ -37,9 +37,10 @@ async function readJson(file, fallback) {
 
 // Writes to the same file are serialized and use a unique tmp path, so two
 // concurrent saves (job step vs HTTP route) can never splice or race a rename.
+// Exported for sibling stores (evalcache.js) that keep their own files.
 let tmpSeq = 0;
 const writeQueues = new Map();
-function writeJson(file, value) {
+export function writeJson(file, value) {
   const prev = writeQueues.get(file) || Promise.resolve();
   const next = prev.catch(() => {}).then(async () => {
     await ensureDirs();

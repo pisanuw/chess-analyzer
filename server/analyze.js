@@ -1,6 +1,7 @@
 // Engine analysis of a whole game: per-move evaluations, judgments, phases, critical moments.
 import { Chess } from 'chess.js';
 import { winProb, formatEval } from '../public/shared.js';
+import { getCachedEval, putCachedEval, evalCacheKey, CACHE_PLIES } from './evalcache.js';
 
 // Shared with the frontend (public/shared.js); re-exported so server modules
 // keep importing them from here.
@@ -87,10 +88,19 @@ export async function analyseGame(engine, game, settings, onProgress) {
     if (term !== null) {
       result = { bestmove: null, lines: [], cp: term };
     } else {
-      // Third onProgress arg = current search depth within position i; those calls
-      // come from the engine's stdout handler and must not throw (see jobs.js).
-      const r = await engine.analyse(fen, { depth, multipv, onDepth: onProgress ? d => onProgress(i, total, d) : null });
-      result = { bestmove: r.bestmove, lines: r.lines, cp: scoreToCp(r.lines[0]) };
+      // Opening positions recur across games (same repertoire, same event):
+      // serve them from the eval cache when engine, depth, and MultiPV match.
+      const key = i < CACHE_PLIES ? evalCacheKey(engine.name, depth, multipv, fen) : null;
+      const hit = key ? await getCachedEval(key) : null;
+      if (hit) {
+        result = { bestmove: hit.bestmove, lines: hit.lines, cp: scoreToCp(hit.lines[0]) };
+      } else {
+        // Third onProgress arg = current search depth within position i; those calls
+        // come from the engine's stdout handler and must not throw (see jobs.js).
+        const r = await engine.analyse(fen, { depth, multipv, onDepth: onProgress ? d => onProgress(i, total, d) : null });
+        result = { bestmove: r.bestmove, lines: r.lines, cp: scoreToCp(r.lines[0]) };
+        if (key && r.lines.length) await putCachedEval(key, { bestmove: r.bestmove, lines: r.lines });
+      }
     }
     result.stm = fen.split(' ')[1] === 'w' ? 'white' : 'black';
     positions.push(result);

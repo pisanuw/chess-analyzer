@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-08 (opening eval cache)
+
+- Engine evaluations of the first 20 positions of each game are cached in `data/evalcache.json`, keyed by engine name, depth, MultiPV, and FEN (capped at 4000 entries, oldest out). Multi-game tournament imports stop re-searching the same repertoire moves at full depth; a changed engine or setting simply misses the cache. Per-machine derived data, ignored by the data repo, safe to delete.
+
 ## 2026-09-08 (threshold tuning without re-analysis, snappy quick evals, tmp hygiene)
 
 - Changing the critical-moment threshold now re-scores every analysed game in place: moments are re-derived from the stored per-move analysis (no engine, no LLM), explanations are kept (also for plies that drop out, so lowering the threshold restores them), and status falls back to 'analysed' when a new moment lacks an explanation. Changing either threshold re-syncs drills immediately instead of at the next restart. This unblocks threshold tuning, which previously required force re-analysis and re-bought every explanation.
