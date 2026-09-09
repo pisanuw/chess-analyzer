@@ -119,11 +119,12 @@ api.status().then(({ readonly }) => {
   updateDrillBadge();
   if (readonly) {
     // The hosted mirror has no engine, no LLM, and blocks settings writes, so
-    // the Settings page is dead weight: drop it from the nav (the route itself
-    // redirects to Home).
-    document.querySelector('[data-nav="settings"]')?.remove();
+    // the Settings page is dead weight. The nav link ships hidden and the route
+    // redirects to Home, so it stays gone here no matter how status resolves.
     window.addEventListener('hashchange', updateDrillBadge);
   } else {
+    // Local (full) app: reveal Settings, which ships hidden by default.
+    document.querySelector('[data-nav="settings"]')?.removeAttribute('hidden');
     pollJobs();
     setInterval(updateDrillBadge, 60000);
     jobEvents.addEventListener('finished', updateDrillBadge);
