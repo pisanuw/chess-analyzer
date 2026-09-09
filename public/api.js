@@ -74,7 +74,7 @@ export const api = {
   setNames: (id, white, black, subject) => req('POST', `/api/games/${id}/names`, { white, black, ...(subject !== undefined ? { subject } : {}) }),
   analyse: (id, force = false) => req('POST', `/api/games/${id}/analyse`, { force }),
   explain: id => req('POST', `/api/games/${id}/explain`, {}),
-  analyseAll: () => req('POST', '/api/games/analyse-all', {}),
+  analyseAll: (opts = {}) => req('POST', '/api/games/analyse-all', opts),
   prompt: (id, ply) => req('GET', `/api/games/${id}/moments/${ply}/prompt`),
   saveExplanation: (id, ply, e) => req('PUT', `/api/games/${id}/moments/${ply}/explanation`, e),
   guess: (id, ply, uci, correct) => req('POST', `/api/games/${id}/moments/${ply}/guess`, { uci, correct }),
