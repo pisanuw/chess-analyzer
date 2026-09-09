@@ -63,6 +63,24 @@ test('guess endpoint seeds a drill and boosts first-try success', async () => {
   assert.equal(notMoment.status, 404);
 });
 
+test('manual explanation fields are length-clamped', async () => {
+  const big = 'x'.repeat(5000);
+  const r = await req('PUT', '/api/games/abcdefabcdef/moments/1/explanation',
+    { pattern: big, category: 'calculation', time_pressure: true, explanation: big, key_question: big, concept: big });
+  assert.equal(r.status, 200);
+  const g = (await req('GET', '/api/games/abcdefabcdef')).data.game;
+  assert.equal(g.explanations['1'].explanation.length, 2000);
+  assert.equal(g.explanations['1'].pattern.length, 120);
+  assert.equal(g.explanations['1'].key_question.length, 500);
+});
+
+test('settings caps array sizes and element lengths', async () => {
+  const r = await req('PUT', '/api/settings', { remoteHosts: Array(200).fill('h'.repeat(400)) });
+  assert.equal(r.status, 200);
+  assert.ok(r.data.settings.remoteHosts.length <= 50);
+  assert.ok(r.data.settings.remoteHosts.every(h => h.length <= 255));
+});
+
 test('drill review flow over HTTP', async () => {
   const { data } = await req('GET', '/api/drills');
   assert.equal(data.due.length, 0, 'boosted drill is not due yet');

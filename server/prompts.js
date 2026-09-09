@@ -3,6 +3,12 @@ import { formatEval, spentPerMove } from '../public/shared.js';
 
 const sanLine = ms => ms.map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
 
+// PGN header and subject text is user-controlled and interpolated into prompts
+// verbatim; collapse whitespace and cap length so a crafted player name cannot
+// inject instructions or bloat the prompt. (execFile, --tools "", and a strict
+// --json-schema already bound the blast radius; this keeps the copy clean.)
+const field = (s, max = 80) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, max) || '?';
+
 const conceptsBlock = concepts => concepts?.length ? `
 
 Concept names already used for this player (reuse one verbatim if it fits, so study topics aggregate; otherwise coin a new short phrase):
@@ -109,7 +115,7 @@ Rules:
 - Evaluations are from White's point of view; positive favours White.`;
 }
 
-const gameLine = game => `${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || 'unknown event'} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.`;
+const gameLine = game => `${field(game.headers.White)} vs ${field(game.headers.Black)}, ${field(game.headers.Event, 120) === '?' ? 'unknown event' : field(game.headers.Event, 120)} ${field(game.headers.Date, 20)}, result ${field(game.headers.Result, 12)}.`;
 
 function clockText(m, game) {
   if (m.clock == null) return '';
@@ -149,7 +155,7 @@ function scoutSection(game, ply) {
   const moves = game.analysis.moves;
   const m = moves[ply - 1];
   const side = m.color === 'white' ? 'White' : 'Black';
-  const subject = game.subject || game.headers[side] || 'the opponent';
+  const subject = field(game.subject || game.headers[side] || 'the opponent');
   const recent = sanLine(moves.slice(Math.max(0, ply - 9), ply - 1));
   const lines = m.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n');
   const next = moves[ply]; // the reply position: how the punishment starts
@@ -171,7 +177,7 @@ export function momentPrompt(game, ply, knownPatterns = [], knownConcepts = []) 
   const moves = game.analysis.moves;
   const m = moves[ply - 1];
   const side = m.color === 'white' ? 'White' : 'Black';
-  const playerName = game.headers[side] || side;
+  const playerName = field(game.headers[side] || side);
   return `Game: ${gameLine(game)}
 The player being coached is ${playerName} (${side}), rated about ${game.playerRating || 2000}.
 
@@ -187,7 +193,7 @@ Explain why ${m.san} is classified as ${m.judgment === 'inaccuracy' ? 'an' : 'a'
 export function momentsBatchPrompt(game, plies, knownPatterns = [], knownConcepts = []) {
   const moves = game.analysis.moves;
   const side = game.playerColor === 'white' ? 'White' : 'Black';
-  const playerName = game.headers[side] || side;
+  const playerName = field(game.headers[side] || side);
   const sections = plies.map((ply, i) => `=== Moment ${i + 1} of ${plies.length} (ply ${ply}) ===
 ${momentSection(game, ply)}`).join('\n\n');
   return `Game: ${gameLine(game)}
@@ -207,7 +213,7 @@ export function scoutMomentPrompt(game, ply, knownPatterns = [], knownConcepts =
   const moves = game.analysis.moves;
   const m = moves[ply - 1];
   const side = m.color === 'white' ? 'White' : 'Black';
-  const subject = game.subject || game.headers[side] || 'the opponent';
+  const subject = field(game.subject || game.headers[side] || 'the opponent');
   return `You are scouting ${subject}, who played ${side} in this game: ${gameLine(game)}
 
 Opening moves: ${sanLine(moves.slice(0, 20))}
@@ -220,7 +226,7 @@ Explain what ${m.san} gets wrong and, concretely, how the student punishes it us
 export function scoutMomentsBatchPrompt(game, plies, knownPatterns = [], knownConcepts = []) {
   const moves = game.analysis.moves;
   const side = game.playerColor === 'white' ? 'White' : 'Black';
-  const subject = game.subject || game.headers[side] || 'the opponent';
+  const subject = field(game.subject || game.headers[side] || 'the opponent');
   const sections = plies.map((ply, i) => `=== Mistake ${i + 1} of ${plies.length} (ply ${ply}) ===
 ${scoutSection(game, ply)}`).join('\n\n');
   return `You are scouting ${subject}, who played ${side} in this game: ${gameLine(game)}
@@ -238,7 +244,7 @@ For each mistake: explain what the move gets wrong and, concretely, how the stud
 export function scoutGameSummaryPrompt(game) {
   const s = game.analysis.summary;
   const side = game.playerColor === 'white' ? 'White' : 'Black';
-  const subject = game.subject || 'the opponent';
+  const subject = field(game.subject || 'the opponent');
   const p = s[game.playerColor];
   const moments = s.moments.map(ply => {
     const m = game.analysis.moves[ply - 1];
@@ -246,7 +252,7 @@ export function scoutGameSummaryPrompt(game) {
     return `- Move ${m.moveNumber}${m.color === 'white' ? '.' : '...'} ${m.san} (${m.judgment}, ${m.phase}, eval ${formatEval(m.evalBefore)} to ${formatEval(m.evalAfter)}, engine preferred ${m.bestSan})` + (e ? ` : ${e.category}, "${e.pattern}"` : '');
   }).join('\n');
   const allMoves = sanLine(game.analysis.moves);
-  return `You are scouting ${subject}, who played ${side} in this game: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || ''} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.
+  return `You are scouting ${subject}, who played ${side} in this game: ${field(game.headers.White)} vs ${field(game.headers.Black)}, ${field(game.headers.Event, 120)} ${field(game.headers.Date, 20)}, result ${field(game.headers.Result, 12)}.
 Their accuracy ${p.accuracy}%, average centipawn loss ${p.acpl}, ${p.inaccuracies} inaccuracies, ${p.mistakes} mistakes, ${p.blunders} blunders.
 
 Moves: ${allMoves}
@@ -258,7 +264,8 @@ Write: summary (how ${subject} handled this game and where they went wrong), les
 }
 
 /** One-page preparation sheet for a subject, from their aggregated dossier. */
-export function prepSheetPrompt(subject, report, repertoire) {
+export function prepSheetPrompt(subjectName, report, repertoire) {
+  const subject = field(subjectName);
   const cats = Object.entries(report.byCategory).filter(([k, v]) => k !== 'unexplained' && v.count).map(([k, v]) => `- ${k}: ${v.count} moments (weight ${v.weight})`).join('\n');
   const phases = ['opening', 'middlegame', 'endgame'].map(ph => { const p = report.byPhase[ph]; return `- ${ph}: accuracy ${p.accuracy ?? 'n/a'}%, ${p.momentsPer100 ?? 'n/a'} moments per 100 moves`; }).join('\n');
   const pats = report.patterns.slice(0, 10).map(p => `- "${p.pattern}" (${p.count}x)`).join('\n');
@@ -324,6 +331,19 @@ Rules:
 - Evaluations are from White's point of view; positive favours White.`;
 }
 
+/** The whole-game debrief is a different task from a single-moment explanation;
+ * give it its own persona so the model is not told to write "120 words" or to
+ * "not extend lines beyond those given". */
+export function gameSummarySystemPrompt(rating) {
+  return `You are a chess coach writing a short debrief of a whole game for a FIDE ${rating || 2000} rated player, from Stockfish's analysis of it.
+Rules:
+- Ground every claim in the moves and evaluations provided. Do not invent variations or evaluations.
+- Speak to the player about their game: how it went, where it turned, and the one habit to take away.
+- Be concrete and brief. No filler, no praise for its own sake.
+- Plain punctuation: commas, colons, and parentheses. Never use em dashes.
+- Evaluations are from White's point of view; positive favours White.`;
+}
+
 export function gameSummaryPrompt(game) {
   const s = game.analysis.summary;
   const color = game.playerColor;
@@ -335,7 +355,7 @@ export function gameSummaryPrompt(game) {
     return `- Move ${m.moveNumber}${m.color === 'white' ? '.' : '...'} ${m.san} (${m.judgment}, ${m.phase}, eval ${formatEval(m.evalBefore)} to ${formatEval(m.evalAfter)}, engine preferred ${m.bestSan})` + (e ? ` : ${e.category}, "${e.pattern}"` : '');
   }).join('\n');
   const allMoves = sanLine(game.analysis.moves);
-  return `Game: ${game.headers.White || '?'} vs ${game.headers.Black || '?'}, ${game.headers.Event || ''} ${game.headers.Date || ''}, result ${game.headers.Result || '*'}.
+  return `Game: ${field(game.headers.White)} vs ${field(game.headers.Black)}, ${field(game.headers.Event, 120)} ${field(game.headers.Date, 20)}, result ${field(game.headers.Result, 12)}.
 The player being coached had ${side}. Accuracy ${p.accuracy}%, average centipawn loss ${p.acpl}, ${p.inaccuracies} inaccuracies, ${p.mistakes} mistakes, ${p.blunders} blunders.
 Phase accuracy: ${['opening', 'middlegame', 'endgame'].map(ph => p.byPhase[ph] ? `${ph} ${p.byPhase[ph].accuracy}%` : `${ph} n/a`).join(', ')}.
 

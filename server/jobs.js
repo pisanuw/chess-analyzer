@@ -3,7 +3,8 @@ import { getEnginePool } from './enginepool.js';
 import { analyseGame, summarize } from './analyze.js';
 import { getGame, saveGame, getSettings, listGames } from './store.js';
 import { complete, LlmError } from './llm.js';
-import { systemPrompt, momentPrompt, momentsBatchPrompt, gameSummaryPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutMomentsBatchPrompt, scoutGameSummaryPrompt, batchExplanationSchema, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA, CATEGORIES } from './prompts.js';
+import { flushCache } from './evalcache.js';
+import { systemPrompt, momentPrompt, momentsBatchPrompt, gameSummaryPrompt, gameSummarySystemPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutMomentsBatchPrompt, scoutGameSummaryPrompt, batchExplanationSchema, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA, CATEGORIES } from './prompts.js';
 import { syncDrillsForGame } from './drills.js';
 
 const jobs = new Map();
@@ -130,6 +131,7 @@ async function runAnalyse(job) {
     g.status = 'analysed';
   });
   await syncDrillsForGame(saved, settings);
+  await flushCache(); // persist opening evals gathered this job (debounced otherwise)
   if (settings.autoExplain && settings.llmProvider !== 'manual') {
     await runExplain(job);
   }
@@ -155,7 +157,10 @@ export function sanitizeExplanation(e) {
 async function completeRetry(settings, req) {
   try { return await complete(settings, req); } catch (err) {
     if (!(err instanceof LlmError)) throw err;
-    await new Promise(r => setTimeout(r, 2000));
+    // Back off longer for a rate/usage limit than for a transient timeout or a
+    // one-off malformed reply, so the single retry is not wasted racing a cap.
+    const limited = /limit|rate|quota|overloaded|429|529/i.test(err.message || '');
+    await new Promise(r => setTimeout(r, limited ? 30000 : 2000));
     return complete(settings, req);
   }
 }
@@ -186,13 +191,13 @@ async function runExplain(job) {
     job.itemStartedAt = new Date().toISOString();
     try {
       const args = [game, remaining, [...known.patterns], [...known.concepts]];
-      const { output, costUsd, model } = await complete(settings, {
+      const asked = remaining.length;
+      const { output, costUsd, model } = await completeRetry(settings, {
         system,
         prompt: scout ? scoutMomentsBatchPrompt(...args) : momentsBatchPrompt(...args),
         schema: batchExplanationSchema(scout),
         timeoutMs: 240000 + 60000 * remaining.length,
       });
-      job.costUsd += costUsd || 0;
       const byPly = new Map((output?.explanations || []).map(e => [Number(e?.ply), e]));
       const saved = [];
       for (const ply of remaining) {
@@ -204,6 +209,11 @@ async function runExplain(job) {
         if (entry.concept) known.concepts.add(entry.concept);
         saved.push([ply, entry]);
       }
+      // Only bill a batch that produced usable explanations; a zero-match reply
+      // (all plies mislabelled) is wasted spend, and it silently degraded to a
+      // full per-moment re-explain, so make that visible in the log.
+      if (saved.length) job.costUsd += costUsd || 0;
+      if (saved.length < asked) console.warn(`[job ${job.id}] batch matched ${saved.length}/${asked} moments${saved.length ? '' : ' (0: not billed)'}; the rest fall back per moment`);
       if (saved.length) {
         await updateGame(job.gameId, g => { g.explanations = g.explanations || {}; for (const [ply, entry] of saved) g.explanations[ply] = entry; });
         job.progress += saved.length;
@@ -231,7 +241,11 @@ async function runExplain(job) {
   if (job.cancelled) throw new Error('cancelled');
   if (!game.gameSummary) {
     job.itemStartedAt = new Date().toISOString();
-    const { output, costUsd, model } = await completeRetry(settings, { system, prompt: scout ? scoutGameSummaryPrompt(game) : gameSummaryPrompt(game), schema: SUMMARY_SCHEMA });
+    // The whole-game debrief is a different task from a single-moment
+    // explanation, so it gets its own system prompt (own games only; the scout
+    // persona already frames the whole-opponent view correctly).
+    const summarySystem = scout ? system : gameSummarySystemPrompt(settings.playerRating);
+    const { output, costUsd, model } = await completeRetry(settings, { system: summarySystem, prompt: scout ? scoutGameSummaryPrompt(game) : gameSummaryPrompt(game), schema: SUMMARY_SCHEMA });
     const gs = { ...output, model, costUsd, createdAt: new Date().toISOString() };
     job.costUsd += costUsd || 0;
     await updateGame(job.gameId, g => { if (!g.gameSummary) g.gameSummary = gs; });

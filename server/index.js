@@ -114,6 +114,11 @@ app.put('/api/settings', wrap(async (req, res) => {
   for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
   if (patch.playerNames && typeof patch.playerNames === 'string') patch.playerNames = patch.playerNames.split(/[,;\n]/).map(s => s.trim()).filter(Boolean);
   if (patch.remoteHosts !== undefined && typeof patch.remoteHosts === 'string') patch.remoteHosts = patch.remoteHosts.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+  // Cap array sizes and element lengths: these get embedded in prompts and ssh
+  // argv, and are read-modify-written whole, so an accidental (or hostile) huge
+  // list should not bloat every file and prompt.
+  if (Array.isArray(patch.playerNames)) patch.playerNames = patch.playerNames.slice(0, 20).map(s => String(s).slice(0, 80));
+  if (Array.isArray(patch.remoteHosts)) patch.remoteHosts = patch.remoteHosts.slice(0, 50).map(s => String(s).slice(0, 255));
   for (const [k, [min, max]] of Object.entries(NUMERIC_LIMITS)) {
     if (!(k in patch)) continue;
     const n = Number(patch[k]);
@@ -280,8 +285,11 @@ app.put('/api/games/:id/moments/:ply/explanation', wrap(async (req, res) => {
   const e = req.body || {};
   for (const k of ['pattern', 'category', 'explanation', 'key_question']) if (typeof e[k] !== 'string') return res.status(400).json({ error: `missing ${k}` });
   if (!CATEGORIES.includes(e.category)) return res.status(400).json({ error: 'unknown category' });
+  // Clamp lengths: this text is stored and later re-embedded into prompts, and
+  // the body limit alone would allow a multi-megabyte paste.
+  const clip = (s, n) => String(s).slice(0, n);
   game.explanations = game.explanations || {};
-  game.explanations[ply] = { pattern: e.pattern, category: e.category, time_pressure: !!e.time_pressure, explanation: e.explanation, key_question: e.key_question, concept: e.concept || '', model: 'manual', createdAt: new Date().toISOString() };
+  game.explanations[ply] = { pattern: clip(e.pattern, 120), category: e.category, time_pressure: !!e.time_pressure, explanation: clip(e.explanation, 2000), key_question: clip(e.key_question, 500), concept: clip(e.concept || '', 200), model: 'manual', createdAt: new Date().toISOString() };
   if (game.analysis.summary.moments.every(p => game.explanations[p])) game.status = 'explained';
   await saveGame(game);
   res.json({ game });
