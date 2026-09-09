@@ -72,6 +72,17 @@ test('poolAnalyse: throws when every engine has failed with work left', async ()
     /all engines failed/);
 });
 
+test('poolAnalyse: respawns a last-resort engine before giving up', async () => {
+  const dead = fakeEngine('dead', { failOn: () => true });
+  const pool = makePool([dead]);
+  const fresh = fakeEngine('fresh');
+  pool.respawn = async () => fresh; // the fresh local engine getEnginePool would supply
+  const done = [];
+  await poolAnalyse(pool, [0, 1, 2], (e, i) => e.analyse(`fen${i}`), async i => { done.push(i); });
+  assert.deepEqual([...done].sort((a, b) => a - b), [0, 1, 2]);
+  assert.equal(fresh.ran.length, 3, 'the respawned engine finished the queue');
+});
+
 test('poolAnalyse: an onDone error (cancellation) stops dispatch and propagates', async () => {
   const a = fakeEngine('a', { delay: 1 });
   const pool = makePool([a]);

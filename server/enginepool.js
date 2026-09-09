@@ -115,7 +115,13 @@ export async function getEnginePool(settings) {
       ? `All ${hosts.length} remote engine hosts are unreachable, so this machine is analysing locally despite the local-engine switch being off. If the hosts should be up, check that the VPN is connected.`
       : `All ${hosts.length} remote engine hosts are unreachable (analysing locally only). If they should be up, check that the VPN is connected.`;
   }
-  return makePool(engines, warning);
+  const pool = makePool(engines, warning);
+  // Last-resort recovery: if every engine dies mid-job with work still queued
+  // (e.g. the only local engine wedged), spawn a fresh local engine and finish
+  // locally rather than aborting the whole game. getEngine respawns because the
+  // dropped engine's process is gone.
+  pool.respawn = async () => { try { return await getEngine(settings); } catch { return null; } };
+  return pool;
 }
 
 function makePool(engines, warning = null) {
@@ -152,6 +158,7 @@ export function singleEnginePool(engine) {
 export async function poolAnalyse(pool, items, run, onDone) {
   const queue = [...items];
   let stopErr = null;
+  let respawned = false;
   const failures = [];
   const worker = async engine => {
     while (!stopErr && queue.length) {
@@ -178,7 +185,15 @@ export async function poolAnalyse(pool, items, run, onDone) {
   // workers may already have seen an empty queue and exited. Survivors pick
   // the leftovers up on the next round.
   while (queue.length && !stopErr) {
-    if (!pool.engines.length) throw new Error(`analysis stopped: all engines failed (${failures.join('; ')})`);
+    if (!pool.engines.length) {
+      // Try once to bring up a fresh engine before giving up the whole job.
+      if (pool.respawn && !respawned) {
+        respawned = true;
+        const e = await pool.respawn();
+        if (e?.proc) { pool.engines.push(e); if (pool.names) pool.names.add(e.name); continue; }
+      }
+      throw new Error(`analysis stopped: all engines failed (${failures.join('; ')})`);
+    }
     await Promise.all(pool.engines.map(worker));
   }
   if (stopErr) throw stopErr;

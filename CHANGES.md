@@ -2,6 +2,24 @@
 
 Newest first.
 
+## 2026-09-08 (remaining code-review items: pedagogy, robustness, aggregation)
+
+Pedagogy:
+- Critical-moment selection gained a contestability floor: a move is only a moment when the mover's win probability before it was at least 15%, so a further loss in an already-lost position is no longer surfaced as a coachable mistake (the winning side is kept: throwing part of a win is a conversion lesson).
+- Drill scheduling softened: a lapse drops two ladder rungs instead of resetting to day one, and a correct first-try guess seeds one rung up, not two. A drill missed 3+ times shows a leech hint next to Suspend. Follow-up depth in drills is varied (max or one shorter) so reps train the method, not a fixed move sequence.
+- Closed the loops on data that was collected then discarded: quiet-position (decoy) outcomes are persisted and the false-positive rate is reported; drill stats break down by kind (find-best / see-the-threat / punish / opening); the report annotates each focus area with its trend and prefers a worsening one in the daily prescription.
+- New Home dashboard (now the default route): drills due with a Start-session button, average accuracy, a day streak, the trend-aware focus area, latest game, and an accuracy sparkline. The report gained a "What's going well" section so it is not only deficits.
+- Own-game explanation prompts now include the engine's lines from the position right after the played move, grounding the concrete threat behind a tactics-allowed or defence verdict; the whole-game debrief uses its own system prompt.
+
+Robustness and correctness:
+- Engine pool: if every engine dies mid-job with work left, a fresh local engine is spawned once to finish the game rather than aborting it.
+- Report aggregation fixes: endgame trouble spots rank by distinct-game recurrence (not raw moment count); first-try guesses fold into drill stats; the recognition-speed median averages the two central values on an even sample; phaseOf no longer misfiles a queenless full-board middlegame as an endgame; a forced mate accepts only other mating moves in drills.
+- Eval cache keys on the first four FEN fields (transpositions share entries) and flushes on a debounce plus at job end instead of rewriting the whole map per miss.
+- Prompt inputs (PGN headers, opponent names) are whitespace-collapsed and length-capped; manual-explanation fields and the playerNames/remoteHosts arrays are clamped. Batch explanation now bills only usable batches and logs the match rate; the retry backs off longer on a rate/usage limit.
+- Frontend: fetch failures surface as a typed "cannot reach the server" with a Retry button; a mid-session 401 no longer renders a dead error card under the login overlay; Analyse/Explain/Import/Analyse-all buttons lock while in flight; charts carry role/aria-label and job/toast regions are aria-live; board.js warns on a FEN/side mismatch; job completions are announced app-wide.
+
+Deferred: a batch path for the manual-LLM paste flow (secondary path; per-moment copy/paste still works), and the fitted per-drill ease model (BRIEFING next step 3; the lapse/seed softening is the groundwork).
+
 ## 2026-09-08 (correctness and security fixes from the code review)
 
 - Login throttle now actually binds on the hosted mirror. The per-IP attempt counter keys on the real client (Netlify's `x-nf-client-connection-ip`, else the socket address) instead of the client-supplied `X-Forwarded-For`, whose leftmost hop could be rotated for a fresh bucket per request; and it lives in the shared Supabase store when configured, so the 20-per-hour limit holds across the otherwise memory-isolated serverless instances (in-process fallback locally and whenever the store is unreachable, so a storage hiccup never locks anyone out). A short `APP_PASSWORD` now warns at startup.
