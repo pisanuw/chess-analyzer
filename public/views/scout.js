@@ -51,23 +51,89 @@ async function renderDossier(el, entry, readonly) {
   const subject = entry.subject;
   // Book dossier (instant, whole history) and engine dossier (analysed subset)
   // are independent: a freshly imported opponent has a book but no engine data.
-  const [book, data] = await Promise.all([
+  // The games list drives the "still processing" / "stale" prep-sheet flags.
+  const [book, data, gamesRes] = await Promise.all([
     entry.fideId ? api.scoutBook(entry.fideId).catch(() => null) : Promise.resolve(null),
     api.scout(subject).catch(() => null),
+    api.games().catch(() => ({ games: [] })),
   ]);
   if (!book && !data) {
     el.innerHTML = `<div class="empty">Nothing to show yet for ${esc(subject)}. Their games may still be in the analysis queue.</div>`;
     return;
   }
+  const pending = subjectGameStats(gamesRes.games, subject, entry.fideId);
   const linkable = !entry.fideId && !readonly;
+  const refresh = () => renderDossier(el, entry, readonly);
+  // The prep sheet sits high: it must be generated here on the home machine, so
+  // it should be the first thing you reach for on the page.
   el.innerHTML = subjectHeader(entry)
+    + (data ? prepSheetCard(subject, data.report, data.prepSheet, pending, readonly) : '')
     + (linkable ? fideLinkCard(subject) : '')
     + (book ? bookSection(book.dossier, readonly) : '')
     + `<div id="engine-dossier">${data ? '' : engineHint(book, readonly)}</div>`;
 
+  if (data) wirePrep(el, subject, data.report, pending, refresh);
   if (linkable) wireFideLink(el, subject);
   if (book) wirePromote(el, book.dossier, subject, readonly);
   if (data) renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly);
+}
+
+/** Games of this subject still moving through the pipeline (so the prep sheet
+ * can warn it is being built from an incomplete set): scouted games plus the
+ * player's own games against them. */
+function subjectGameStats(games, subject, fideId) {
+  const rel = (games || []).filter(g =>
+    (g.purpose === 'scout' && (g.subject === subject || (fideId && g.subjectId === fideId)))
+    || (g.purpose !== 'scout' && g.playerColor && (g.playerColor === 'white' ? g.black : g.white) === subject));
+  return {
+    total: rel.length,
+    toAnalyse: rel.filter(g => g.status === 'imported' || g.status === 'analysing').length,
+    toExplain: rel.filter(g => g.status === 'analysed' && (g.moments || 0) > (g.explained || 0)).length,
+  };
+}
+
+/** The prep sheet, surfaced high on the page because it must be generated on
+ * the home machine (it uses the claude CLI). Flags a stale sheet (games analysed
+ * since it was made) and warns when games are still being processed. */
+function prepSheetCard(subject, report, prepSheet, pending, readonly) {
+  const analysedNow = report.games;
+  const staleN = prepSheet ? Math.max(0, analysedNow - (prepSheet.games || 0)) : 0;
+  const pendingTotal = pending.toAnalyse + pending.toExplain;
+  const flag = staleN > 0 || (prepSheet && pendingTotal > 0);
+  const badge = staleN ? `<span class="chip mistake">stale · ${staleN} new game${staleN === 1 ? '' : 's'}</span>`
+    : (prepSheet && pendingTotal ? '<span class="chip inaccuracy">more games coming</span>' : '');
+  const pendingNote = pendingTotal
+    ? `<p class="muted" style="margin:6px 0"><small>⏳ ${pendingTotal} of ${esc(subject)}'s game${pendingTotal === 1 ? ' is' : 's are'} still being processed (${pending.toAnalyse} to analyse, ${pending.toExplain} to explain). ${prepSheet ? 'Regenerate once they finish for the full picture.' : `The sheet will be built from the ${analysedNow} already analysed.`}</small></p>`
+    : '';
+  const body = prepSheet ? `
+    <p><b>Overview:</b> ${esc(prepSheet.overview)}</p>
+    <p><b>Game plan:</b> ${esc(prepSheet.exploit_plan)}</p>
+    <p><b>Openings:</b> ${esc(prepSheet.openings_advice)}</p>
+    <p><b>Watch for:</b> ${esc(prepSheet.watch_fors)}</p>
+    <p class="muted"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}</small></p>`
+    : `<p class="muted">One page for the board: their weaknesses, the plan against them, and what to watch for. Built here on the home machine (uses the claude CLI), then published to the phone.</p>`;
+  const button = readonly
+    ? (prepSheet ? '' : '<p class="muted"><small>Prep sheets are generated on the home machine and published here.</small></p>')
+    : `<button class="primary" id="gen-prep">${prepSheet ? (staleN ? `Regenerate (${staleN} new)` : 'Regenerate') : 'Generate prep sheet'}${prepSheet ? '' : ' (about a minute)'}</button>`;
+  return `<div class="card" style="margin-bottom:16px${flag ? '; border-color: var(--warning)' : ''}">
+    <div class="row" style="justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap">
+      <h2 style="margin:0">Preparation sheet</h2>${badge}
+    </div>
+    ${body}${pendingNote}${button}
+  </div>`;
+}
+
+function wirePrep(el, subject, report, pending, refresh) {
+  const btn = el.querySelector('#gen-prep');
+  if (!btn) return;
+  const pendingTotal = pending.toAnalyse + pending.toExplain;
+  btn.onclick = async () => {
+    if (pendingTotal > 0 && !confirm(`Generate the prep sheet now from ${report.games} analysed game${report.games === 1 ? '' : 's'}? ${pendingTotal} of ${subject}'s game${pendingTotal === 1 ? ' is' : 's are'} still processing; you can regenerate after they finish.`)) return;
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Generating… (about a minute)';
+    try { await api.prepSheet(subject); toast('Prep sheet generated'); await refresh(); }
+    catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = label; }
+  };
 }
 
 /** Name, FIDE id (linked to the official profile), and federation, shown for
@@ -195,7 +261,7 @@ function wirePromote(el, dossier, subject, readonly) {
 /** The deeper dossier over the analysed subset: where they go wrong, clock,
  * repertoire prep-ends, recurring patterns, and the LLM prep sheet. */
 async function renderEngineDossier(el, data, subject, readonly) {
-  const { report: r, repertoire, prepSheet } = data;
+  const { report: r, repertoire } = data;
   const j = r.totalJudged;
   const catLabel = c => CATEGORY_LABEL[c] || c;
   el.innerHTML = `
@@ -242,28 +308,7 @@ async function renderEngineDossier(el, data, subject, readonly) {
         ${r.patterns.slice(0, 15).map(p => `<tr><td>${esc(p.pattern)}</td><td class="num">${p.count}</td>
           <td>${p.moments.slice(0, 6).map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${movePrefix(m)}${esc(m.san)}</a>`).join(' ')}</td></tr>`).join('')}
       </tbody></table>
-    </div>` : ''}
-    <div class="card" style="margin-top: 20px">
-      <h3 style="margin-top:0">Preparation sheet</h3>
-      ${prepSheet ? `
-        <p><b>Overview:</b> ${esc(prepSheet.overview)}</p>
-        <p><b>Game plan:</b> ${esc(prepSheet.exploit_plan)}</p>
-        <p><b>Openings:</b> ${esc(prepSheet.openings_advice)}</p>
-        <p><b>Watch for:</b> ${esc(prepSheet.watch_fors)}</p>
-        <p class="muted"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.</small></p>` : `
-        <p class="muted">One page: their weaknesses, the game plan against them, and what to watch for.</p>`}
-      ${readonly
-        ? (prepSheet ? '' : '<p class="muted"><small>Prep sheets are generated on the home machine and published here.</small></p>')
-        : `<button class="small" id="gen-prep">${prepSheet ? 'Regenerate' : 'Generate'} prep sheet (about a minute)</button>`}
-    </div>`;
-
-  const genBtn = el.querySelector('#gen-prep');
-  if (genBtn) genBtn.onclick = async e => {
-    const b = e.target;
-    b.disabled = true; b.textContent = 'Generating…';
-    try { await api.prepSheet(subject); await renderEngineDossier(el, await api.scout(subject), subject, readonly); }
-    catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Generate prep sheet (about a minute)'; }
-  };
+    </div>` : ''}`;
 
   const cats = Object.entries(r.byCategory).filter(([, v]) => v.count > 0).sort((a, b) => b[1].weight - a[1].weight)
     .map(([k, v]) => ({ key: k, label: catLabel(k), value: v.weight, sub: `${v.count} moment${v.count === 1 ? '' : 's'}`, dim: k === 'unexplained', moments: v.moments }));
