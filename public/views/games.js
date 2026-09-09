@@ -20,41 +20,31 @@ export async function gamesView(root) {
       <h3 style="margin-top:0">Import PGN</h3>
       <div class="import-area">
         <textarea id="pgn" placeholder="Paste one or more games in PGN format, or choose a .pgn file"></textarea>
-        <div style="display:flex; flex-direction:column; gap:8px; min-width: 200px">
+        <div style="display:flex; flex-direction:column; gap:8px; min-width: 220px">
           <input type="file" id="pgnfile" accept=".pgn,text/plain" multiple>
-          <label class="check" style="margin:0"><input type="radio" name="gpurpose" value="own" checked> My games</label>
-          <label class="check" style="margin:0"><input type="radio" name="gpurpose" value="scout"> Scout an opponent</label>
-          <input type="text" id="subject" list="subject-names" placeholder="Opponent name as in PGN headers" hidden>
-          <datalist id="subject-names"></datalist>
           <label class="check" style="margin:0"><input type="checkbox" id="auto" checked> Analyse after import</label>
           <button class="primary" id="import">Import</button>
+          <small class="muted" id="import-hint">Your games, an opponent's games, or a FIDE export are detected automatically.</small>
           <small>Player: ${settings.playerNames.length ? esc(settings.playerNames.join(', ')) : 'not set'}. Engine depth ${settings.engineDepth}, explanations via ${esc(settings.llmProvider)}.</small>
         </div>
       </div>
     </div>`}
     <div class="row" style="margin: 18px 0 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px">
       <h2 style="margin:0">${games.length} game${games.length === 1 ? '' : 's'}</h2>
-      <div class="row" style="gap: 6px; flex-wrap: wrap">
+      <div class="row" style="gap: 6px; flex-wrap: wrap; align-items: center">
         <input type="search" id="game-search" placeholder="Filter by player or event…" style="width: 200px; padding: 4px 8px; font-size: 13px">
         ${status.readonly ? '' : `
-          <button id="analyze-pending" class="small" title="Queue engine analysis for every imported game">Analyze pending</button>
-          <button id="explain-pending" class="small" title="Queue explanations for every analysed game with unexplained moments">Explain pending</button>`}
+          <span id="sel-count" class="muted" style="font-size:13px"></span>
+          <button id="act-analyze" class="small" title="Analyze the checked games, or every pending game if none are checked">Analyze</button>
+          <button id="act-explain" class="small" title="Explain the checked games, or every analysed game with unexplained moments if none are checked">Explain</button>
+          <button id="act-delete" class="small" title="Delete the checked games">Delete</button>`}
       </div>
     </div>
-    ${status.readonly ? '' : `<div class="row" id="bulk-bar" hidden style="gap: 6px; align-items: center; margin: 0 0 8px; padding: 6px 10px; border-radius: 6px; background: rgba(255,255,255,.05); flex-wrap: wrap">
-      <b id="bulk-count"></b>
-      <span class="muted">apply to selected:</span>
-      <button class="small" data-bulk="analyze">Analyze</button>
-      <button class="small" data-bulk="explain">Explain</button>
-      <button class="small" data-bulk="delete">Delete</button>
-      <button class="small" data-bulk="clear">Clear</button>
-    </div>`}
     <div class="card" style="padding:0" id="list"></div>
   `;
 
   const list = root.querySelector('#list');
-  const bulkBar = root.querySelector('#bulk-bar');
-  const selected = new Set(); // selected game ids for bulk actions
+  const selected = new Set(); // checked game ids for the top action buttons
   let sortKey = 'date', sortDir = -1; // -1 = descending, 1 = ascending
   let filter = 'all'; // 'all' | 'own' | a subject name
   let query = '';     // free-text filter on players and event
@@ -97,11 +87,9 @@ export async function gamesView(root) {
     .filter(matchesQuery)
     .sort(cmp);
 
-  const updateBulk = () => {
-    if (!bulkBar) return;
-    bulkBar.hidden = selected.size === 0;
-    const c = root.querySelector('#bulk-count');
-    if (c) c.textContent = `${selected.size} selected`;
+  const updateSel = () => {
+    const c = root.querySelector('#sel-count');
+    if (c) c.textContent = selected.size ? `${selected.size} selected` : '';
     const all = root.querySelector('#select-all');
     if (all) {
       const rows = visibleRows();
@@ -119,10 +107,10 @@ export async function gamesView(root) {
       `<button class="small${filter === v ? ' primary' : ''}" data-filter="${esc(v)}">${esc(label)}</button>`).join('')}
     </div>` : '';
     const rows = visibleRows();
-    if (!rows.length) { list.innerHTML = filterBar + '<div class="empty">No games match.</div>'; updateBulk(); return; }
+    if (!rows.length) { list.innerHTML = filterBar + '<div class="empty">No games match.</div>'; updateSel(); return; }
     const arrow = k => sortKey === k ? (sortDir === 1 ? ' ↑' : ' ↓') : '';
     const selHead = status.readonly ? '' : '<th style="width:26px"><input type="checkbox" id="select-all" title="Select all shown"></th>';
-    const head = `<tr>${selHead}${cols.map(c => `<th data-sortkey="${c.key}"${c.num ? ' class="num"' : ''} style="cursor:pointer" title="Sort by ${c.label}">${c.label}${arrow(c.key)}</th>`).join('')}<th></th></tr>`;
+    const head = `<tr>${selHead}${cols.map(c => `<th data-sortkey="${c.key}"${c.num ? ' class="num"' : ''} style="cursor:pointer" title="Sort by ${c.label}">${c.label}${arrow(c.key)}</th>`).join('')}</tr>`;
     list.innerHTML = filterBar + `<table><thead>${head}</thead>
       <tbody>${rows.map(g => `
         <tr class="clickable" data-id="${g.id}">
@@ -136,14 +124,9 @@ export async function gamesView(root) {
           <td><span class="chip status-${g.status}">${g.status}${g.status === 'analysed' && g.explained ? ` (${g.explained}/${g.moments} explained)` : ''}</span>${g.purpose === 'scout' ? ` <span class="chip" title="Scouting ${esc(g.subject)}">scout</span>` : ''}</td>
           <td class="num">${g.accuracy != null ? g.accuracy + '%' : ''}</td>
           <td class="num">${g.moments != null ? `${g.moments}${g.blunders ? ` <span class="chip blunder">${g.blunders}??</span>` : ''}${g.mistakes ? ` <span class="chip mistake">${g.mistakes}?</span>` : ''}` : ''}</td>
-          <td data-stop style="white-space:nowrap">${status.readonly ? '' : `
-            ${g.playerColor && g.status === 'imported' ? '<button class="small" data-act="analyse">Analyse</button>' : ''}
-            ${g.moments != null && g.moments > (g.explained || 0) && g.status !== 'imported' ? '<button class="small" data-act="explain">Explain</button>' : ''}
-            <button class="small" data-act="delete" title="Delete">✕</button>`}
-          </td>
         </tr>`).join('')}
       </tbody></table>`;
-    updateBulk();
+    updateSel();
   };
   render();
 
@@ -153,48 +136,16 @@ export async function gamesView(root) {
     render();
   };
 
-  // Apply an action to every selected game. analyze/explain skip games that are
-  // not in the right state; delete confirms first.
-  const runBulk = async act => {
-    const ids = [...selected];
-    if (!ids.length) return;
-    if (act === 'delete' && !confirm(`Delete ${ids.length} game${ids.length === 1 ? '' : 's'} and their drills? This cannot be undone.`)) return;
-    const chosen = games.filter(g => selected.has(g.id));
-    try {
-      if (act === 'analyze') {
-        const t = chosen.filter(g => g.playerColor && (g.status === 'imported' || g.status === 'analysing'));
-        await Promise.all(t.map(g => api.analyse(g.id)));
-        toast(`Analysis queued for ${t.length}${t.length < ids.length ? ` (${ids.length - t.length} skipped: no colour or already analysed)` : ''}`);
-      } else if (act === 'explain') {
-        const t = chosen.filter(g => g.moments != null && g.moments > (g.explained || 0) && g.status !== 'imported' && g.status !== 'analysing');
-        await Promise.all(t.map(g => api.explain(g.id)));
-        toast(`Explanations queued for ${t.length}${t.length < ids.length ? ` (${ids.length - t.length} skipped: nothing to explain)` : ''}`);
-      } else if (act === 'delete') {
-        await Promise.all(ids.map(id => api.deleteGame(id)));
-        toast(`Deleted ${ids.length} game${ids.length === 1 ? '' : 's'}`);
-      }
-    } catch (err) { toast(err.message, true); }
-    selected.clear();
-    await refresh();
-  };
-
   // Checkbox selection (change, so it does not open the game row).
   list.addEventListener('change', e => {
     if (e.target.id === 'select-all') {
       const rows = visibleRows();
       rows.forEach(g => e.target.checked ? selected.add(g.id) : selected.delete(g.id));
       list.querySelectorAll('input.rowsel').forEach(cb => { cb.checked = selected.has(cb.dataset.id); });
-      return updateBulk();
+      return updateSel();
     }
     const cb = e.target.closest('input.rowsel');
-    if (cb) { cb.checked ? selected.add(cb.dataset.id) : selected.delete(cb.dataset.id); updateBulk(); }
-  });
-
-  bulkBar?.addEventListener('click', e => {
-    const b = e.target.closest('button[data-bulk]');
-    if (!b) return;
-    if (b.dataset.bulk === 'clear') { selected.clear(); return render(); }
-    runBulk(b.dataset.bulk);
+    if (cb) { cb.checked ? selected.add(cb.dataset.id) : selected.delete(cb.dataset.id); updateSel(); }
   });
 
   list.addEventListener('click', async e => {
@@ -217,115 +168,121 @@ export async function gamesView(root) {
       try { await api.setPlayer(id, btn.dataset.color, true); toast('Colour set, analysis queued'); } catch (err) { toast(err.message, true); }
       return refresh();
     }
-    if (btn?.dataset.act) {
-      e.stopPropagation();
-      btn.disabled = true; // no double-submit; the row is replaced by refresh() anyway
-      try {
-        if (btn.dataset.act === 'analyse') { await api.analyse(id); toast('Analysis queued'); }
-        if (btn.dataset.act === 'explain') { await api.explain(id); toast('Explanations queued'); }
-        if (btn.dataset.act === 'delete') { if (!confirm('Delete this game and its drills?')) { btn.disabled = false; return; } await api.deleteGame(id); }
-      } catch (err) { btn.disabled = false; toast(err.message, true); }
-      return refresh();
-    }
     if (e.target.closest('[data-stop]')) return;
     location.hash = `#/game/${id}`;
   });
 
+  // --- top action buttons: act on the checked games, or fall back to all ------
+  root.querySelector('#act-analyze')?.addEventListener('click', async e => {
+    try {
+      await busy(e.currentTarget, async () => {
+        if (selected.size) {
+          const t = games.filter(g => selected.has(g.id) && g.playerColor && (g.status === 'imported' || g.status === 'analysing'));
+          await Promise.all(t.map(g => api.analyse(g.id)));
+          toast(`Analysis queued for ${t.length}${t.length < selected.size ? ` (${selected.size - t.length} skipped: no colour or already analysed)` : ''}`);
+          selected.clear();
+        } else {
+          const r = await api.analyseAll({ explain: false });
+          toast(`${r.queued.length} analysis job${r.queued.length === 1 ? '' : 's'} queued`);
+        }
+      });
+      await refresh();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  root.querySelector('#act-explain')?.addEventListener('click', async e => {
+    try {
+      await busy(e.currentTarget, async () => {
+        const pool = selected.size ? games.filter(g => selected.has(g.id)) : games;
+        const t = pool.filter(g => g.playerColor && g.moments != null && g.moments > (g.explained || 0) && g.status !== 'imported' && g.status !== 'analysing');
+        await Promise.all(t.map(g => api.explain(g.id)));
+        toast(`Explanations queued for ${t.length} game${t.length === 1 ? '' : 's'}${selected.size && t.length < selected.size ? ` (${selected.size - t.length} skipped: nothing to explain)` : ''}`);
+        selected.clear();
+      });
+      await refresh();
+    } catch (err) { toast(err.message, true); }
+  });
+
+  root.querySelector('#act-delete')?.addEventListener('click', async () => {
+    if (!selected.size) return toast('Check the games you want to delete first', true);
+    const ids = [...selected];
+    if (!confirm(`Delete ${ids.length} game${ids.length === 1 ? '' : 's'} and their drills? This cannot be undone.`)) return;
+    try {
+      await Promise.all(ids.map(id => api.deleteGame(id)));
+      toast(`Deleted ${ids.length} game${ids.length === 1 ? '' : 's'}`);
+    } catch (err) { toast(err.message, true); }
+    selected.clear();
+    await refresh();
+  });
+
+  // --- import: purpose is auto-detected, no manual "own vs scout" choice ------
   // A metadb export names the opponent's FIDE id in the file, e.g.
-  // "HarishNeeraj_FIDE30958130_Total_739_Games.pgn". When such a file is chosen
-  // for scouting, import it into the compact book tier (hundreds of games, no
-  // per-game analysis) instead of the one-game-per-job path.
+  // "HarishNeeraj_FIDE30958130_Total_739_Games.pgn"; that becomes a scouting
+  // book (hundreds of games, no per-game analysis). Otherwise: if a configured
+  // player name appears in the PGN it is your game, else it scouts the opponent
+  // named in it.
   const fideOf = n => (String(n).match(/fide[-_ ]?(\d{4,})/i) || [])[1] || null;
   let scoutFile = null; // { filename, fideId, text } when a FIDE export is chosen
+
+  const topOpponentName = (text) => {
+    const counts = new Map();
+    for (const m of text.matchAll(/\[(?:White|Black)\s+"([^"]+)"\]/g)) {
+      const n = m[1].trim();
+      if (!n || n === '?' || settings.playerNames.some(p => p && n.toLowerCase().includes(p.toLowerCase()))) continue;
+      counts.set(n, (counts.get(n) || 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+  };
+  const detectMode = () => {
+    if (scoutFile?.fideId) return { mode: 'book', fideId: scoutFile.fideId };
+    const text = root.querySelector('#pgn').value;
+    if (!text.trim()) return { mode: 'empty' };
+    const hasKai = settings.playerNames.some(p => p && text.toLowerCase().includes(p.toLowerCase()));
+    if (hasKai || !settings.playerNames.length) return { mode: 'own' };
+    return { mode: 'scout', subject: topOpponentName(text) };
+  };
+  const updateHint = () => {
+    const hint = root.querySelector('#import-hint');
+    if (!hint) return;
+    const d = detectMode();
+    hint.textContent = d.mode === 'book' ? `Detected: FIDE export, will build a scouting book (id ${d.fideId}).`
+      : d.mode === 'own' ? 'Detected: your games (feeds drills, report, puzzles).'
+        : d.mode === 'scout' ? (d.subject ? `Detected: scouting ${d.subject}.` : 'Detected: opponent games, but could not tell who. Set your name in Settings, or use a FIDE export.')
+          : 'Your games, an opponent\'s games, or a FIDE export are detected automatically.';
+  };
+
   root.querySelector('#pgnfile')?.addEventListener('change', async e => {
     const files = [...e.target.files];
     const texts = await Promise.all(files.map(f => f.text()));
     root.querySelector('#pgn').value = texts.join('\n\n');
     const f = files.find(f => fideOf(f.name));
     scoutFile = f ? { filename: f.name, fideId: fideOf(f.name), text: texts[files.indexOf(f)] } : null;
-    if (scoutFile) {
-      root.querySelector('input[name="gpurpose"][value="scout"]').checked = true;
-      subjectInput.hidden = false;
-      const names = updateNameSuggestions();
-      if (!subjectInput.value) subjectInput.value = names[0] || '';
-      toast(`FIDE export detected (id ${scoutFile.fideId}); will build a scouting book`);
-    } else updateNameSuggestions();
+    updateHint();
   });
-
-  // Autocomplete for the scout subject: names from the pasted PGN headers (weighted
-  // by frequency, so the studied player floats to the top of a multi-game file),
-  // plus known subjects and past opponents. The player's own names are excluded.
-  const subjectInput = root.querySelector('#subject');
-  const updateNameSuggestions = () => {
-    const counts = new Map();
-    const bump = (n, w = 1) => {
-      n = (n || '').trim();
-      if (!n || n === '?') return;
-      if (settings.playerNames.some(p => n.toLowerCase().includes(p.toLowerCase()))) return;
-      counts.set(n, (counts.get(n) || 0) + w);
-    };
-    for (const m of root.querySelector('#pgn').value.matchAll(/\[(?:White|Black)\s+"([^"]+)"\]/g)) bump(m[1], 10);
-    for (const g of games) { bump(g.subject, 5); bump(g.white); bump(g.black); }
-    const names = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([n]) => n);
-    root.querySelector('#subject-names').innerHTML = names.map(n => `<option value="${esc(n)}"></option>`).join('');
-    return names;
-  };
-  root.querySelector('#pgn')?.addEventListener('input', updateNameSuggestions);
+  root.querySelector('#pgn')?.addEventListener('input', () => { scoutFile = null; updateHint(); });
 
   root.querySelector('#game-search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); render(); });
-
-  root.querySelectorAll('input[name="gpurpose"]').forEach(el => el.addEventListener('change', () => {
-    const scout = root.querySelector('input[name="gpurpose"]:checked').value === 'scout';
-    subjectInput.hidden = !scout;
-    if (scout) {
-      const names = updateNameSuggestions();
-      if (!subjectInput.value && root.querySelector('#pgn').value.trim()) subjectInput.value = names[0] || '';
-      subjectInput.focus();
-    }
-  }));
 
   root.querySelector('#import')?.addEventListener('click', async e => {
     const pgn = root.querySelector('#pgn').value.trim();
     if (!pgn) return toast('Paste a PGN or choose a file first', true);
-    const purpose = root.querySelector('input[name="gpurpose"]:checked').value;
-    const subject = root.querySelector('#subject').value.trim();
-    if (purpose === 'scout' && !subject) return toast('Enter the opponent name to scout', true);
+    const d = detectMode();
+    if (d.mode === 'scout' && !d.subject) return toast('Could not tell whose games these are. Add your name in Settings, or use a FIDE export.', true);
     try {
       await busy(e.currentTarget, async () => {
-        // FIDE export + scouting -> book tier. Analysis is not queued here; the
-        // recent subset is promoted from the Scouting page.
-        if (purpose === 'scout' && scoutFile?.fideId) {
-          const r = await api.scoutImport({ pgn: scoutFile.text, fideId: scoutFile.fideId, name: subject, filename: scoutFile.filename });
+        if (d.mode === 'book') {
+          // Scouting book (server derives the subject name from the games).
+          const r = await api.scoutImport({ pgn: scoutFile.text, fideId: scoutFile.fideId, filename: scoutFile.filename });
           toast(`Scouting book for ${r.name}: ${r.imported} games${r.skipped ? `, ${r.skipped} skipped (Chess960/odd)` : ''}. ${r.dossier.analysisSet.length} recent games ready to analyse.`);
-          root.querySelector('#pgn').value = '';
-          scoutFile = null;
+          root.querySelector('#pgn').value = ''; scoutFile = null; updateHint();
           location.hash = `#/scout/${encodeURIComponent(r.name)}`;
           return;
         }
-        const r = await api.importPgn(pgn, root.querySelector('#auto').checked, purpose, subject);
-        toast(`Imported ${r.imported.length}${r.skipped.length ? `, ${r.skipped.length} already present` : ''}${r.failed.length ? `, ${r.failed.length} failed to parse` : ''}`);
+        const r = await api.importPgn(pgn, root.querySelector('#auto').checked, d.mode, d.mode === 'scout' ? d.subject : '');
+        toast(`Imported ${r.imported.length}${d.mode === 'scout' ? ` (scouting ${d.subject})` : ''}${r.skipped.length ? `, ${r.skipped.length} already present` : ''}${r.failed.length ? `, ${r.failed.length} failed to parse` : ''}`);
         if (r.failed.length) console.warn('Failed games', r.failed);
-        root.querySelector('#pgn').value = '';
+        root.querySelector('#pgn').value = ''; updateHint();
         await refresh();
-      });
-    } catch (err) { toast(err.message, true); }
-  });
-
-  root.querySelector('#analyze-pending')?.addEventListener('click', async e => {
-    try {
-      await busy(e.currentTarget, async () => {
-        const r = await api.analyseAll({ explain: false });
-        toast(`${r.queued.length} analysis job${r.queued.length === 1 ? '' : 's'} queued`);
-      });
-    } catch (err) { toast(err.message, true); }
-  });
-
-  root.querySelector('#explain-pending')?.addEventListener('click', async e => {
-    try {
-      await busy(e.currentTarget, async () => {
-        const t = games.filter(g => g.playerColor && g.moments != null && g.moments > (g.explained || 0) && g.status !== 'imported' && g.status !== 'analysing');
-        await Promise.all(t.map(g => api.explain(g.id)));
-        toast(`Explanations queued for ${t.length} game${t.length === 1 ? '' : 's'}`);
       });
     } catch (err) { toast(err.message, true); }
   });
