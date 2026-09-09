@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-09 (Games page controls; hosted mirror bundles scout data)
+
+- Games page: the single "Analyse and explain everything pending" button is split into "Analyze pending" and "Explain pending"; every row has a checkbox with a select-all header and a bulk action bar (Analyze / Explain / Delete, delete confirms); every column header is sortable (dates sort on a numeric key so non-zero-padded PGN dates order right). Frontend only. `analyseAll()` takes an options object so "Analyze pending" queues analysis without explanations.
+- Hosted mirror: added `data/scouts/*.json` and `data/players.json` to the function's `included_files` in `netlify.toml`, so a republish surfaces the scout book dossiers and FIDE-id map (previously only `data/games`, patterns, and prepsheets were bundled). The mirror is deployed with `scripts/publish-web.sh` (Netlify CLI, not a git-linked build), so new opponents appear only after `npm run publish-web` re-runs. Note the scout books carry full PGN, so bundling them grows the function; slim to dossier-only if it gets large.
+
 ## 2026-09-09 (FIDE ids shown in Scouting; config; first real dossier runs)
 
 - The Scouting view now shows each opponent's FIDE id (linked to their ratings.fide.com profile) and federation in a per-subject header, and the subject list shows the federation as the at-a-glance "linked" signal; the book icon is reserved for opponents that actually have a scouting book (it previously showed for anyone with an id, misleading after bulk linking). Frontend only, no restart needed.

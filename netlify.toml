@@ -7,7 +7,7 @@
   node_bundler = "esbuild"
 
 [functions.api]
-  included_files = ["data/games/*.json", "data/patterns.json", "data/prepsheets.json"]
+  included_files = ["data/games/*.json", "data/patterns.json", "data/prepsheets.json", "data/scouts/*.json", "data/players.json"]
 
 [[redirects]]
   from = "/api/*"
