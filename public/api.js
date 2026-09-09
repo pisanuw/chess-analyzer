@@ -89,6 +89,7 @@ export const api = {
   scoutImport: ({ pgn, fideId, name, filename }) => req('POST', '/api/scout/import', { pgn, fideId, name, filename }),
   scoutBook: fideId => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}`),
   promoteScout: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/promote`, {}),
+  players: () => req('GET', '/api/players'),
   patterns: () => req('GET', '/api/patterns'),
   synthesizePattern: pattern => req('POST', '/api/patterns/synthesize', { pattern }),
   puzzles: ({ source = 'tactics', limit = 30 } = {}) =>

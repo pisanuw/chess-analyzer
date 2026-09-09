@@ -85,6 +85,19 @@ export function detectPlayerColor(headers, playerNames) {
   return null;
 }
 
+/** A player's FIDE id from PGN tags, or null. Tournament exports (Swiss-Manager,
+ * chess-results) carry WhiteFideId / BlackFideId; tag name casing and separators
+ * vary ("WhiteFIDEId", "White FideId"), so match case- and punctuation-insensitively. */
+export function fideIdFromHeaders(headers, color) {
+  const want = color === 'white' ? 'whitefideid' : 'blackfideid';
+  for (const [k, v] of Object.entries(headers || {})) {
+    if (k.toLowerCase().replace(/[^a-z]/g, '') !== want) continue;
+    const id = String(v).trim();
+    if (/^\d{3,}$/.test(id)) return id;
+  }
+  return null;
+}
+
 /** Parse already-split game chunks (see splitPgn). Callers that want to bound
  * the game count split first, check the length, then parse only if under the
  * cap, so a huge paste is rejected before the synchronous parse runs. */

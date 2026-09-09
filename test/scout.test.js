@@ -170,6 +170,22 @@ test('scout book: a FIDE export builds a recency-weighted book, listed by FIDE i
   assert.equal((await fetch(base + '/api/scout/import', { method: 'POST', headers: JSON_H, body: JSON.stringify({ pgn: PGN }) })).status, 400);
 });
 
+test('import learns FIDE ids from PGN tags; /api/players exposes the map', async () => {
+  const PGN = `[White "Tagged, A"]
+[WhiteFideId "44556677"]
+[Black "Other, B"]
+[BlackFideId "11223344"]
+[Result "1-0"]
+
+1. e4 e5 1-0`;
+  await fetch(base + '/api/games/import', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pgn: PGN, analyse: false, purpose: 'own' }) });
+  const players = (await (await fetch(base + '/api/players')).json()).players;
+  const a = players.find(p => p.fideId === '44556677');
+  const b = players.find(p => p.fideId === '11223344');
+  assert.ok(a && a.names.includes('Tagged, A'), 'white id learned from WhiteFideId');
+  assert.ok(b && b.names.includes('Other, B'), 'black id learned from BlackFideId');
+});
+
 test('own games feed a derived dossier for their opponent', async () => {
   // Own game where the OPPONENT (black, named 'Opponent') blunders at ply 2.
   writeGame(dir, makeGame({ id: 'eeeeeeeeee01', color: 'white', moments: [{ ply: 2, loss: 28 }], plies: 4, explained: false }));

@@ -5,6 +5,7 @@
 import { app } from './index.js';
 import { sweepTmpFiles, ensureDataIgnores, DATA_DIR } from './store.js';
 import { syncAllDrills } from './drills.js';
+import { syncPlayers } from './players.js';
 import { resumeInterrupted } from './jobs.js';
 
 const PORT = Number(process.env.PORT) || 3210;
@@ -13,5 +14,6 @@ app.listen(PORT, process.env.HOST || '127.0.0.1', () => {
   sweepTmpFiles().then(n => { if (n) console.log(`removed ${n} leftover .tmp file${n === 1 ? '' : 's'}`); }).catch(() => {});
   ensureDataIgnores().catch(() => {});
   syncAllDrills().catch(err => console.error(`drill sync failed: ${err.message}`));
+  syncPlayers().then(n => { if (n) console.log(`players map: learned ${n} name/FIDE-id association${n === 1 ? '' : 's'}`); }).catch(err => console.error(`players sync failed: ${err.message}`));
   resumeInterrupted().catch(err => console.error(`resume failed: ${err.message}`));
 });

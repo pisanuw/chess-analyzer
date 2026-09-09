@@ -3,8 +3,9 @@ import express from 'express';
 import path from 'node:path';
 import { Chess } from 'chess.js';
 import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from './pgn.js';
-import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { parseFideFromFilename, buildScoutBook, scoutDossier } from './scoutbook.js';
+import { assocsFromHeaders, recordAssociations, lookupFideId } from './players.js';
 import { enqueue, listJobs, cancelJobs } from './jobs.js';
 import { findStockfish, getSparringEngine } from './engine.js';
 import { probeHosts, remoteHostList } from './enginepool.js';
@@ -159,11 +160,12 @@ app.post('/api/games/import', wrap(async (req, res) => {
   }
   const settings = await getSettings();
   const parsed = parsePgnGames(chunks);
-  const imported = [], skipped = [], failed = [];
+  const imported = [], skipped = [], failed = [], assocs = [];
   for (const r of parsed) {
     if (!r.ok) { failed.push({ error: r.error, snippet: r.snippet }); continue; }
     const g = r.game;
     if (!g.moves.length) { failed.push({ error: 'no moves', snippet: g.pgn.slice(0, 120) }); continue; }
+    assocs.push(...assocsFromHeaders(g.headers)); // learn FIDE ids from tags, even for duplicates
     if (await getGame(g.id)) { skipped.push(g.id); continue; }
     const game = {
       id: g.id, headers: g.headers, moves: g.moves, pgn: g.pgn,
@@ -176,6 +178,7 @@ app.post('/api/games/import', wrap(async (req, res) => {
     imported.push(game.id);
     if (game.playerColor && req.body?.analyse !== false) enqueue('analyse', game.id);
   }
+  await recordAssociations(assocs).catch(() => {}); // best effort: never fail an import on the players map
   res.json({ imported, skipped, failed });
 }));
 
@@ -448,31 +451,54 @@ const dossierOpts = settings => ({
 });
 
 app.get('/api/scout', wrap(async (req, res) => {
-  // Subjects = FIDE-keyed book imports, scouted single games, and every
-  // opponent from the player's own games. A book entry is keyed by FIDE id;
-  // name-only entries (own games, legacy scout imports) key by name.
-  const subjects = new Map();
-  const add = (name, analysed, kind) => {
+  // Subjects = FIDE book imports, scouted single games, and every opponent from
+  // the player's own games. Each is keyed by FIDE id when one is known (from a
+  // PGN tag, a book, or the players map), so a book and the own-game opponent it
+  // describes merge into one entry even when the engine data came in by name.
+  const players = await getPlayers();
+  const books = await listScoutBooks();
+  const norm = s => (s || '').trim().toLowerCase();
+  const bookIdByName = new Map(books.map(b => [norm(b.name), b.fideId]));
+  const resolve = (name, tagId) => tagId || bookIdByName.get(norm(name)) || lookupFideId(players, name);
+
+  const byKey = new Map();
+  const ensure = (name, fideId) => {
+    const key = fideId || 'n:' + norm(name);
+    let s = byKey.get(key);
+    if (!s) { s = { subject: name, fideId: fideId || null, names: new Set(), games: 0, analysed: 0, scoutGames: 0, ownGames: 0, bookGames: 0 }; byKey.set(key, s); }
+    s.names.add(name);
+    return s;
+  };
+  const add = (name, analysed, kind, tagId) => {
     if (!name || name === '?') return;
-    const s = subjects.get(name) || { subject: name, fideId: null, games: 0, analysed: 0, scoutGames: 0, ownGames: 0, bookGames: 0 };
+    const s = ensure(name, resolve(name, tagId));
     s.games++;
     if (analysed) s.analysed++;
     s[kind]++;
-    subjects.set(name, s);
   };
   for (const g of await listGames()) {
     const analysed = g.status === 'analysed' || g.status === 'explained';
-    if (g.purpose === 'scout' && g.subject) add(g.subject, analysed, 'scoutGames');
-    else if (g.purpose !== 'scout' && g.playerColor) add(g.playerColor === 'white' ? g.black : g.white, analysed, 'ownGames');
+    if (g.purpose === 'scout' && g.subject) add(g.subject, analysed, 'scoutGames', g.subjectId);
+    else if (g.purpose !== 'scout' && g.playerColor) {
+      const oppName = g.playerColor === 'white' ? g.black : g.white;
+      add(oppName, analysed, 'ownGames', g.playerColor === 'white' ? g.blackFideId : g.whiteFideId);
+    }
   }
-  // Attach FIDE books: match to an existing subject by name, else add one.
-  for (const b of await listScoutBooks()) {
-    const s = subjects.get(b.name) || { subject: b.name, fideId: null, games: 0, analysed: 0, scoutGames: 0, ownGames: 0, bookGames: 0 };
-    s.fideId = b.fideId;
+  for (const b of books) {
+    const s = ensure(b.name, b.fideId);
+    s.subject = b.name; // the book name is the canonical display name
     s.bookGames = b.total || (b.games || []).length;
-    subjects.set(b.name, s);
   }
-  res.json({ subjects: [...subjects.values()].sort((a, b) => (b.bookGames + b.games) - (a.bookGames + a.games) || a.subject.localeCompare(b.subject)) });
+  const subjects = [...byKey.values()].map(s => ({ ...s, names: undefined, aliases: [...s.names].filter(n => n !== s.subject) }));
+  res.json({ subjects: subjects.sort((a, b) => (b.bookGames + b.games) - (a.bookGames + a.games) || a.subject.localeCompare(b.subject)) });
+}));
+
+// The learned name <-> FIDE id map. Read-only; associations are learned at
+// import from PGN tags and book imports, never by calling out to FIDE here.
+app.get('/api/players', wrap(async (req, res) => {
+  const map = await getPlayers();
+  const players = Object.values(map).sort((a, b) => (a.names[0] || '').localeCompare(b.names[0] || ''));
+  res.json({ players });
 }));
 
 // Ingest a large per-opponent export into the book tier: parse every game,
@@ -502,6 +528,8 @@ app.post('/api/scout/import', wrap(async (req, res) => {
   const book = buildScoutBook(ok, { fideId, name, aliases });
   if (!book.total) return res.status(400).json({ error: `no games for "${name}" found in the file (check the name matches the PGN headers)` });
   await saveScoutBook(book);
+  // The filename FIDE id names the subject; also learn any ids the games' tags carry.
+  await recordAssociations([{ fideId, name }, ...ok.flatMap(g => assocsFromHeaders(g.headers))]).catch(() => {});
   const dossier = scoutDossier(book, dossierOpts(await getSettings()));
   // Chess960 ("Freestyle") games and odd PGNs are the usual skips; surface the count.
   res.json({ fideId, name, imported: book.total, skipped: failed, dossier });

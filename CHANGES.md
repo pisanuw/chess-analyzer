@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-09 (players map: learn name <-> FIDE id from PGN tags)
+
+- A local `data/players.json` now maps names to FIDE ids, so opponents key on a stable id instead of a drifting name string. Associations are learned only from data already on the machine: FIDE ids that tournament exports put in PGN tags (`WhiteFideId`/`BlackFideId`, matched case- and punctuation-insensitively) and the FIDE id of each scouted book. No network calls: resolving an id for a player who has no tag anywhere is the opt-in FIDE-lookup step, deferred by design (auto-scraping FIDE would break the local-first principle and name search is too ambiguous to trust automatically).
+- The game index now carries each side's FIDE id and a scout game's `subjectId`, and the Scouting subjects list keys each opponent by FIDE id when one is known (tag, book, or the players map), merging a book with the own-game opponent it describes into one entry. Verified on real data: Harish Neeraj's 647-game book and Kai's one existing game against him now collapse to a single FIDE-keyed subject. Learned from both imports and a cheap startup backfill (`syncPlayers`, reads the index, no full-file reads). `players.json` syncs between machines (small shared reference data).
+- New: `server/players.js` (assoc/lookup/merge/backfill), `fideIdFromHeaders` in `pgn.js`, `getPlayers`/`savePlayers` in `store.js`, `GET /api/players`, startup `syncPlayers` in `serve.js`, `test/players.test.js` plus an import-learns-ids API test (123 tests pass). Known gap: names that differ in spelling only merge when a shared FIDE tag or a manual alias links them; Kai's own tournament PGNs carry no FIDE tags, so the opt-in lookup is the next step to tag the rest.
+
 ## 2026-09-09 (scout a specific opponent from a large per-player export: the book tier)
 
 - Preparing against one opponent now starts from their whole game history, not a handful of hand-picked games. A metadb/ChessBase-style export (filename carries the FIDE id, e.g. `HarishNeeraj_FIDE30958130_Total_739_Games_NoBlitz.pgn`) imports into a new compact "book" tier: one file per opponent at `data/scouts/<fideId>.json`, keyed by FIDE id, holding SAN openings, headers, and the full PGN per game, but no engine or LLM work. Instant, and it covers hundreds of games without burying the player's own games or flooding the analysis queue (the main game store stays capped at 500).

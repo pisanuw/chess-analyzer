@@ -2,6 +2,7 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fideIdFromHeaders } from './pgn.js';
 
 // The repo root. Every supported entry point (npm start, tests, and the bundled
 // Netlify function) runs with the working directory at the repo root, so cwd is
@@ -178,6 +179,8 @@ export function gameIndexEntry(g) {
     black: g.headers.Black || '?',
     whiteElo: g.headers.WhiteElo || null,
     blackElo: g.headers.BlackElo || null,
+    whiteFideId: fideIdFromHeaders(g.headers, 'white'),
+    blackFideId: fideIdFromHeaders(g.headers, 'black'),
     event: g.headers.Event || '',
     date: g.headers.Date || '',
     round: g.headers.Round || '',
@@ -187,6 +190,7 @@ export function gameIndexEntry(g) {
     playerColor: g.playerColor,
     purpose: g.purpose || 'own',
     subject: g.subject || null,
+    subjectId: g.subjectId || null,
     status: g.status,
     importedAt: g.importedAt,
     accuracy: p ? p.accuracy : null,
@@ -309,6 +313,17 @@ export async function getPrepSheets() {
 export async function savePrepSheets(sheets) {
   await writeJson(path.join(DATA_DIR, 'prepsheets.json'), sheets);
   return sheets;
+}
+
+// Name <-> FIDE id map, keyed by id: { "<fideId>": { fideId, names: [], federation?, updatedAt } }.
+// Small shared reference data, so it DOES sync between machines (not ignored).
+export async function getPlayers() {
+  return readJson(path.join(DATA_DIR, 'players.json'), {});
+}
+
+export async function savePlayers(map) {
+  await writeJson(path.join(DATA_DIR, 'players.json'), map);
+  return map;
 }
 
 export async function getPatternNotes() {
