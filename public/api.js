@@ -90,6 +90,8 @@ export const api = {
   scoutBook: fideId => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}`),
   promoteScout: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/promote`, {}),
   players: () => req('GET', '/api/players'),
+  fideSearch: name => req('GET', `/api/fide/search?name=${encodeURIComponent(name)}`),
+  linkPlayer: ({ fideId, name, fideName, federation, verify }) => req('POST', '/api/players/link', { fideId, name, fideName, federation, verify }),
   patterns: () => req('GET', '/api/patterns'),
   synthesizePattern: pattern => req('POST', '/api/patterns/synthesize', { pattern }),
   puzzles: ({ source = 'tactics', limit = 30 } = {}) =>

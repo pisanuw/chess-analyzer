@@ -186,6 +186,18 @@ test('import learns FIDE ids from PGN tags; /api/players exposes the map', async
   assert.ok(b && b.names.includes('Other, B'), 'black id learned from BlackFideId');
 });
 
+test('FIDE link records an association without a network call; bad input rejected', async () => {
+  const H = { 'content-type': 'application/json' };
+  assert.equal((await fetch(base + '/api/fide/search?name=a')).status, 400, 'too-short query rejected before any fetch');
+  // link without verify: no FIDE call, just records name <-> id in the players map
+  const ok = await fetch(base + '/api/players/link', { method: 'POST', headers: H, body: JSON.stringify({ fideId: '39904881', name: 'Pisan, Kai', fideName: 'Pisan, Kai', federation: 'USA' }) });
+  assert.equal(ok.status, 200);
+  const players = (await (await fetch(base + '/api/players')).json()).players;
+  const p = players.find(x => x.fideId === '39904881');
+  assert.ok(p && p.names.includes('Pisan, Kai') && p.federation === 'USA');
+  assert.equal((await fetch(base + '/api/players/link', { method: 'POST', headers: H, body: JSON.stringify({ fideId: 'abc', name: 'X' }) })).status, 400, 'non-numeric id rejected');
+});
+
 test('own games feed a derived dossier for their opponent', async () => {
   // Own game where the OPPONENT (black, named 'Opponent') blunders at ply 2.
   writeGame(dir, makeGame({ id: 'eeeeeeeeee01', color: 'white', moments: [{ ply: 2, loss: 28 }], plies: 4, explained: false }));

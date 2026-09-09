@@ -51,11 +51,60 @@ async function renderDossier(el, entry, readonly) {
     el.innerHTML = `<div class="empty">Nothing to show yet for ${esc(subject)}. Their games may still be in the analysis queue.</div>`;
     return;
   }
-  el.innerHTML = (book ? bookSection(book.dossier, readonly) : '')
+  const linkable = !entry.fideId && !readonly;
+  el.innerHTML = (linkable ? fideLinkCard(subject) : '')
+    + (book ? bookSection(book.dossier, readonly) : '')
     + `<div id="engine-dossier">${data ? '' : engineHint(book, readonly)}</div>`;
 
+  if (linkable) wireFideLink(el, subject);
   if (book) wirePromote(el, book.dossier, subject, readonly);
   if (data) renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly);
+}
+
+/** Link a name-only opponent to their FIDE id via the official rating site. */
+function fideLinkCard(subject) {
+  return `<div class="card" id="fide-link" style="margin-bottom:16px; border-color: var(--warning)">
+    <h3 style="margin-top:0">No FIDE id linked</h3>
+    <p class="muted">Link ${esc(subject)} to a FIDE id so their games, your games against them, and any scouting book merge into one opponent. This is the only time the app queries FIDE (ratings.fide.com), and only on your click.</p>
+    <div class="row" style="gap:6px">
+      <input type="search" id="fide-q" value="${esc(subject)}" style="padding:6px 10px; min-width:220px; font-size:14px">
+      <button class="small" id="fide-go">Search FIDE</button>
+    </div>
+    <div id="fide-results" style="margin-top:10px"></div>
+  </div>`;
+}
+
+function wireFideLink(el, subject) {
+  const go = el.querySelector('#fide-go');
+  const out = el.querySelector('#fide-results');
+  const run = async () => {
+    const q = el.querySelector('#fide-q').value.trim();
+    if (q.length < 2) return toast('Enter at least two characters', true);
+    go.disabled = true; out.innerHTML = '<span class="muted">Searching FIDE…</span>';
+    try {
+      const { count, candidates } = await api.fideSearch(q);
+      if (!candidates.length) { out.innerHTML = '<span class="muted">No matches on FIDE. Try the surname alone.</span>'; return; }
+      out.innerHTML = `<p class="muted"><small>${count} match${count === 1 ? '' : 'es'}${count > candidates.length ? `, showing the first ${candidates.length}` : ''}. Pick the right player:</small></p>
+        <table><thead><tr><th>Name</th><th>Title</th><th>Fed</th><th class="num">Std</th><th>FIDE id</th><th></th></tr></thead>
+        <tbody>${candidates.map(c => `<tr>
+          <td><b>${esc(c.name)}</b></td><td>${esc(c.title || '')}</td><td>${esc(c.federation || '')}</td>
+          <td class="num">${c.rating ?? '–'}</td>
+          <td><small class="muted">${esc(c.fideId)}</small> <a href="https://ratings.fide.com/profile/${esc(c.fideId)}" target="_blank" rel="noopener" title="Open FIDE profile">↗</a></td>
+          <td><button class="small primary" data-id="${esc(c.fideId)}" data-name="${esc(c.name)}" data-fed="${esc(c.federation || '')}">Link</button></td>
+        </tr>`).join('')}</tbody></table>`;
+      out.querySelectorAll('button[data-id]').forEach(b => b.onclick = async () => {
+        b.disabled = true;
+        try {
+          await api.linkPlayer({ fideId: b.dataset.id, name: subject, fideName: b.dataset.name, federation: b.dataset.fed });
+          toast(`Linked ${subject} to FIDE ${b.dataset.id}`);
+          location.reload(); // re-derive the subject list so the merge takes effect
+        } catch (err) { toast(err.message, true); b.disabled = false; }
+      });
+    } catch (err) { out.innerHTML = `<span class="muted">FIDE search failed: ${esc(err.message)}</span>`; }
+    finally { go.disabled = false; }
+  };
+  go.onclick = run;
+  el.querySelector('#fide-q').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
 }
 
 /** The book tier: what they play, weighted to recent, on-strength games. */

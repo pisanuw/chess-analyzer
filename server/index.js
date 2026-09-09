@@ -6,6 +6,7 @@ import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from './pgn.js'
 import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { parseFideFromFilename, buildScoutBook, scoutDossier } from './scoutbook.js';
 import { assocsFromHeaders, recordAssociations, lookupFideId } from './players.js';
+import { searchFide, fideProfileName } from './fide.js';
 import { enqueue, listJobs, cancelJobs } from './jobs.js';
 import { findStockfish, getSparringEngine } from './engine.js';
 import { probeHosts, remoteHostList } from './enginepool.js';
@@ -494,11 +495,38 @@ app.get('/api/scout', wrap(async (req, res) => {
 }));
 
 // The learned name <-> FIDE id map. Read-only; associations are learned at
-// import from PGN tags and book imports, never by calling out to FIDE here.
+// import from PGN tags and book imports, and by the opt-in FIDE lookup below.
 app.get('/api/players', wrap(async (req, res) => {
   const map = await getPlayers();
   const players = Object.values(map).sort((a, b) => (a.names[0] || '').localeCompare(b.names[0] || ''));
   res.json({ players });
+}));
+
+// Opt-in FIDE lookup: an explicit user action searches the official rating site
+// by name and returns candidates to confirm. This is the only third-party call
+// besides the claude CLI, and it never runs automatically.
+app.get('/api/fide/search', wrap(async (req, res) => {
+  const name = String(req.query.name || '').trim();
+  if (name.length < 2) return res.status(400).json({ error: 'enter at least two characters to search FIDE' });
+  res.json(await searchFide(name));
+}));
+
+// Confirm a match: record the chosen id against the local name (and the FIDE
+// canonical name) so it resolves everywhere afterward. Optionally verify the id
+// against its FIDE profile first.
+app.post('/api/players/link', wrap(async (req, res) => {
+  const fideId = String(req.body?.fideId || '').trim();
+  if (!/^\d{3,}$/.test(fideId)) return res.status(400).json({ error: 'a numeric FIDE id is required' });
+  const names = [req.body?.name, req.body?.fideName].filter(n => typeof n === 'string' && n.trim());
+  if (!names.length) return res.status(400).json({ error: 'a name to link is required' });
+  if (req.body?.verify) {
+    const canonical = await fideProfileName(fideId);
+    if (!canonical) return res.status(404).json({ error: `no FIDE profile for id ${fideId}` });
+    if (!names.some(n => n.trim().toLowerCase() === canonical.toLowerCase())) names.push(canonical);
+  }
+  const federation = typeof req.body?.federation === 'string' ? req.body.federation : undefined;
+  await recordAssociations(names.map(n => ({ fideId, name: n.trim(), federation })));
+  res.json({ player: (await getPlayers())[fideId] });
 }));
 
 // Ingest a large per-opponent export into the book tier: parse every game,

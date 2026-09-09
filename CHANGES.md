@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-09 (opt-in FIDE id lookup from the official rating site)
+
+- A "find FIDE id" action on any unlinked opponent in the Scouting view searches ratings.fide.com by name and returns candidates (name, title, federation, standard rating, id, profile link) to confirm by hand. Picking one records the chosen id against both the local name spelling and FIDE's canonical name in the players map, so a differently-spelled opponent then merges with their scouting book and your games against them. This is the only third party the app contacts besides the claude CLI, strictly on an explicit click, never at import: auto-matching by name is too ambiguous to trust.
+- Reverse-engineered the site's own search XHR (`GET incl_search_l.php?search=<name>&simple=1` with `X-Requested-With: XMLHttpRequest`; the columns are id, name, title, wtitle, federation, standard, rapid, blitz). Optional profile verify reads the canonical name off `/profile/<id>`. New `server/fide.js` (pure `parseFideSearchHtml` plus `searchFide`/`fideProfileName`), routes `GET /api/fide/search` and `POST /api/players/link`, a candidate picker in `public/views/scout.js`, and `test/fide.test.js` plus a hermetic link-route test (127 tests pass). Verified live: "Harish, Neeraj" resolves to 30958130 (CM, USA, 2250); searching "Pisan" surfaces Kai at 39904881.
+
 ## 2026-09-09 (players map: learn name <-> FIDE id from PGN tags)
 
 - A local `data/players.json` now maps names to FIDE ids, so opponents key on a stable id instead of a drifting name string. Associations are learned only from data already on the machine: FIDE ids that tournament exports put in PGN tags (`WhiteFideId`/`BlackFideId`, matched case- and punctuation-insensitively) and the FIDE id of each scouted book. No network calls: resolving an id for a player who has no tag anywhere is the opt-in FIDE-lookup step, deferred by design (auto-scraping FIDE would break the local-first principle and name search is too ambiguous to trust automatically).
