@@ -11,6 +11,11 @@ const lichess = sans => `https://lichess.org/analysis/pgn/${encodeURIComponent(f
 export async function scoutView(root) {
   const { subjects } = await api.scoutSubjects();
   const { readonly } = await api.status().catch(() => ({}));
+  // Federation for each linked opponent comes from the players map (the scout
+  // subject list carries the id but not the federation).
+  const { players = [] } = await api.players().catch(() => ({ players: [] }));
+  const fedById = new Map(players.map(p => [p.fideId, p.federation]));
+  subjects.forEach(s => { if (s.fideId) s.fed = fedById.get(s.fideId) || null; });
   if (!subjects.length) {
     root.innerHTML = `<h1>Scouting</h1><div class="empty">No opponents yet. Everyone you play appears here once your games are analysed. Import an opponent's games with "Scout an opponent"; a FIDE export (filename like <code>Name_FIDE12345_…​.pgn</code>) builds a full repertoire book from hundreds of their games at once.</div>`;
     return;
@@ -29,7 +34,10 @@ export async function scoutView(root) {
     const shown = subjects.filter(s => !needle || s.subject.toLowerCase().includes(needle));
     listEl.innerHTML = shown.map(s => {
       const n = s.bookGames || s.games;
-      return `<button class="small${s.subject === current ? ' primary' : ''}" data-subject="${esc(s.subject)}" title="${s.fideId ? 'FIDE ' + esc(s.fideId) + ', ' : ''}${n} game${n === 1 ? '' : 's'}">${esc(s.subject)} (${n}${s.fideId ? ' \u{1F4D6}' : ''})</button>`;
+      // Show the federation as the at-a-glance "linked" signal; full id in the
+      // tooltip; the book icon only for opponents that actually have a book.
+      const tip = s.fideId ? `FIDE ${s.fideId}${s.fed ? ` (${s.fed})` : ''}, ${n} game${n === 1 ? '' : 's'}` : `no FIDE id, ${n} game${n === 1 ? '' : 's'}`;
+      return `<button class="small${s.subject === current ? ' primary' : ''}" data-subject="${esc(s.subject)}" title="${esc(tip)}">${esc(s.subject)}${s.fed ? ` <small class="muted">${esc(s.fed)}</small>` : ''} (${n})${s.bookGames ? ' \u{1F4D6}' : ''}</button>`;
     }).join('') || '<span class="muted">No opponents match.</span>';
     listEl.querySelectorAll('button[data-subject]').forEach(b => b.onclick = () => { location.hash = `#/scout/${encodeURIComponent(b.dataset.subject)}`; });
   };
@@ -52,13 +60,28 @@ async function renderDossier(el, entry, readonly) {
     return;
   }
   const linkable = !entry.fideId && !readonly;
-  el.innerHTML = (linkable ? fideLinkCard(subject) : '')
+  el.innerHTML = subjectHeader(entry)
+    + (linkable ? fideLinkCard(subject) : '')
     + (book ? bookSection(book.dossier, readonly) : '')
     + `<div id="engine-dossier">${data ? '' : engineHint(book, readonly)}</div>`;
 
   if (linkable) wireFideLink(el, subject);
   if (book) wirePromote(el, book.dossier, subject, readonly);
   if (data) renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly);
+}
+
+/** Name, FIDE id (linked to the official profile), and federation, shown for
+ * every opponent whether or not they have a book or analysed games. */
+function subjectHeader(entry) {
+  const id = entry.fideId;
+  const idHtml = id
+    ? `FIDE <a href="https://ratings.fide.com/profile/${esc(id)}" target="_blank" rel="noopener">${esc(id)}</a>${entry.fed ? ` · ${esc(entry.fed)}` : ''}`
+    : '<span class="muted">no FIDE id linked</span>';
+  const aliases = (entry.aliases || []).filter(a => a !== entry.subject);
+  return `<div class="row" style="justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px">
+      <h2 style="margin:0">${esc(entry.subject)}</h2>
+      <div style="font-size:14px">${idHtml}</div>
+    </div>${aliases.length ? `<p class="muted" style="margin:2px 0 10px"><small>also seen as: ${aliases.map(esc).join(', ')}</small></p>` : '<div style="margin-bottom:10px"></div>'}`;
 }
 
 /** Link a name-only opponent to their FIDE id via the official rating site. */
@@ -128,7 +151,7 @@ function bookSection(d, readonly) {
       </tr>`).join('')}</tbody></table>`;
   };
   return `
-    <h2 style="margin-bottom:4px">${esc(d.name)}${d.fideId ? ` <span class="muted" style="font-size:14px">FIDE ${esc(d.fideId)}</span>` : ''}</h2>
+    <h3 style="margin-bottom:4px">Repertoire book</h3>
     <p class="muted">Repertoire book from ${d.total} games${d.dateRange ? ` (${esc(d.dateRange.from)} to ${esc(d.dateRange.to)})` : ''}. Weighted toward recent, on-strength games: ${cov.droppedOld} game${cov.droppedOld === 1 ? '' : 's'} older than ${cov.maxAgeYears} years and ${cov.droppedElo} more than ${cov.eloBand} Elo off their current strength are set aside, because they no longer describe the player you will face.</p>
     <div class="tiles">
       <div class="tile"><div class="v">${d.currentElo ?? '–'}</div><div class="l">Current strength</div></div>
