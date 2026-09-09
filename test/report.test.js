@@ -44,6 +44,10 @@ test('buildReport aggregates categories, trend, and time management', async () =
   assert.ok(calc.priorPerGame > calc.recentPerGame, 'recent should be lower than prior');
   assert.ok(calc.delta < 0);
 
+  // Focus areas carry the per-category trend delta for a trend-aware prescription.
+  const calcFocus = r.focus.find(f => f.category === 'calculation');
+  assert.ok(calcFocus && calcFocus.trend < 0, 'focus annotates the improving trend');
+
   // Time management from the single clocked game.
   assert.ok(r.timeManagement);
   assert.equal(r.timeManagement.comfortBlunders, 1); // 400s left > 5 min at a ≥20-loss moment
@@ -156,6 +160,16 @@ test('recognition-speed median averages the two central values on an even sample
   const s = r.drillStats.speed.find(x => x.pattern === 'Even pattern');
   assert.ok(s, 'pattern with 4 timed reviews appears');
   assert.equal(s.medianMs, 25000); // average of the central 20000 and 30000
+});
+
+test('drill stats break down by kind, and quiet-position detection is reported', async () => {
+  const { recordDecoy } = await import('../server/drills.js');
+  await recordDecoy(true); await recordDecoy(true); await recordDecoy(false);
+  const r = await buildReport();
+  assert.ok(r.drillStats.byKind['find-best'], 'core reviews counted under a find-best stream');
+  assert.ok(r.decoys, 'decoy detection is reported');
+  assert.equal(r.decoys.seen, 3);
+  assert.equal(r.decoys.falsePositiveRate, 33); // 1 of 3 quiet positions mis-called
 });
 
 test('prep card renders focus areas, rules, and the clock line', async () => {

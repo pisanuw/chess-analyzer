@@ -235,6 +235,7 @@ export async function getDrills() {
   }
   store.guesses = store.guesses || {};   // guess-first attempts, keyed gameId:ply
   store.feedback = store.feedback || {}; // explanation feedback, keyed gameId:ply
+  store.decoys = store.decoys || { seen: 0, right: 0 }; // quiet-position detection tally
   store.rev = store.rev || 0;            // CAS revision (0 = new store or legacy row)
   return store;
 }

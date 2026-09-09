@@ -411,6 +411,21 @@ export function recordFeedback(gameId, ply, helpful) {
   });
 }
 
+/** Record a quiet-position (decoy) outcome. Decoys are ephemeral and never
+ * graded into the ladder, but whether the player correctly recognises "nothing
+ * is wrong here" is the discrimination half of the skill; keep a per-machine
+ * tally so the report can show the false-positive rate. */
+export function recordDecoy(correct) {
+  return locked(async () => {
+    const store = await getDrills();
+    store.decoys = store.decoys || { seen: 0, right: 0 };
+    store.decoys.seen++;
+    if (correct) store.decoys.right++;
+    await saveDrills(store);
+    return store.decoys;
+  });
+}
+
 /** Drop the vote on a moment (it was re-explained: the new text starts unrated). */
 export function clearFeedback(gameId, ply) {
   return locked(async () => {

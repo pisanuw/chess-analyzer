@@ -143,7 +143,7 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
   // player reviews on both, so the histories merge).
   const dstore = purpose === 'own' ? await getDrills() : { drills: [] };
   const foreign = purpose === 'own' ? await getForeignDrillStores() : [];
-  const drillByPhase = {}, drillByCategory = {}, patternSpeed = new Map();
+  const drillByPhase = {}, drillByCategory = {}, drillByKind = {}, patternSpeed = new Map();
   let drillAttempts = 0, drillCorrect = 0;
   const tally = drills => {
     for (const d of drills) {
@@ -152,6 +152,7 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
         const bump = (obj, k) => { if (!k) return; const o = obj[k] = obj[k] || { attempts: 0, correct: 0 }; o.attempts++; if (r.correct) o.correct++; };
         bump(drillByPhase, d.phase);
         bump(drillByCategory, d.category);
+        bump(drillByKind, d.kind || 'find-best'); // threat / punish / opening / core: separate streams
         if (d.pattern && Number.isFinite(r.ms)) {
           const k = normalizeKey(d.pattern);
           const p = patternSpeed.get(k) || { pattern: d.pattern, times: [] };
@@ -172,7 +173,7 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     for (const gs of guesses) {
       drillAttempts++; if (gs.correct) drillCorrect++;
       const bump = (obj, k) => { if (!k) return; const o = obj[k] = obj[k] || { attempts: 0, correct: 0 }; o.attempts++; if (gs.correct) o.correct++; };
-      bump(drillByPhase, d?.phase); bump(drillByCategory, d?.category);
+      bump(drillByPhase, d?.phase); bump(drillByCategory, d?.category); bump(drillByKind, d?.kind || 'find-best');
     }
   }
   const median = xs => { const s = [...xs].sort((a, b) => a - b); const mid = s.length >> 1; return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2); };
@@ -188,8 +189,15 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     machines: 1 + foreign.length,
     byPhase: drillByPhase,
     byCategory: drillByCategory,
+    byKind: drillByKind,
     speed: speed.length ? speed : null,
   } : null;
+
+  // Quiet-position detection: how often the player correctly recognised that
+  // nothing was wrong. The discrimination half of the skill; false positives
+  // (calling a fine move a mistake) are the signal to watch.
+  const dc = dstore.decoys;
+  const decoys = dc && dc.seen ? { seen: dc.seen, right: dc.right, falsePositiveRate: Math.round(((dc.seen - dc.right) / dc.seen) * 100) } : null;
 
   // Explanation feedback (per machine): counts, plus the moments flagged as
   // unhelpful so their prompts can be tuned or the moment re-explained.
@@ -216,11 +224,15 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     fastMoments: time.fastMoments,
   } : null;
 
+  // Focus areas by weighted count, annotated with the per-category trend delta
+  // (positive = worsening) so the study prescription can prioritise weaknesses
+  // that are getting worse and ease off ones that are already improving.
+  const trendByCat = new Map((categoryTrend || []).map(t => [t.category, t.delta]));
   const focus = Object.entries(byCategory)
     .filter(([k, v]) => k !== 'unexplained' && v.count > 0)
     .sort((a, b) => b[1].weight - a[1].weight)
     .slice(0, 3)
-    .map(([k, v]) => ({ category: k, count: v.count, weight: v.weight }));
+    .map(([k, v]) => ({ category: k, count: v.count, weight: v.weight, trend: trendByCat.has(k) ? trendByCat.get(k) : null }));
 
   return {
     games: games.length,
@@ -237,6 +249,7 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     timeline,
     categoryTrend,
     drillStats,
+    decoys,
     feedback,
     timeManagement,
     // Rank by how many distinct games a signature recurs in, not raw moment

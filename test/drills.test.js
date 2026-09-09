@@ -4,7 +4,7 @@ import { readdirSync } from 'node:fs';
 import { tempData, makeGame, writeGame } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
-const { syncDrillsForGame, syncAllDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, dueDrills, recordGuess, recordFeedback, removeDrillsForGame } = await import('../server/drills.js');
+const { syncDrillsForGame, syncAllDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, dueDrills, recordGuess, recordFeedback, removeDrillsForGame, recordDecoy } = await import('../server/drills.js');
 const { getDrills } = await import('../server/store.js');
 
 const settings = { drillThreshold: 20, momentThreshold: 12 };
@@ -244,6 +244,15 @@ test('session queues mix in ephemeral decoys from quiet positions', async () => 
   assert.ok(!(await getDrills()).drills.some(d => d.kind === 'decoy'), 'decoys are never persisted');
   const badge = await dueDrills(50); // no session flag: the badge poll stays cheap and decoy-free
   assert.ok(!badge.due.some(d => d.kind === 'decoy'));
+});
+
+test('recordDecoy keeps a per-machine seen/right tally', async () => {
+  await recordDecoy(true);
+  await recordDecoy(false);
+  const after = await recordDecoy(true);
+  assert.equal(after.seen, 3);
+  assert.equal(after.right, 2);
+  assert.equal((await getDrills()).decoys.seen, 3);
 });
 
 test('drill saves mirror to a per-machine file for the data repo', async () => {

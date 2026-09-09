@@ -136,7 +136,13 @@ function momentSection(game, ply) {
   const recent = sanLine(moves.slice(Math.max(0, ply - 9), ply - 1));
   const lines = m.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n');
   const playedRank = m.playedRank ? `This was the engine's line number ${m.playedRank}.` : 'This move is not among the engine\'s top lines.';
-  const nextMove = moves[ply]; // opponent's reply
+  const nextMove = moves[ply]; // opponent's reply / the position right after the played move
+  // The engine's lines from the reply position are what the played move now
+  // allows (or leaves for the opponent): the concrete threat behind a
+  // tactics-allowed or defence verdict, grounded rather than guessed.
+  const afterLines = nextMove?.lines?.length
+    ? `\nEngine lines after ${m.san} (${nextMove.color === 'white' ? 'White' : 'Black'} to move, what it allows or leaves):\n${nextMove.lines.map(l => `  ${l.multipv}. ${l.san.join(' ')} (eval ${formatEval(l.cp)})`).join('\n')}`
+    : '';
   return `Recent moves before the critical moment: ${recent || '(start of game)'}
 
 Position before the move (FEN): ${m.fenBefore}
@@ -146,7 +152,7 @@ Engine top lines from this position (${side} to move):
 ${lines}
 
 Move played by ${side}: ${m.san}. Evaluation after it: ${formatEval(m.evalAfter)}. ${playedRank}
-${nextMove ? `The opponent replied ${nextMove.san}.` : ''}
+${nextMove ? `The opponent replied ${nextMove.san}.` : ''}${afterLines}
 Win-probability lost by this move: ${m.loss} points (${m.judgment}). ${clockText(m, game)}`;
 }
 
