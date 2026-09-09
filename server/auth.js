@@ -8,16 +8,9 @@ const DAY_S = 86400;
 const COOKIE_DAYS = 90;
 const WINDOW_MS = 3600000;   // brute-force window: attempts reset hourly
 const MAX_ATTEMPTS = 20;     // failed logins per client per window
-const MIN_PASSWORD_LEN = 12; // the whole public wall is this one secret
 const attempts = new Map();  // ip -> { n, resetAt } : local + KV-failure fallback
 
 const password = () => process.env.APP_PASSWORD || '';
-
-// A short password behind a single-secret public wall is the real risk once the
-// rate limiter binds; warn loudly at startup so the operator can lengthen it.
-if (password() && password().length < MIN_PASSWORD_LEN) {
-  console.warn(`APP_PASSWORD is only ${password().length} characters; use at least ${MIN_PASSWORD_LEN} for the public login wall.`);
-}
 
 /** The real client, not a client-supplied value. Netlify sets
  * x-nf-client-connection-ip to the peer and it cannot be forged through the
