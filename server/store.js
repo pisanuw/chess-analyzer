@@ -191,6 +191,38 @@ const sb = () => process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
 /** A hosted drill write lost the compare-and-swap race; the caller re-reads and reapplies. */
 export class DrillConflict extends Error {}
 
+/** True when the hosted key-value store (Supabase) is configured. Callers that
+ * have a local fallback use this to decide whether to bother with the network. */
+export function kvEnabled() {
+  return !!sb();
+}
+
+/** Read one jsonb value from the shared chess_kv table (hosted only), or null
+ * when Supabase is not configured. Throws on a transport/HTTP error so callers
+ * can fall back. Used for cross-instance state that is not the drill store,
+ * e.g. the login throttle counter. */
+export async function kvGet(key) {
+  const s = sb();
+  if (!s) return null;
+  const r = await fetch(`${s.url}/rest/v1/chess_kv?key=eq.${encodeURIComponent(key)}&select=value`, { headers: s.headers });
+  if (!r.ok) throw new Error(`kv read failed (${r.status})`);
+  return (await r.json())[0]?.value ?? null;
+}
+
+/** Upsert one jsonb value into chess_kv (hosted only); no-op without Supabase.
+ * Best-effort last-writer-wins (unlike the drill store's CAS): callers here
+ * tolerate a small race, e.g. an under-count on the login throttle. */
+export async function kvPut(key, value) {
+  const s = sb();
+  if (!s) return;
+  const r = await fetch(`${s.url}/rest/v1/chess_kv?on_conflict=key`, {
+    method: 'POST',
+    headers: { ...s.headers, prefer: 'resolution=merge-duplicates' },
+    body: JSON.stringify([{ key, value }]),
+  });
+  if (!r.ok) throw new Error(`kv write failed (${r.status})`);
+}
+
 export async function getDrills() {
   const s = sb();
   let store;

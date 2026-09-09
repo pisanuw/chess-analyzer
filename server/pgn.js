@@ -85,9 +85,12 @@ export function detectPlayerColor(headers, playerNames) {
   return null;
 }
 
-export function parsePgnFile(text) {
+/** Parse already-split game chunks (see splitPgn). Callers that want to bound
+ * the game count split first, check the length, then parse only if under the
+ * cap, so a huge paste is rejected before the synchronous parse runs. */
+export function parsePgnGames(chunks) {
   const results = [];
-  for (const g of splitPgn(text)) {
+  for (const g of chunks) {
     try {
       results.push({ ok: true, game: parseGame(g) });
     } catch (err) {
@@ -95,4 +98,8 @@ export function parsePgnFile(text) {
     }
   }
   return results;
+}
+
+export function parsePgnFile(text) {
+  return parsePgnGames(splitPgn(text));
 }

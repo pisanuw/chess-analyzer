@@ -120,9 +120,23 @@ export async function analyseGame(pool, game, settings, onProgress) {
     todo,
     (engine, i) => engine.analyse(fens[i], { depth, multipv, onDepth: onProgress && single ? d => onProgress(done, total, d) : null }),
     async (i, r, engine) => {
-      positions[i] = { bestmove: r.bestmove, lines: r.lines, cp: scoreToCp(r.lines[0]), stm: stmOf(fens[i]) };
-      if (i < CACHE_PLIES && r.lines.length) {
-        await putCachedEval(evalCacheKey(engine.name, depth, multipv, fens[i]), { bestmove: r.bestmove, lines: r.lines });
+      let { bestmove, lines } = r;
+      // A non-terminal position with no score lines would be stored as cp 0
+      // (dead equal) via scoreToCp(undefined), silently corrupting evalBefore,
+      // evalAfter, loss, ACPL, and judgment for the two moves that straddle it.
+      // A healthy engine always emits an info...score...pv line before
+      // bestmove, but a remote ssh pipe can drop info lines while still
+      // delivering bestmove. Retry the search once; if it still yields nothing,
+      // fail the job loudly rather than persisting a fabricated evaluation.
+      // Throwing here (in onDone) stops dispatch cleanly and propagates;
+      // throwing in run() would instead drop an otherwise-healthy engine.
+      if (!lines.length) {
+        ({ bestmove, lines } = await engine.analyse(fens[i], { depth, multipv }));
+        if (!lines.length) throw new Error(`engine ${engine.label || engine.name} returned no evaluation for ${fens[i]}`);
+      }
+      positions[i] = { bestmove, lines, cp: scoreToCp(lines[0]), stm: stmOf(fens[i]) };
+      if (i < CACHE_PLIES) {
+        await putCachedEval(evalCacheKey(engine.name, depth, multipv, fens[i]), { bestmove, lines });
       }
       done++;
       if (onProgress) onProgress(done, total);

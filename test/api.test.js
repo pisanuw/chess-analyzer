@@ -46,6 +46,13 @@ test('import: parses, auto-detects colour, dedupes', async () => {
   assert.equal(r2.data.skipped.length, 1);
 });
 
+test('import rejects a paste with too many games before parsing', async () => {
+  const one = `[White "A"]\n[Black "B"]\n[Result "*"]\n\n1. e4 e5 *\n\n`;
+  const r = await req('POST', '/api/games/import', { pgn: one.repeat(501), analyse: false });
+  assert.equal(r.status, 413);
+  assert.match(r.data.error, /too many games/);
+});
+
 test('guess endpoint seeds a drill and boosts first-try success', async () => {
   writeGame(process.env.DATA_DIR, makeGame({ id: 'abcdefabcdef', moments: [{ ply: 1, loss: 25 }] }));
   const r = await req('POST', '/api/games/abcdefabcdef/moments/1/guess', { uci: 'd2d4', correct: true });

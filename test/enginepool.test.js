@@ -112,6 +112,40 @@ test('analyseGame reports progress as completed positions and honours cancellati
     /cancelled/);
 });
 
+/** Fake engine that returns no score lines on the first search of each FEN
+ * (a dropped-info-lines transport blip), then real lines on the retry; or no
+ * lines ever when alwaysEmpty. */
+function droppyEngine(label, { alwaysEmpty = false } = {}) {
+  const seen = new Map();
+  return {
+    label, name: `Fake ${label}`, proc: true,
+    async analyse(fen) {
+      const n = (seen.get(fen) || 0) + 1; seen.set(fen, n);
+      if (alwaysEmpty || n === 1) return { bestmove: 'e2e4', lines: [] };
+      return { bestmove: 'e2e4', lines: [{ multipv: 1, depth: 18, cp: 20, mate: null, pv: ['e2e4', 'e7e5'] }] };
+    },
+    stop() { this.proc = null; },
+  };
+}
+
+test('analyseGame retries once when the engine returns no score lines, never storing cp 0', async () => {
+  const pgn = `[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0`;
+  const game = { ...parsePgnFile(pgn)[0].game, playerColor: 'white' };
+  const { moves } = await analyseGame(droppyEngine('flaky'), game, { engineDepth: 10, engineMultiPv: 1, momentThreshold: 12 }, null);
+  assert.equal(moves.length, 6);
+  // The retry supplied cp 20 (which becomes +/-20 in White's perspective per
+  // side to move); the bug would have stored a fabricated 0.00 everywhere.
+  assert.ok(moves.every(m => Math.abs(m.evalBefore) === 20 && Math.abs(m.evalAfter) === 20), 'retried evals used, no phantom cp 0');
+});
+
+test('analyseGame fails loudly when a position yields no evaluation even on retry', async () => {
+  const pgn = `[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 1-0`;
+  const game = { ...parsePgnFile(pgn)[0].game, playerColor: 'white' };
+  await assert.rejects(
+    analyseGame(droppyEngine('dead', { alwaysEmpty: true }), game, { engineDepth: 10, engineMultiPv: 1 }, null),
+    /no evaluation/);
+});
+
 test('remote command falls back to a binary inside the directory; ssh engine is labelled by host', () => {
   assert.match(remoteCommand('~/stockfish'), /nice -n 19/);
   assert.match(remoteCommand('~/stockfish'), /\$0\/stockfish/);

@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-09-08 (correctness and security fixes from the code review)
+
+- Login throttle now actually binds on the hosted mirror. The per-IP attempt counter keys on the real client (Netlify's `x-nf-client-connection-ip`, else the socket address) instead of the client-supplied `X-Forwarded-For`, whose leftmost hop could be rotated for a fresh bucket per request; and it lives in the shared Supabase store when configured, so the 20-per-hour limit holds across the otherwise memory-isolated serverless instances (in-process fallback locally and whenever the store is unreachable, so a storage hiccup never locks anyone out). A short `APP_PASSWORD` now warns at startup.
+- Engine analysis no longer fabricates a 0.00 evaluation when a search returns no score lines. A healthy Stockfish always emits a scored line before `bestmove`, but a remote ssh pipe can drop info lines while still delivering `bestmove`; that empty result was being stored as dead-equal and silently corrupting evalBefore/evalAfter, win-probability loss, ACPL, and judgment for the two straddling moves. The position is now re-searched once and the whole job fails loudly if it still yields nothing, rather than persisting a phantom evaluation.
+- PGN import is bounded to 500 games per request, rejected (413) after a cheap split and before the synchronous parse, so a huge paste can no longer block the event loop and flood the one-at-a-time job queue.
+- Drills: an off-list guess that needs a quick engine check no longer reveals a provisional "miss" that a fast grade could persist (mis-scheduling the ladder) while the engine was still deciding. The answer is shown in a non-gradeable "checking" state until the paired eval settles, then graded on the real verdict, matching the guess-first flow.
+- Guess-the-move: locks the current guess before the first `await` so a rapid second drag cannot double-submit and advance the move pointer twice.
+
 ## 2026-09-08 (offload analysis fully to remote engines)
 
 - New "Use this machine as an analysis engine too" switch (Settings, on by default). Turn it off to keep the local machine out of the analysis pool: it only coordinates dispatch and runs the LLM explanations while the remote hosts do all the engine work. It rejoins the pool automatically if no remote host is reachable, so analysis never stalls, and the sparring engine (drills, play-out) is always local so interactive features stay responsive.

@@ -3,7 +3,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Chess } from 'chess.js';
-import { parsePgnFile, detectPlayerColor } from './pgn.js';
+import { parsePgnGames, splitPgn, detectPlayerColor } from './pgn.js';
 import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, sweepTmpFiles, ensureDataIgnores, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { enqueue, listJobs, resumeInterrupted, cancelJobs } from './jobs.js';
 import { findStockfish, getSparringEngine } from './engine.js';
@@ -25,7 +25,10 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.text({ limit: '20mb', type: ['application/x-chess-pgn', 'text/plain'] }));
 
 app.use(authMiddleware);
-app.post('/api/login', loginRoute);
+app.post('/api/login', (req, res) => loginRoute(req, res).catch(err => {
+  console.error(err);
+  res.status(500).json({ error: err.message });
+}));
 
 // Read-only mirror (hosted copy): game data is managed on the analysing machine
 // and published; only training state (drill reviews, guesses) is writable.
@@ -51,6 +54,12 @@ const NUMERIC_LIMITS = {
 
 // Explanations and the game summary depend on analysis and colour; clear together.
 const clearExplanations = g => { g.explanations = {}; g.gameSummary = null; };
+
+// One import parses (synchronously, blocking the event loop) and enqueues one
+// analyse job per game. The 20mb body cap alone allows thousands of games, so a
+// single large paste could freeze the server and flood the sequential queue.
+// Reject anything past a sane season-sized bound.
+const MAX_IMPORT_GAMES = 500;
 
 const wrap = fn => (req, res) => fn(req, res).catch(err => {
   console.error(err);
@@ -132,8 +141,14 @@ app.post('/api/games/import', wrap(async (req, res) => {
   const purpose = req.body?.purpose === 'scout' ? 'scout' : 'own';
   const subject = String(req.body?.subject || '').trim();
   if (purpose === 'scout' && !subject) return res.status(400).json({ error: 'scouting needs the opponent name (subject)' });
+  // Split first (cheap line scan) and bound the count before the expensive
+  // synchronous parse, so an oversized paste is rejected without blocking.
+  const chunks = splitPgn(pgn);
+  if (chunks.length > MAX_IMPORT_GAMES) {
+    return res.status(413).json({ error: `too many games in one import (${chunks.length}); split into files of at most ${MAX_IMPORT_GAMES} games` });
+  }
   const settings = await getSettings();
-  const parsed = parsePgnFile(pgn);
+  const parsed = parsePgnGames(chunks);
   const imported = [], skipped = [], failed = [];
   for (const r of parsed) {
     if (!r.ok) { failed.push({ error: r.error, snippet: r.snippet }); continue; }

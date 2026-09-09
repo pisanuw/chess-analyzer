@@ -284,16 +284,25 @@ export async function drillsView(root, query) {
     const verdict = { correct, text, followUps: 0, foundSans: [] };
     // Off-list move: ask the server for a quick engine eval (best effort; needs
     // Stockfish). The paired same-depth search is trustworthy enough to accept
-    // a move the stored lines simply did not cover.
+    // a move the stored lines simply did not cover. Grading is deferred until
+    // the eval settles: revealing correct:false now would let a fast grade
+    // persist a miss (and mis-schedule the ladder) for a move the engine then
+    // accepts, while the late resolution silently no-ops.
     if (!correct && rank < 0 && res.uci !== d.playedUci) {
+      state.verdict = verdict;
+      state.status = 'verifying';
+      board.set(res.fen, { lastMove: res.uci, shapes: lineShapes(d.lines, d.playedUci) });
+      renderPanel();
       // Punish and threat drills play in the position after the mistake, so the
       // answer is checked against the NEXT ply's stored analysis.
       api.evalMove(d.gameId, d.kind === 'punish' || d.kind === 'threat' ? d.ply + 1 : d.ply, res.uci).then(r => {
         const good = r.wpDiff <= WP_ACCEPT;
         if (good) verdict.correct = true;
         verdict.text = `${res.san}: quick eval ${formatEval(r.cp * (d.sideToMove === 'white' ? 1 : -1))}, ${r.wpDiff.toFixed(1)} win-% behind ${d.bestSan}.${good ? ' Accepted.' : ''}`;
-        if (state?.verdict === verdict) renderPanel();
-      }).catch(() => {});
+      }).catch(() => {}).then(() => {
+        if (state?.verdict === verdict) reveal(verdict); // now gradeable, with the settled verdict
+      });
+      return;
     }
     if (correct) {
       // Walk the matched line for follow-up moves before revealing.
@@ -405,6 +414,18 @@ export async function drillsView(root, query) {
         board.set(reply.fen, { lastMove: reply.uci, shapes: lineShapes(d.lines, d.playedUci) });
         reveal(state.verdict);
       };
+      return;
+    }
+    if (state.status === 'verifying') {
+      // Answer is shown, but the off-list move is still being scored by the
+      // engine: no grade buttons yet, so a fast grade cannot lock in a verdict
+      // the engine is about to overturn.
+      pane.innerHTML = `<div class="guess">
+        <div class="result ${state.verdict.correct ? 'good' : 'bad'}">${esc(state.verdict.text)}</div>
+        <p style="margin: 6px 0">${chips}</p>
+        <ul class="lines">${d.lines.map((l, i) => `<li class="${l.uci === d.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === d.playedUci ? '<span class="chip mistake">played</span>' : ''}</li>`).join('')}</ul>
+        <p class="muted">Checking your move with the engine…</p>
+      </div>`;
       return;
     }
     const e = state.game?.explanations?.[d.ply];

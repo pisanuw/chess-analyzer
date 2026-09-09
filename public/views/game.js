@@ -372,10 +372,11 @@ export async function gameView(root, id, startPly) {
   async function gtmMove(orig, dest) {
     const g = state.gtm;
     if (g.busy || g.done) return;
+    g.busy = true; // lock before any await so a second drag cannot double-submit this ply
     const ply = g.plies[g.i];
     const m = moves()[ply - 1];
     const res = await applyMove(m.fenBefore, orig, dest);
-    if (!res) return gtmShow(); // dismissed promotion
+    if (!res) { g.busy = false; return gtmShow(); } // dismissed promotion
     const sign = m.color === 'white' ? 1 : -1;
     const bestWp = winProb((m.lines[0]?.cp ?? m.evalBefore) * sign);
     const rank = m.lines.findIndex(l => l.uci === res.uci);
@@ -393,7 +394,7 @@ export async function gameView(root, id, startPly) {
     if (res.uci === m.uci) return finish(m.loss, 'your game move');
     if (rank >= 0) return finish(+Math.max(0, bestWp - winProb(m.lines[rank].cp * sign)).toFixed(1), rank === 0 ? "engine's first choice" : `engine line ${rank + 1}`);
     // Off-list: quick paired eval when an engine is around; unscored otherwise.
-    g.busy = true;
+    // Already locked (g.busy) since entry; render the "scoring" state.
     renderPanel();
     try {
       const r = await api.evalMove(id, ply, res.uci);

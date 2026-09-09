@@ -41,6 +41,22 @@ test('bearer auth works for scripts', async () => {
   assert.equal(s.readonly, true);
 });
 
+test('login throttle binds per client and ignores forged X-Forwarded-For', async () => {
+  // Rotating X-Forwarded-For used to hand out a fresh bucket per request; the
+  // limiter now keys on the real peer (req.ip here), so all of these count as
+  // one client and the window still binds. Runs after the successful-login test,
+  // which clears this client's counter.
+  for (let i = 0; i < 20; i++) {
+    const r = await req('POST', '/api/login', { body: { password: 'nope' }, headers: { 'x-forwarded-for': `10.0.0.${i}` } });
+    assert.equal(r.status, 401, `attempt ${i} is a normal wrong-password 401`);
+  }
+  const blocked = await req('POST', '/api/login', { body: { password: 'nope' }, headers: { 'x-forwarded-for': '10.9.9.9' } });
+  assert.equal(blocked.status, 429, 'the 21st attempt is throttled despite a fresh X-Forwarded-For');
+  // The throttle applies before the password check, so even the right password waits.
+  const rightButThrottled = await req('POST', '/api/login', { body: { password: 'test-passphrase-42' } });
+  assert.equal(rightButThrottled.status, 429);
+});
+
 test('read-only mode: game mutations blocked, training writes allowed', async () => {
   const auth = { authorization: 'Bearer test-passphrase-42' };
   const blocked = await req('POST', '/api/games/import', { body: { pgn: 'x' }, headers: auth });
