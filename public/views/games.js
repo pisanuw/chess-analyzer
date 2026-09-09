@@ -112,10 +112,25 @@ export async function gamesView(root) {
     location.hash = `#/game/${id}`;
   });
 
+  // A metadb export names the opponent's FIDE id in the file, e.g.
+  // "HarishNeeraj_FIDE30958130_Total_739_Games.pgn". When such a file is chosen
+  // for scouting, import it into the compact book tier (hundreds of games, no
+  // per-game analysis) instead of the one-game-per-job path.
+  const fideOf = n => (String(n).match(/fide[-_ ]?(\d{4,})/i) || [])[1] || null;
+  let scoutFile = null; // { filename, fideId, text } when a FIDE export is chosen
   root.querySelector('#pgnfile')?.addEventListener('change', async e => {
-    const texts = await Promise.all([...e.target.files].map(f => f.text()));
+    const files = [...e.target.files];
+    const texts = await Promise.all(files.map(f => f.text()));
     root.querySelector('#pgn').value = texts.join('\n\n');
-    updateNameSuggestions();
+    const f = files.find(f => fideOf(f.name));
+    scoutFile = f ? { filename: f.name, fideId: fideOf(f.name), text: texts[files.indexOf(f)] } : null;
+    if (scoutFile) {
+      root.querySelector('input[name="gpurpose"][value="scout"]').checked = true;
+      subjectInput.hidden = false;
+      const names = updateNameSuggestions();
+      if (!subjectInput.value) subjectInput.value = names[0] || '';
+      toast(`FIDE export detected (id ${scoutFile.fideId}); will build a scouting book`);
+    } else updateNameSuggestions();
   });
 
   // Autocomplete for the scout subject: names from the pasted PGN headers (weighted
@@ -161,6 +176,16 @@ export async function gamesView(root) {
     if (purpose === 'scout' && !subject) return toast('Enter the opponent name to scout', true);
     try {
       await busy(e.currentTarget, async () => {
+        // FIDE export + scouting -> book tier. Analysis is not queued here; the
+        // recent subset is promoted from the Scouting page.
+        if (purpose === 'scout' && scoutFile?.fideId) {
+          const r = await api.scoutImport({ pgn: scoutFile.text, fideId: scoutFile.fideId, name: subject, filename: scoutFile.filename });
+          toast(`Scouting book for ${r.name}: ${r.imported} games${r.skipped ? `, ${r.skipped} skipped (Chess960/odd)` : ''}. ${r.dossier.analysisSet.length} recent games ready to analyse.`);
+          root.querySelector('#pgn').value = '';
+          scoutFile = null;
+          location.hash = `#/scout/${encodeURIComponent(r.name)}`;
+          return;
+        }
         const r = await api.importPgn(pgn, root.querySelector('#auto').checked, purpose, subject);
         toast(`Imported ${r.imported.length}${r.skipped.length ? `, ${r.skipped.length} already present` : ''}${r.failed.length ? `, ${r.failed.length} failed to parse` : ''}`);
         if (r.failed.length) console.warn('Failed games', r.failed);

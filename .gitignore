@@ -1,5 +1,6 @@
 node_modules/
 data/
+downloaded/
 *.log
 .DS_Store
 

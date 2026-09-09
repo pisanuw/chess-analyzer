@@ -323,7 +323,7 @@ export function materialSignature(fen, moverColor) {
   return moverColor === 'white' ? `${white} vs ${black}` : `${black} vs ${white}`;
 }
 
-function resultScore(result, color) {
+export function resultScore(result, color) {
   if (result === '1-0') return color === 'white' ? 1 : 0;
   if (result === '0-1') return color === 'black' ? 1 : 0;
   if (result === '1/2-1/2') return 0.5;

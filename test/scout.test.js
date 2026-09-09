@@ -124,6 +124,52 @@ test('prep sheet endpoint: 404 unknown subject, clean error in manual mode', asy
   assert.match((await manual.json()).error, /manual/);
 });
 
+test('scout book: a FIDE export builds a recency-weighted book, listed by FIDE id', async () => {
+  const JSON_H = { 'content-type': 'application/json' };
+  const PGN = `[Event "A"]
+[White "Tester, T"]
+[Black "Foe, F"]
+[Date "2026.03.01"]
+[WhiteElo "2100"]
+[BlackElo "2080"]
+[Result "1-0"]
+
+1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 1-0
+
+[Event "B"]
+[White "Rival, R"]
+[Black "Tester, T"]
+[Date "2026.04.01"]
+[WhiteElo "2090"]
+[BlackElo "2110"]
+[Result "0-1"]
+
+1. d4 Nf6 2. c4 g6 3. Nc3 d5 4. cxd5 Nxd5 0-1`;
+  const res = await fetch(base + '/api/scout/import', { method: 'POST', headers: JSON_H, body: JSON.stringify({ pgn: PGN, filename: 'TesterT_FIDE99887766_Total_2_Games.pgn' }) });
+  assert.equal(res.status, 200);
+  const r = await res.json();
+  assert.equal(r.fideId, '99887766');
+  assert.equal(r.name, 'Tester, T', 'subject name derived as the player in every game');
+  assert.equal(r.imported, 2);
+  assert.equal(r.dossier.total, 2);
+  assert.equal(r.dossier.results.white.games, 1);
+  assert.equal(r.dossier.results.black.games, 1);
+
+  const subjects = (await (await fetch(base + '/api/scout')).json()).subjects;
+  const t = subjects.find(s => s.subject === 'Tester, T');
+  assert.ok(t, 'the book opponent is listed');
+  assert.equal(t.fideId, '99887766');
+  assert.equal(t.bookGames, 2);
+
+  const book = await (await fetch(base + '/api/scout/book/99887766')).json();
+  assert.equal(book.name, 'Tester, T');
+  assert.equal(book.dossier.total, 2);
+
+  assert.equal((await fetch(base + '/api/scout/book/55555')).status, 404);
+  // No FIDE id anywhere (no filename): rejected, not silently mis-keyed.
+  assert.equal((await fetch(base + '/api/scout/import', { method: 'POST', headers: JSON_H, body: JSON.stringify({ pgn: PGN }) })).status, 400);
+});
+
 test('own games feed a derived dossier for their opponent', async () => {
   // Own game where the OPPONENT (black, named 'Opponent') blunders at ply 2.
   writeGame(dir, makeGame({ id: 'eeeeeeeeee01', color: 'white', moments: [{ ply: 2, loss: 28 }], plies: 4, explained: false }));

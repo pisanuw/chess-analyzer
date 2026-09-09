@@ -9,6 +9,10 @@ import path from 'node:path';
 const ROOT = process.cwd();
 export const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
 const GAMES_DIR = path.join(DATA_DIR, 'games');
+// Scout "book" tier: one compact file per opponent, keyed by FIDE id. Kept out
+// of GAMES_DIR so hundreds of an opponent's games never mix into the player's
+// own game list or the analysis queue.
+const SCOUTS_DIR = path.join(DATA_DIR, 'scouts');
 
 export const DEFAULT_SETTINGS = {
   playerNames: [],          // substrings matched against White/Black headers, case-insensitive
@@ -24,6 +28,12 @@ export const DEFAULT_SETTINGS = {
   useLocalEngine: true,     // false = keep this machine out of the analysis pool (offload all engine work to remotes); it still coordinates and runs explanations
   momentThreshold: 12,      // win-probability drop (0..100) that makes a player move a critical moment
   drillThreshold: 20,       // moments with at least this loss become drills
+  // Opponent scouting from a large per-player export (book tier). Recency and
+  // rating bound which games describe the opponent you will actually face.
+  scoutMaxAgeYears: 3,      // games older than this are dropped (the player is a different one)
+  scoutEloBand: 200,        // games more than this below/above current strength are off-profile
+  scoutHalfLifeDays: 540,   // recency weight halves every this many days (~18 months)
+  scoutAnalyseCount: 50,    // how many recent, on-strength games to promote for the engine dossier
   llmProvider: 'claude-cli', // 'claude-cli' | 'manual'
   claudeModel: '',          // blank = CLI default
   autoExplain: true,        // run LLM explanations right after engine analysis
@@ -31,6 +41,32 @@ export const DEFAULT_SETTINGS = {
 
 async function ensureDirs() {
   await fs.mkdir(GAMES_DIR, { recursive: true });
+}
+
+// A FIDE id is the book filename; validate before touching the filesystem so a
+// crafted id cannot escape the scouts directory.
+const isFideId = id => /^\d{3,}$/.test(String(id || ''));
+
+export async function listScoutBooks() {
+  await fs.mkdir(SCOUTS_DIR, { recursive: true });
+  const out = [];
+  for (const f of (await fs.readdir(SCOUTS_DIR).catch(() => [])).filter(f => f.endsWith('.json'))) {
+    const b = await readJson(path.join(SCOUTS_DIR, f), null).catch(() => null);
+    if (b?.fideId) out.push(b);
+  }
+  return out;
+}
+
+export async function getScoutBook(fideId) {
+  if (!isFideId(fideId)) return null;
+  return readJson(path.join(SCOUTS_DIR, fideId + '.json'), null);
+}
+
+export async function saveScoutBook(book) {
+  if (!isFideId(book?.fideId)) throw new Error('scout book needs a numeric FIDE id');
+  await fs.mkdir(SCOUTS_DIR, { recursive: true });
+  await writeJson(path.join(SCOUTS_DIR, book.fideId + '.json'), book);
+  return book;
 }
 
 async function readJson(file, fallback) {
@@ -77,8 +113,10 @@ export async function sweepTmpFiles() {
 }
 
 /** When data/ is its own git repo, make sure purely-local files never sync:
- * crash leftovers and the per-machine engine eval cache. */
-export async function ensureDataIgnores(lines = ['*.tmp', 'evalcache.json']) {
+ * crash leftovers, the per-machine engine eval cache, and the scout book blobs
+ * (each holds hundreds of games' PGN; they are rebuilt locally from the export,
+ * and the analysed subset syncs as normal game files). */
+export async function ensureDataIgnores(lines = ['*.tmp', 'evalcache.json', 'scouts/']) {
   try { await fs.stat(path.join(DATA_DIR, '.git')); } catch { return; }
   const file = path.join(DATA_DIR, '.gitignore');
   const current = await fs.readFile(file, 'utf8').catch(() => '');

@@ -2,8 +2,9 @@
 import express from 'express';
 import path from 'node:path';
 import { Chess } from 'chess.js';
-import { parsePgnGames, splitPgn, detectPlayerColor } from './pgn.js';
-import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from './pgn.js';
+import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { parseFideFromFilename, buildScoutBook, scoutDossier } from './scoutbook.js';
 import { enqueue, listJobs, cancelJobs } from './jobs.js';
 import { findStockfish, getSparringEngine } from './engine.js';
 import { probeHosts, remoteHostList } from './enginepool.js';
@@ -53,6 +54,7 @@ const NUMERIC_LIMITS = {
   playerRating: [400, 3500], engineDepth: [4, 40], engineMultiPv: [1, 6],
   engineThreads: [0, 64], engineHash: [16, 8192], remoteThreads: [1, 64],
   momentThreshold: [1, 100], drillThreshold: [1, 100],
+  scoutMaxAgeYears: [1, 20], scoutEloBand: [50, 1000], scoutHalfLifeDays: [30, 3650], scoutAnalyseCount: [1, 100],
 };
 
 // Explanations and the game summary depend on analysis and colour; clear together.
@@ -436,12 +438,23 @@ app.get('/api/report/card', wrap(async (req, res) => {
 app.get('/api/repertoire', wrap(async (req, res) => res.json({ repertoire: await buildRepertoire() })));
 
 // --- scouting ----------------------------------------------------------------
+const SCOUT_MAX_GAMES = 2000; // book tier: no per-game jobs, but bound the one-shot parse
+
+// Recency/rating knobs that bound which of an opponent's games still describe
+// the player you will face. Shared by the dossier view and promotion.
+const dossierOpts = settings => ({
+  maxAgeYears: settings.scoutMaxAgeYears, eloBand: settings.scoutEloBand,
+  halfLifeDays: settings.scoutHalfLifeDays, analyseCount: settings.scoutAnalyseCount,
+});
+
 app.get('/api/scout', wrap(async (req, res) => {
-  // Subjects = scouted imports plus every opponent from the player's own games.
+  // Subjects = FIDE-keyed book imports, scouted single games, and every
+  // opponent from the player's own games. A book entry is keyed by FIDE id;
+  // name-only entries (own games, legacy scout imports) key by name.
   const subjects = new Map();
   const add = (name, analysed, kind) => {
     if (!name || name === '?') return;
-    const s = subjects.get(name) || { subject: name, games: 0, analysed: 0, scoutGames: 0, ownGames: 0 };
+    const s = subjects.get(name) || { subject: name, fideId: null, games: 0, analysed: 0, scoutGames: 0, ownGames: 0, bookGames: 0 };
     s.games++;
     if (analysed) s.analysed++;
     s[kind]++;
@@ -452,7 +465,80 @@ app.get('/api/scout', wrap(async (req, res) => {
     if (g.purpose === 'scout' && g.subject) add(g.subject, analysed, 'scoutGames');
     else if (g.purpose !== 'scout' && g.playerColor) add(g.playerColor === 'white' ? g.black : g.white, analysed, 'ownGames');
   }
-  res.json({ subjects: [...subjects.values()].sort((a, b) => b.games - a.games || a.subject.localeCompare(b.subject)) });
+  // Attach FIDE books: match to an existing subject by name, else add one.
+  for (const b of await listScoutBooks()) {
+    const s = subjects.get(b.name) || { subject: b.name, fideId: null, games: 0, analysed: 0, scoutGames: 0, ownGames: 0, bookGames: 0 };
+    s.fideId = b.fideId;
+    s.bookGames = b.total || (b.games || []).length;
+    subjects.set(b.name, s);
+  }
+  res.json({ subjects: [...subjects.values()].sort((a, b) => (b.bookGames + b.games) - (a.bookGames + a.games) || a.subject.localeCompare(b.subject)) });
+}));
+
+// Ingest a large per-opponent export into the book tier: parse every game,
+// derive the recency/rating-weighted dossier, store one compact file. No engine
+// and no LLM here; this is instant and covers the opponent's whole history.
+app.post('/api/scout/import', wrap(async (req, res) => {
+  const pgn = typeof req.body === 'string' ? req.body : req.body?.pgn;
+  if (!pgn || !pgn.trim()) return res.status(400).json({ error: 'No PGN provided' });
+  // FIDE id from the body, or parsed from the uploaded filename the client sends.
+  const fideId = String(req.body?.fideId || parseFideFromFilename(req.body?.filename) || '').trim();
+  if (!/^\d{3,}$/.test(fideId)) return res.status(400).json({ error: 'a numeric FIDE id is required (from the filename, e.g. _FIDE30958130_)' });
+  const chunks = splitPgn(pgn);
+  if (chunks.length > SCOUT_MAX_GAMES) return res.status(413).json({ error: `too many games in one file (${chunks.length}); the book tier caps at ${SCOUT_MAX_GAMES}` });
+  const parsed = parsePgnGames(chunks);
+  const ok = parsed.filter(r => r.ok && r.game.moves.length).map(r => r.game);
+  const failed = parsed.length - ok.length;
+  // Subject name: explicit, else the player present in the most games (a clean
+  // per-player export has exactly one).
+  let name = String(req.body?.name || '').trim();
+  if (!name) {
+    const counts = new Map();
+    for (const g of ok) for (const n of [g.headers.White, g.headers.Black]) if (n) counts.set(n, (counts.get(n) || 0) + 1);
+    name = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+  }
+  if (!name) return res.status(400).json({ error: 'could not determine the opponent name; pass name explicitly' });
+  const aliases = Array.isArray(req.body?.aliases) ? req.body.aliases.slice(0, 10).map(s => String(s).slice(0, 80)) : [];
+  const book = buildScoutBook(ok, { fideId, name, aliases });
+  if (!book.total) return res.status(400).json({ error: `no games for "${name}" found in the file (check the name matches the PGN headers)` });
+  await saveScoutBook(book);
+  const dossier = scoutDossier(book, dossierOpts(await getSettings()));
+  // Chess960 ("Freestyle") games and odd PGNs are the usual skips; surface the count.
+  res.json({ fideId, name, imported: book.total, skipped: failed, dossier });
+}));
+
+app.get('/api/scout/book/:fideId', wrap(async (req, res) => {
+  const book = await getScoutBook(req.params.fideId);
+  if (!book) return res.status(404).json({ error: 'no scout book for this FIDE id' });
+  res.json({ fideId: book.fideId, name: book.name, importedAt: book.importedAt, dossier: scoutDossier(book, dossierOpts(await getSettings())) });
+}));
+
+// Promote the recent, on-strength subset into the engine/LLM dossier: create
+// scout game records (matched to the existing name-keyed scout machinery) and
+// queue analysis. This is the only step that needs Stockfish.
+app.post('/api/scout/book/:fideId/promote', wrap(async (req, res) => {
+  const book = await getScoutBook(req.params.fideId);
+  if (!book) return res.status(404).json({ error: 'no scout book for this FIDE id' });
+  const settings = await getSettings();
+  const dossier = scoutDossier(book, dossierOpts(settings));
+  const wanted = new Set(dossier.analysisSet);
+  const byId = new Map(book.games.map(g => [g.id, g]));
+  const queued = [], already = [];
+  for (const id of wanted) {
+    const bg = byId.get(id);
+    if (!bg?.pgn) continue;
+    if (await getGame(id)) { already.push(id); continue; }
+    const g = parseGame(bg.pgn);
+    const game = {
+      id: g.id, headers: g.headers, moves: g.moves, pgn: g.pgn,
+      playerColor: detectPlayerColor(g.headers, [book.name, ...(book.aliases || [])]) || bg.color,
+      purpose: 'scout', subject: book.name, subjectId: book.fideId,
+      status: 'imported', importedAt: new Date().toISOString(),
+    };
+    await saveGame(game);
+    if (game.playerColor) { enqueue('analyse', game.id); queued.push(game.id); }
+  }
+  res.json({ subject: book.name, fideId: book.fideId, queued: queued.length, already: already.length, analysisSet: dossier.analysisSet.length });
 }));
 
 app.get('/api/scout/:subject', wrap(async (req, res) => {

@@ -1,13 +1,18 @@
-// Scouting: per-opponent dossier built from their analysed games.
+// Scouting: a FIDE-keyed "book" dossier built instantly from an opponent's
+// whole game history (recency/rating weighted), plus the deeper engine/LLM
+// dossier for the recent subset once it has been analysed.
 import { api, esc, toast, movePrefix } from '../api.js';
 import { barChart } from '../charts.js';
 import { CATEGORY_LABEL } from './report.js';
+
+const fmtLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
+const lichess = sans => `https://lichess.org/analysis/pgn/${encodeURIComponent(fmtLine(sans))}`;
 
 export async function scoutView(root) {
   const { subjects } = await api.scoutSubjects();
   const { readonly } = await api.status().catch(() => ({}));
   if (!subjects.length) {
-    root.innerHTML = `<h1>Scouting</h1><div class="empty">No opponents yet. Everyone you play appears here once your games are analysed; import an opponent's other games with "Scout an opponent" for a deeper dossier.</div>`;
+    root.innerHTML = `<h1>Scouting</h1><div class="empty">No opponents yet. Everyone you play appears here once your games are analysed. Import an opponent's games with "Scout an opponent"; a FIDE export (filename like <code>Name_FIDE12345_…​.pgn</code>) builds a full repertoire book from hundreds of their games at once.</div>`;
     return;
   }
   const current = decodeURIComponent(location.hash.split('/')[2] || '') || subjects[0].subject;
@@ -22,34 +27,115 @@ export async function scoutView(root) {
   const renderSubjects = q => {
     const needle = q.trim().toLowerCase();
     const shown = subjects.filter(s => !needle || s.subject.toLowerCase().includes(needle));
-    listEl.innerHTML = shown.map(s => `<button class="small${s.subject === current ? ' primary' : ''}" data-subject="${esc(s.subject)}">${esc(s.subject)} (${s.analysed}/${s.games})</button>`).join('')
-      || '<span class="muted">No opponents match.</span>';
+    listEl.innerHTML = shown.map(s => {
+      const n = s.bookGames || s.games;
+      return `<button class="small${s.subject === current ? ' primary' : ''}" data-subject="${esc(s.subject)}" title="${s.fideId ? 'FIDE ' + esc(s.fideId) + ', ' : ''}${n} game${n === 1 ? '' : 's'}">${esc(s.subject)} (${n}${s.fideId ? ' \u{1F4D6}' : ''})</button>`;
+    }).join('') || '<span class="muted">No opponents match.</span>';
     listEl.querySelectorAll('button[data-subject]').forEach(b => b.onclick = () => { location.hash = `#/scout/${encodeURIComponent(b.dataset.subject)}`; });
   };
   renderSubjects('');
   root.querySelector('#subject-search').addEventListener('input', e => renderSubjects(e.target.value));
-  await renderDossier(root.querySelector('#dossier'), current, readonly);
+  const entry = subjects.find(s => s.subject === current) || { subject: current, fideId: null };
+  await renderDossier(root.querySelector('#dossier'), entry, readonly);
 }
 
-async function renderDossier(el, subject, readonly) {
-  let data;
-  try { data = await api.scout(subject); } catch (err) {
-    el.innerHTML = `<div class="empty">${esc(err.message)}. Games may still be in the analysis queue.</div>`;
+async function renderDossier(el, entry, readonly) {
+  const subject = entry.subject;
+  // Book dossier (instant, whole history) and engine dossier (analysed subset)
+  // are independent: a freshly imported opponent has a book but no engine data.
+  const [book, data] = await Promise.all([
+    entry.fideId ? api.scoutBook(entry.fideId).catch(() => null) : Promise.resolve(null),
+    api.scout(subject).catch(() => null),
+  ]);
+  if (!book && !data) {
+    el.innerHTML = `<div class="empty">Nothing to show yet for ${esc(subject)}. Their games may still be in the analysis queue.</div>`;
     return;
   }
+  el.innerHTML = (book ? bookSection(book.dossier, readonly) : '')
+    + `<div id="engine-dossier">${data ? '' : engineHint(book, readonly)}</div>`;
+
+  if (book) wirePromote(el, book.dossier, subject, readonly);
+  if (data) renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly);
+}
+
+/** The book tier: what they play, weighted to recent, on-strength games. */
+function bookSection(d, readonly) {
+  const cov = d.coverage;
+  const trend = d.eloTrend.length
+    ? d.eloTrend.map(e => `<span class="chip" title="${e.games} game${e.games === 1 ? '' : 's'}">${e.year}: ${e.elo}</span>`).join(' ')
+    : '<span class="muted">no ratings in the file</span>';
+  const repTable = color => {
+    const rows = d.repertoire.filter(r => r.color === color);
+    if (!rows.length) return `<div class="empty">No ${color} games in range.</div>`;
+    return `<table><thead><tr><th class="num">Share</th><th>Main line</th><th>ECO</th><th class="num">Games</th><th class="num">Scores</th><th class="num">vs ~Elo</th><th>Last</th></tr></thead>
+      <tbody>${rows.slice(0, 10).map(r => `<tr>
+        <td class="num"><b>${r.share}%</b></td>
+        <td>${esc(fmtLine(r.line))} <a href="${lichess(r.line)}" target="_blank" rel="noopener" title="Open on lichess">↗</a></td>
+        <td>${esc(r.eco)}</td>
+        <td class="num">${r.count}</td>
+        <td class="num">${r.scorePct != null ? r.scorePct + '%' : '–'}</td>
+        <td class="num">${r.avgOppElo ?? '–'}</td>
+        <td><small>${esc(r.lastDate)}</small></td>
+      </tr>`).join('')}</tbody></table>`;
+  };
+  return `
+    <h2 style="margin-bottom:4px">${esc(d.name)}${d.fideId ? ` <span class="muted" style="font-size:14px">FIDE ${esc(d.fideId)}</span>` : ''}</h2>
+    <p class="muted">Repertoire book from ${d.total} games${d.dateRange ? ` (${esc(d.dateRange.from)} to ${esc(d.dateRange.to)})` : ''}. Weighted toward recent, on-strength games: ${cov.droppedOld} game${cov.droppedOld === 1 ? '' : 's'} older than ${cov.maxAgeYears} years and ${cov.droppedElo} more than ${cov.eloBand} Elo off their current strength are set aside, because they no longer describe the player you will face.</p>
+    <div class="tiles">
+      <div class="tile"><div class="v">${d.currentElo ?? '–'}</div><div class="l">Current strength</div></div>
+      <div class="tile"><div class="v">${d.peakElo ?? '–'}</div><div class="l">Peak in file</div></div>
+      <div class="tile"><div class="v">${d.results.white.recentScorePct ?? '–'}% / ${d.results.black.recentScorePct ?? '–'}%</div><div class="l">Recent score W / B</div></div>
+      <div class="tile"><div class="v">${cov.analysing}</div><div class="l">Recent games to analyse</div></div>
+    </div>
+    <p class="muted" style="margin:10px 0 0"><small>Rating over time: ${trend}</small></p>
+    <div class="grid grid-2" style="margin-top: 16px">
+      <div class="card"><h3 style="margin-top:0">As White <span class="muted">(${d.results.white.games} games, scores ${d.results.white.scorePct ?? '–'}% all-time)</span></h3>${repTable('white')}</div>
+      <div class="card"><h3 style="margin-top:0">As Black <span class="muted">(${d.results.black.games} games, scores ${d.results.black.scorePct ?? '–'}% all-time)</span></h3>${repTable('black')}</div>
+    </div>
+    <div class="card" style="margin-top: 16px">
+      <h3 style="margin-top:0">Deep preparation</h3>
+      <p class="muted">Run Stockfish and the coach model on their ${cov.analysing} most recent, on-strength games to find where they go wrong: error types, clock behaviour, recurring weaknesses, and "punish" drills from the positions after their mistakes.</p>
+      ${readonly
+        ? '<p class="muted"><small>Analysis runs on the home machine, then publishes here.</small></p>'
+        : `<button class="primary" id="promote">Analyse ${cov.analysing} recent games</button> <span id="promote-note" class="muted"></span>`}
+    </div>`;
+}
+
+function engineHint(book, readonly) {
+  if (readonly) return '';
+  return `<div class="card" style="margin-top:16px"><p class="muted">${book ? 'No games analysed yet. Use "Analyse recent games" above to build the error dossier and punish drills.' : 'Their mistakes, error types, and punish drills appear here once their games are analysed.'}</p></div>`;
+}
+
+function wirePromote(el, dossier, subject, readonly) {
+  const btn = el.querySelector('#promote');
+  if (!btn) return;
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = 'Queuing…';
+    try {
+      const r = await api.promoteScout(dossier.fideId);
+      el.querySelector('#promote-note').textContent = `${r.queued} queued${r.already ? `, ${r.already} already present` : ''}. The dossier builds as analysis finishes.`;
+      btn.textContent = `Queued ${r.queued} games`;
+      toast(`${r.queued} of ${subject}'s recent games queued for analysis`);
+    } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = `Analyse ${dossier.coverage.analysing} recent games`; }
+  };
+}
+
+/** The deeper dossier over the analysed subset: where they go wrong, clock,
+ * repertoire prep-ends, recurring patterns, and the LLM prep sheet. */
+async function renderEngineDossier(el, data, subject, readonly) {
   const { report: r, repertoire, prepSheet } = data;
   const j = r.totalJudged;
   const catLabel = c => CATEGORY_LABEL[c] || c;
-  const fmtLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
   el.innerHTML = `
-    <p class="muted">${r.games} analysed game${r.games === 1 ? '' : 's'} of ${esc(subject)}, including your own games against them. Their mistakes, phrased for your preparation: aim for the phases and structures where they go wrong. Error categories and patterns come from explained scout imports; your own games contribute engine data.</p>
+    <h2 style="margin-top: 24px">Deep dossier <span class="muted" style="font-size:14px">${r.games} analysed game${r.games === 1 ? '' : 's'}</span></h2>
+    <p class="muted">Their mistakes, phrased for your preparation: aim for the phases and structures where they go wrong. Error categories and patterns come from explained scout imports; your own games against them contribute engine data.</p>
     <div class="tiles">
       <div class="tile"><div class="v">${r.overallAccuracy ?? '–'}%</div><div class="l">Their average accuracy</div></div>
       <div class="tile"><div class="v">${(r.totalMoments / r.games).toFixed(1)}</div><div class="l">Their mistakes per game</div></div>
       <div class="tile"><div class="v">${j.blunder} / ${j.mistake} / ${j.inaccuracy}</div><div class="l">Blunders / mistakes / inaccuracies</div></div>
       <div class="tile"><div class="v">${r.timeManagement ? r.timeManagement.underTwoMinMoments : '–'}</div><div class="l">Their errors under 2 minutes</div></div>
     </div>
-    ${r.focus.length ? `<h2>Where they go wrong</h2><div class="grid grid-3">${r.focus.map((f, i) => `
+    ${r.focus.length ? `<h3>Where they go wrong</h3><div class="grid grid-3">${r.focus.map((f, i) => `
       <div class="card"><div class="muted">#${i + 1}</div><b>${esc(catLabel(f.category))}</b><div class="muted">${f.count} moment${f.count === 1 ? '' : 's'}, weighted ${f.weight}</div></div>`).join('')}</div>` : ''}
     <div class="grid grid-2" style="margin-top: 20px">
       <div class="card">
@@ -62,15 +148,15 @@ async function renderDossier(el, subject, readonly) {
         <table><thead><tr><th>Phase</th><th class="num">Moves</th><th class="num">Accuracy</th><th class="num">Moments / 100 moves</th></tr></thead>
         <tbody>${['opening', 'middlegame', 'endgame'].map(ph => { const p = r.byPhase[ph]; return `<tr><td>${ph}</td><td class="num">${p.moves}</td><td class="num">${p.accuracy ?? '–'}${p.accuracy != null ? '%' : ''}</td><td class="num">${p.momentsPer100 ?? '–'}</td></tr>`; }).join('')}</tbody></table>
         ${r.timeManagement ? `<h3>Their clock</h3>
-        <p class="muted"><small>Mistakes with over 5 minutes left: ${r.timeManagement.comfortBlunders}. Errors under 2 minutes: ${r.timeManagement.underTwoMinMoments}. Snap-moves that failed: ${r.timeManagement.fastMoments}. Push positions where they must think; they crack ${r.timeManagement.underTwoMinMoments > r.timeManagement.comfortBlunders ? 'in time trouble' : 'even with time'}.</small></p>` : ''}
+        <p class="muted"><small>Mistakes with over 5 minutes left: ${r.timeManagement.comfortBlunders}. Errors under 2 minutes: ${r.timeManagement.underTwoMinMoments}. Snap-moves that failed: ${r.timeManagement.fastMoments}.</small></p>` : ''}
       </div>
     </div>
     <div class="card" style="margin-top: 20px">
-      <h3 style="margin-top:0">Their repertoire and where their prep ends</h3>
+      <h3 style="margin-top:0">Prep-ends in the analysed games</h3>
       ${repertoire.length ? `<table><thead><tr><th>As</th><th>Line</th><th>ECO</th><th class="num">Games</th><th class="num">Their score</th><th class="num">Prep ends</th><th>Games</th></tr></thead>
       <tbody>${repertoire.map(l => `<tr>
         <td><span class="chip ${l.color}">${l.color}</span></td>
-        <td>${esc(fmtLine(l.line))} <a href="https://lichess.org/analysis/pgn/${encodeURIComponent(fmtLine(l.line))}" target="_blank" rel="noopener" title="Open on the lichess analysis board">↗</a>${l.moveOrders > 1 ? ` <span class="chip" title="Reached by ${l.moveOrders} move orders">${l.moveOrders} orders</span>` : ''}</td>
+        <td>${esc(fmtLine(l.line))} <a href="${lichess(l.line)}" target="_blank" rel="noopener" title="Open on lichess">↗</a>${l.moveOrders > 1 ? ` <span class="chip" title="Reached by ${l.moveOrders} move orders">${l.moveOrders} orders</span>` : ''}</td>
         <td>${esc(l.eco)}</td>
         <td class="num">${l.count}</td>
         <td class="num">${l.scorePct != null ? l.scorePct + '%' : '–'}</td>
@@ -103,7 +189,7 @@ async function renderDossier(el, subject, readonly) {
   if (genBtn) genBtn.onclick = async e => {
     const b = e.target;
     b.disabled = true; b.textContent = 'Generating…';
-    try { await api.prepSheet(subject); await renderDossier(el, subject, readonly); }
+    try { await api.prepSheet(subject); await renderEngineDossier(el, await api.scout(subject), subject, readonly); }
     catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Generate prep sheet (about a minute)'; }
   };
 
