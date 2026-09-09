@@ -4,6 +4,10 @@ import { api, esc, toast } from '../api.js';
 export async function settingsView(root) {
   const { settings: s } = await api.settings();
   const status = await api.status();
+  // On the hosted read-only mirror there is nothing to configure (no engine, no
+  // LLM, and settings writes are blocked), so Settings does not apply: send the
+  // player back to Home rather than showing dead controls.
+  if (status.readonly) { location.hash = '#/home'; return; }
   root.innerHTML = `
     <h1>Settings</h1>
     <div class="grid grid-2">

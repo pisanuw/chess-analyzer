@@ -5,6 +5,7 @@ import { CATEGORY_LABEL } from './report.js';
 
 export async function scoutView(root) {
   const { subjects } = await api.scoutSubjects();
+  const { readonly } = await api.status().catch(() => ({}));
   if (!subjects.length) {
     root.innerHTML = `<h1>Scouting</h1><div class="empty">No opponents yet. Everyone you play appears here once your games are analysed; import an opponent's other games with "Scout an opponent" for a deeper dossier.</div>`;
     return;
@@ -27,10 +28,10 @@ export async function scoutView(root) {
   };
   renderSubjects('');
   root.querySelector('#subject-search').addEventListener('input', e => renderSubjects(e.target.value));
-  await renderDossier(root.querySelector('#dossier'), current);
+  await renderDossier(root.querySelector('#dossier'), current, readonly);
 }
 
-async function renderDossier(el, subject) {
+async function renderDossier(el, subject, readonly) {
   let data;
   try { data = await api.scout(subject); } catch (err) {
     el.innerHTML = `<div class="empty">${esc(err.message)}. Games may still be in the analysis queue.</div>`;
@@ -93,13 +94,16 @@ async function renderDossier(el, subject) {
         <p><b>Watch for:</b> ${esc(prepSheet.watch_fors)}</p>
         <p class="muted"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.</small></p>` : `
         <p class="muted">One page: their weaknesses, the game plan against them, and what to watch for.</p>`}
-      <button class="small" id="gen-prep">${prepSheet ? 'Regenerate' : 'Generate'} prep sheet (about a minute)</button>
+      ${readonly
+        ? (prepSheet ? '' : '<p class="muted"><small>Prep sheets are generated on the home machine and published here.</small></p>')
+        : `<button class="small" id="gen-prep">${prepSheet ? 'Regenerate' : 'Generate'} prep sheet (about a minute)</button>`}
     </div>`;
 
-  el.querySelector('#gen-prep').onclick = async e => {
+  const genBtn = el.querySelector('#gen-prep');
+  if (genBtn) genBtn.onclick = async e => {
     const b = e.target;
     b.disabled = true; b.textContent = 'Generating…';
-    try { await api.prepSheet(subject); await renderDossier(el, subject); }
+    try { await api.prepSheet(subject); await renderDossier(el, subject, readonly); }
     catch (err) { toast(err.message, true); b.disabled = false; b.textContent = 'Generate prep sheet (about a minute)'; }
   };
 

@@ -118,6 +118,10 @@ export async function updateDrillBadge() {
 api.status().then(({ readonly }) => {
   updateDrillBadge();
   if (readonly) {
+    // The hosted mirror has no engine, no LLM, and blocks settings writes, so
+    // the Settings page is dead weight: drop it from the nav (the route itself
+    // redirects to Home).
+    document.querySelector('[data-nav="settings"]')?.remove();
     window.addEventListener('hashchange', updateDrillBadge);
   } else {
     pollJobs();

@@ -22,6 +22,7 @@ const fmtSecs = s => s == null ? '–' : s >= 60 ? `${Math.floor(s / 60)}m${Stri
 export async function reportView(root) {
   const { report: r } = await api.report();
   const { notes } = await api.patterns().catch(() => ({ notes: {} }));
+  const { readonly } = await api.status().catch(() => ({}));
   if (!r.games) {
     root.innerHTML = '<h1>Weakness report</h1><div class="empty">No analysed games yet. Import and analyse games first.</div>';
     return;
@@ -154,9 +155,11 @@ export async function reportView(root) {
       <p class="muted" style="margin-top:0">One transferable lesson per recurring pattern, synthesized from all its instances.</p>
       ${Object.values(notes).map(n => `<div class="explanation" style="margin-bottom:10px"><b>${esc(n.pattern)}</b> <span class="muted">(${n.count} instances)</span>
         <p><b>Rule:</b> ${esc(n.rule)}</p><p><b>Watch for:</b> ${esc(n.triggers)}</p><p><b>Habit:</b> ${esc(n.advice)}</p></div>`).join('') || ''}
-      ${r.patterns.filter(p => p.count >= 2 && !notes[p.pattern.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()]).slice(0, 10).map(p =>
-        `<button class="small" data-synth="${esc(p.pattern)}" style="margin: 2px">Synthesize: ${esc(p.pattern)} (${p.count})</button>`).join('')
-        || (Object.keys(notes).length ? '' : '<div class="empty">Appears once a pattern recurs in 2+ explained moments.</div>')}
+      ${readonly
+        ? (Object.keys(notes).length ? '' : '<div class="empty">Pattern notes are generated on the home machine and published here.</div>')
+        : (r.patterns.filter(p => p.count >= 2 && !notes[p.pattern.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()]).slice(0, 10).map(p =>
+            `<button class="small" data-synth="${esc(p.pattern)}" style="margin: 2px">Synthesize: ${esc(p.pattern)} (${p.count})</button>`).join('')
+          || (Object.keys(notes).length ? '' : '<div class="empty">Appears once a pattern recurs in 2+ explained moments.</div>'))}
     </div>`;
 
   root.querySelector('#prep-card').onclick = async () => {

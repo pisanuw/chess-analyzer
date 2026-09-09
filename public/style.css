@@ -67,6 +67,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 .topbar nav a { color: var(--text-2); padding: 4px 0; border-bottom: 2px solid transparent; }
 .topbar nav a.active { color: var(--text); border-bottom-color: var(--accent); }
 .topbar nav a:hover { text-decoration: none; color: var(--text); }
+.topbar nav { flex-wrap: wrap; row-gap: 2px; }
 .jobs { margin-left: auto; font-size: 13px; color: var(--text-2); display: flex; gap: 12px; align-items: center; }
 .jobs .job { display: flex; align-items: center; gap: 6px; }
 .jobs .bar { width: 90px; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
@@ -197,3 +198,24 @@ tr.clickable:hover td { background: var(--surface-2); }
 .promo button { font-size: 38px; line-height: 1; padding: 6px 14px; }
 .dialog { display: flex; flex-direction: column; gap: 10px; min-width: 300px; max-width: 92vw; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
 pre.prompt { white-space: pre-wrap; font-size: 12px; background: var(--surface-2); padding: 10px; border-radius: 6px; max-height: 260px; overflow: auto; }
+
+/* Phones. The board is already full width (game/drill layouts collapse to one
+   column at 900px); this makes the header, wide tables, and forms usable too. */
+@media (max-width: 640px) {
+  .topbar { flex-wrap: wrap; gap: 6px 16px; padding: 8px 12px; }
+  .topbar nav { gap: 14px; width: 100%; }
+  .brand { font-size: 15px; }
+  main { padding: 12px; }
+  h1 { font-size: 20px; }
+  h2 { font-size: 16px; }
+  /* Wide tables (the games list especially) scroll sideways in their card
+     instead of overflowing the viewport or crushing columns. */
+  .card { overflow-x: auto; }
+  table { min-width: max-content; }
+  /* 16px inputs so iOS Safari does not zoom in on focus. */
+  input[type=text], input[type=number], input[type=search], select, textarea { font-size: 16px; }
+  .tiles { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+  .tile .v { font-size: 22px; }
+  .board-controls { flex-wrap: wrap; }
+  .toast { left: 12px; right: 12px; transform: none; text-align: center; }
+}

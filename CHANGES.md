@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-08 (simpler, mobile-friendly hosted mirror)
+
+- The hosted read-only mirror no longer shows controls that cannot work there. Settings is dropped from the nav and the route redirects to Home (no engine, no LLM, and settings writes are blocked anyway, so the Stockfish path, remote-hosts, "use this machine as an analysis engine too", thresholds, and LLM provider had nowhere to go). The "Generate prep sheet" (scout) and "Synthesize pattern" (report) buttons, which POST to endpoints the mirror blocks with 405, are hidden too and replaced with a short "generated on the home machine" note. Local use is unchanged: everything still appears when not read-only.
+- Mobile layout: the top nav wraps instead of overflowing, wide tables (the games list especially) scroll sideways within their card rather than crushing columns or the viewport, inputs use 16px so iOS Safari does not zoom on focus, tiles and the board reflow to one column, and toasts span the width. The board, game, and drill layouts already collapsed to a single column on narrow screens.
+
 ## 2026-09-08 (remaining code-review items: pedagogy, robustness, aggregation)
 
 Pedagogy:
