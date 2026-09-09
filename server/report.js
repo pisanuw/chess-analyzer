@@ -144,11 +144,13 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
   const dstore = purpose === 'own' ? await getDrills() : { drills: [] };
   const foreign = purpose === 'own' ? await getForeignDrillStores() : [];
   const drillByPhase = {}, drillByCategory = {}, drillByKind = {}, patternSpeed = new Map();
+  const activityDates = new Set(); // YYYY-MM-DD the player practised, for the home-screen streak
   let drillAttempts = 0, drillCorrect = 0;
   const tally = drills => {
     for (const d of drills) {
       for (const r of d.reviews || []) {
         drillAttempts++; if (r.correct) drillCorrect++;
+        if (r.at) activityDates.add(String(r.at).slice(0, 10));
         const bump = (obj, k) => { if (!k) return; const o = obj[k] = obj[k] || { attempts: 0, correct: 0 }; o.attempts++; if (r.correct) o.correct++; };
         bump(drillByPhase, d.phase);
         bump(drillByCategory, d.category);
@@ -172,6 +174,7 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     const d = drillById.get(key);
     for (const gs of guesses) {
       drillAttempts++; if (gs.correct) drillCorrect++;
+      if (gs.at) activityDates.add(String(gs.at).slice(0, 10));
       const bump = (obj, k) => { if (!k) return; const o = obj[k] = obj[k] || { attempts: 0, correct: 0 }; o.attempts++; if (gs.correct) o.correct++; };
       bump(drillByPhase, d?.phase); bump(drillByCategory, d?.category); bump(drillByKind, d?.kind || 'find-best');
     }
@@ -250,6 +253,7 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     categoryTrend,
     drillStats,
     decoys,
+    activity: [...activityDates].sort(),
     feedback,
     timeManagement,
     // Rank by how many distinct games a signature recurs in, not raw moment

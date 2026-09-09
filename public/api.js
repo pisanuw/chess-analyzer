@@ -95,6 +95,7 @@ export const api = {
   suspendDrill: (id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended }),
   undoDrill: id => req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {}),
   restoreSuspended: () => req('POST', '/api/drills/restore-suspended', {}),
+  recordDecoy: correct => req('POST', '/api/drills/decoy', { correct }),
   feedback: (id, ply, helpful) => req('POST', `/api/games/${id}/moments/${ply}/feedback`, { helpful }),
   reexplain: (id, ply) => req('POST', `/api/games/${id}/moments/${ply}/reexplain`, {}),
   playoutMove: (fen, elo) => req('POST', '/api/playout/move', { fen, elo }),

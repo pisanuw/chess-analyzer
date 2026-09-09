@@ -57,8 +57,12 @@ export async function drillsView(root, query) {
       const bits = [];
       const topPattern = (report.patterns || []).find(p => p.count >= 2);
       if (topPattern) bits.push(`heaviest pattern: "${esc(topPattern.pattern)}" <a href="#/drills?pattern=${encodeURIComponent(topPattern.pattern)}" title="Every drill of this pattern, back to back">⚡ round</a>`);
-      const focus = (report.focus || [])[0];
-      if (focus) bits.push(`focus area: ${esc(CATEGORY_LABEL[focus.category] || focus.category)} <a href="#/drills?category=${encodeURIComponent(focus.category)}" title="Every drill of this error type, back to back">drill it</a>`);
+      // Prefer a worsening focus area over the merely-heaviest one, and say so.
+      const focus = (report.focus || []).find(f => (f.trend || 0) > 0.1) || (report.focus || [])[0];
+      if (focus) {
+        const tag = focus.trend > 0.1 ? ' (getting worse)' : focus.trend < -0.1 ? ' (improving)' : '';
+        bits.push(`focus area: ${esc(CATEGORY_LABEL[focus.category] || focus.category)}${tag} <a href="#/drills?category=${encodeURIComponent(focus.category)}" title="Every drill of this error type, back to back">drill it</a>`);
+      }
       if (bits.length) root.querySelector('#today').innerHTML = `<p class="muted">Today: ${dueCount} due · ${bits.join(' · ')}.</p>`;
     }).catch(() => {});
   }
@@ -110,6 +114,9 @@ export async function drillsView(root, query) {
       playout: playout ? { fen: drill.fen, sans: [], over: null, busy: false, startWp: winProb((drill.lines[0]?.cp ?? 0) * sign) } : null,
       verdict: null, game: null, follow: null, hintShown: false,
       startedAt: Date.now(), answerMs: null, timer: null,
+      // Vary how deep the follow-ups go (max, or one shorter) so repeated reps
+      // train the method, not a fixed "and then this exact move" sequence.
+      followCap: Math.max(1, maxFollowFor(drill) - Math.round(Math.random())),
     };
     el.innerHTML = `<div class="drill-layout">
       <div>
@@ -260,7 +267,7 @@ export async function drillsView(root, query) {
       if (expected && res.uci === expected.uci) {
         state.verdict.followUps++;
         state.verdict.foundSans.push(expected.san);
-        const more = f.idx + 4 < f.steps.length && state.verdict.followUps < maxFollowFor(d);
+        const more = f.idx + 4 < f.steps.length && state.verdict.followUps < state.followCap;
         if (more) return startFollowUp(f.steps, f.idx + 2);
         state.verdict.text += ` Follow-up${state.verdict.followUps > 1 ? 's' : ''} found: ${state.verdict.foundSans.join(', ')}.`;
         return done(res);
@@ -447,6 +454,8 @@ export async function drillsView(root, query) {
     const noteKey = (d.pattern || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
     const note = !state.verdict.correct && noteKey && patternNotes?.[noteKey];
     const answeredIn = state.answerMs != null && !decoy ? ` · answered in ${Math.round(state.answerMs / 1000)}s` : '';
+    // A drill missed several times is a leech: gently suggest parking it.
+    const lapses = (d.reviews || []).filter(r => r.correct === false).length;
     pane.innerHTML = `<div class="guess">
       <div class="result ${state.verdict.correct ? 'good' : 'bad'}">${esc(state.verdict.text)}</div>
       ${state.verdict.followMiss ? `<div class="result bad">${esc(state.verdict.followMiss)}</div>` : ''}
@@ -458,7 +467,7 @@ export async function drillsView(root, query) {
         <div class="row" style="margin-top: 6px; gap: 6px"><small class="muted">Was this explanation useful?</small>
           <button class="small${feedback[`${d.gameId}:${d.ply}`]?.helpful === true ? ' primary' : ''}" data-fb="yes">Yes</button>
           <button class="small${feedback[`${d.gameId}:${d.ply}`]?.helpful === false ? ' primary' : ''}" data-fb="no">Not really</button></div></div>` : (state.game ? '<p class="muted">No explanation for this moment yet.</p>' : '')}
-      <div class="row" style="margin-top: 12px">${gradeButtons}${decoy ? '' : `<span class="spacer"></span><button class="small" data-suspend title="Park this drill out of every queue; restore from the end-of-queue screen">Suspend drill</button>`}</div>
+      <div class="row" style="margin-top: 12px">${gradeButtons}${decoy ? '' : `<span class="spacer"></span>${lapses >= 3 ? `<small class="muted" style="margin-right:6px">Missed ${lapses}x: a leech, consider parking it.</small>` : ''}<button class="small" data-suspend title="Park this drill out of every queue; restore from the end-of-queue screen">Suspend drill</button>`}</div>
     </div>`;
     pane.querySelectorAll('button[data-grade]').forEach(b => b.onclick = () => grade(b.dataset.grade));
     pane.querySelector('button[data-suspend]')?.addEventListener('click', async () => {
@@ -486,9 +495,11 @@ export async function drillsView(root, query) {
     grading = true;
     try {
       if (state.drill.kind === 'decoy') {
-        // Ephemeral detection check: nothing to persist, count it separately.
+        // Ephemeral detection check: not graded into the ladder, but persist the
+        // seen/right tally per machine so the report can show the false-positive rate.
         session.decoys.seen++;
         if (state.verdict.correct) session.decoys.right++;
+        api.recordDecoy(state.verdict.correct).catch(() => {});
       } else {
         await api.reviewDrill(state.drill.id, g, state.verdict.correct, !!roundKey, state.answerMs);
         const missedAdded = !state.verdict.correct && !session.missed.some(x => x.id === state.drill.id);

@@ -14,6 +14,8 @@ export const CATEGORY_LABEL = {
   'unexplained': 'Not yet explained',
 };
 
+const KIND_LABEL = { 'find-best': 'Find the best move', threat: 'See the threat', punish: 'Punish (scout)', opening: 'Opening prep' };
+
 const catLabel = c => CATEGORY_LABEL[c] || c;
 const fmtSecs = s => s == null ? '–' : s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
 
@@ -39,8 +41,21 @@ export async function reportView(root) {
     </div>
 
     ${r.focus.length ? `<h2>Focus areas</h2><div class="grid grid-3">${r.focus.map((f, i) => `
-      <div class="card"><div class="muted">#${i + 1}</div><b>${esc(CATEGORY_LABEL[f.category] || f.category)}</b><div class="muted">${f.count} moment${f.count === 1 ? '' : 's'}, weighted ${f.weight}</div>
+      <div class="card"><div class="muted">#${i + 1}</div><b>${esc(CATEGORY_LABEL[f.category] || f.category)}</b><div class="muted">${f.count} moment${f.count === 1 ? '' : 's'}, weighted ${f.weight}${f.trend > 0.1 ? ' · <span style="color: var(--critical)">getting worse</span>' : f.trend < -0.1 ? ' · <span style="color: var(--good, green)">improving</span>' : ''}</div>
       <div style="margin-top:6px"><a href="#/drills?category=${encodeURIComponent(f.category)}" title="Every drill of this error type, back to back (does not touch the review schedule)">Drill this ▸</a></div></div>`).join('')}</div>` : ''}
+
+    ${(() => {
+      // What is going well: the report is otherwise all deficits. Surface the
+      // longitudinal wins the player rarely scrolls to.
+      const best = [...(r.timeline || [])].filter(t => t.accuracy != null).sort((a, b) => b.accuracy - a.accuracy)[0];
+      const improving = (r.categoryTrend || []).filter(t => t.delta <= -0.2);
+      const wins = [];
+      if (best) wins.push(`Best game: <b>${best.accuracy}%</b> accuracy vs ${esc(best.opponent || '?')}${best.date ? ` (${esc(best.date)})` : ''}`);
+      if (improving.length) wins.push(`Improving: ${improving.map(t => esc(catLabel(t.category))).join(', ')}`);
+      if (r.decoys && r.decoys.seen >= 3) wins.push(`Quiet positions read correctly: <b>${100 - r.decoys.falsePositiveRate}%</b>`);
+      if (r.drillStats && r.drillStats.rate >= 55) wins.push(`Drill accuracy: <b>${r.drillStats.rate}%</b> over ${r.drillStats.attempts} attempts`);
+      return wins.length ? `<div class="card" style="margin-top: 16px; border-left: 3px solid var(--good, green)"><h3 style="margin-top:0">What's going well</h3><ul style="margin:0; padding-left: 18px">${wins.map(w => `<li>${w}</li>`).join('')}</ul></div>` : '';
+    })()}
 
     <div class="grid grid-2" style="margin-top: 20px">
       <div class="card">
@@ -102,13 +117,18 @@ export async function reportView(root) {
 
     ${r.drillStats ? `<div class="card" style="margin-top: 20px">
       <h3 style="margin-top:0">Drill performance</h3>
-      <p class="muted" style="margin-top:0">${r.drillStats.attempts} reviews${r.drillStats.machines > 1 ? ` across ${r.drillStats.machines} machines` : ' on this machine'}, ${r.drillStats.rate}% correct.</p>
+      <p class="muted" style="margin-top:0">${r.drillStats.attempts} attempts (reviews and first-try guesses)${r.drillStats.machines > 1 ? ` across ${r.drillStats.machines} machines` : ' on this machine'}, ${r.drillStats.rate}% correct.</p>
       <div class="grid grid-2">
-        <table><thead><tr><th>Phase</th><th class="num">Reviews</th><th class="num">Correct</th></tr></thead>
+        <table><thead><tr><th>Phase</th><th class="num">Attempts</th><th class="num">Correct</th></tr></thead>
         <tbody>${Object.entries(r.drillStats.byPhase).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v.attempts}</td><td class="num">${Math.round((v.correct / v.attempts) * 100)}%</td></tr>`).join('')}</tbody></table>
-        <table><thead><tr><th>Error type</th><th class="num">Reviews</th><th class="num">Correct</th></tr></thead>
+        <table><thead><tr><th>Error type</th><th class="num">Attempts</th><th class="num">Correct</th></tr></thead>
         <tbody>${Object.entries(r.drillStats.byCategory).map(([k, v]) => `<tr><td>${esc(catLabel(k))}</td><td class="num">${v.attempts}</td><td class="num">${Math.round((v.correct / v.attempts) * 100)}%</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Categories appear once explained games are re-synced.</td></tr>'}</tbody></table>
       </div>
+      ${Object.keys(r.drillStats.byKind || {}).length > 1 ? `<h3>By drill type</h3>
+      <table><thead><tr><th>Type</th><th class="num">Attempts</th><th class="num">Correct</th></tr></thead>
+      <tbody>${Object.entries(r.drillStats.byKind).map(([k, v]) => `<tr><td>${esc(KIND_LABEL[k] || k)}</td><td class="num">${v.attempts}</td><td class="num">${Math.round((v.correct / v.attempts) * 100)}%</td></tr>`).join('')}</tbody></table>
+      <small>Separate streams: finding the best move, seeing the threat you allowed, punishing an opponent's error, opening prep.</small>` : ''}
+      ${r.decoys ? `<p class="muted" style="margin-top:10px">Quiet-position detection: ${r.decoys.right} of ${r.decoys.seen} handled correctly (${r.decoys.falsePositiveRate}% false positives, calling a fine move a mistake).</p>` : ''}
       ${r.drillStats.speed ? `<h3>Recognition speed</h3>
       <table><thead><tr><th>Pattern</th><th class="num">Timed reviews</th><th class="num">Median answer</th></tr></thead>
       <tbody>${r.drillStats.speed.map(s => `<tr><td>${esc(s.pattern)}</td><td class="num">${s.attempts}</td><td class="num">${(s.medianMs / 1000).toFixed(1)}s</td></tr>`).join('')}</tbody></table>

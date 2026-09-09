@@ -1,5 +1,6 @@
 // Hash router, job polling, and shared chrome.
 import { api, esc, toast } from './api.js';
+import { homeView } from './views/home.js';
 import { gamesView } from './views/games.js';
 import { gameView } from './views/game.js';
 import { reportView } from './views/report.js';
@@ -12,6 +13,7 @@ const app = document.getElementById('app');
 let current = null; // { name, destroy }
 
 const routes = [
+  { re: /^#\/home$/, name: 'home', view: homeView },
   { re: /^#\/games$/, name: 'games', view: gamesView },
   { re: /^#\/game\/([a-f0-9]{12})(?:\/(\d+))?$/, name: 'games', view: gameView },
   { re: /^#\/report$/, name: 'report', view: reportView },
@@ -25,9 +27,9 @@ let nav = 0; // navigation token: a stale async view must not clobber a newer on
 
 async function route() {
   const token = ++nav;
-  const hash = location.hash || '#/games';
+  const hash = location.hash || '#/home';
   const r = routes.find(x => x.re.test(hash));
-  if (!r) { location.hash = '#/games'; return; }
+  if (!r) { location.hash = '#/home'; return; }
   const params = hash.match(r.re).slice(1);
   if (current?.destroy) current.destroy();
   current = null;
@@ -81,6 +83,14 @@ async function pollJobs() {
     if (finished.length) {
       const failed = jobs.filter(j => finished.includes(j.id) && j.status === 'failed');
       for (const f of failed) toast(`Job failed: ${f.error}`, true);
+      // Announce successful completions anywhere in the app, not just on the
+      // Games list, so a batch import that finishes while you are elsewhere is
+      // not silent.
+      const done = jobs.filter(j => finished.includes(j.id) && j.status === 'done');
+      const analysed = done.filter(j => j.kind === 'analyse').length;
+      const explained = done.filter(j => j.kind === 'explain').length;
+      const parts = [analysed && `${analysed} analysed`, explained && `${explained} explained`].filter(Boolean);
+      if (parts.length) toast(`Ready: ${parts.join(', ')}`);
       jobEvents.dispatchEvent(new CustomEvent('finished', { detail: jobs.filter(j => finished.includes(j.id)) }));
     }
     lastActive = nowActive;
