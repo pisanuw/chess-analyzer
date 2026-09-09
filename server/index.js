@@ -1,11 +1,10 @@
 // Express server: static frontend + JSON API. Runs locally; nothing leaves the machine except claude CLI calls.
 import express from 'express';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Chess } from 'chess.js';
 import { parsePgnGames, splitPgn, detectPlayerColor } from './pgn.js';
-import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, sweepTmpFiles, ensureDataIgnores, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
-import { enqueue, listJobs, resumeInterrupted, cancelJobs } from './jobs.js';
+import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { enqueue, listJobs, cancelJobs } from './jobs.js';
 import { findStockfish, getSparringEngine } from './engine.js';
 import { probeHosts, remoteHostList } from './enginepool.js';
 import { checkClaudeCli, complete } from './llm.js';
@@ -13,13 +12,17 @@ import { buildReport, buildPrepCard } from './report.js';
 import { buildRepertoire } from './repertoire.js';
 import { scoreToCp, winProb, summarize } from './analyze.js';
 import { dueDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback, clearFeedback, recordDecoy } from './drills.js';
+import { buildPuzzles } from './puzzles.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { knownPatterns } from './jobs.js';
 import { authMiddleware, loginRoute } from './auth.js';
 
-// import.meta.url is undefined when bundled to CJS (Netlify function); there,
-// static assets come from the CDN and DATA_DIR from the environment, so cwd is fine.
-const ROOT = import.meta.url ? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..') : process.cwd();
+// Repo root = the working directory for every supported entry (npm start via
+// server/serve.js, tests, and the bundled Netlify function). Using cwd keeps
+// this file free of import.meta, which the CJS function bundle leaves empty and
+// warns about. On the hosted mirror ROOT is unused: the CDN serves the static
+// assets and DATA_DIR comes from the environment.
+const ROOT = process.cwd();
 const app = express();
 app.use(express.json({ limit: '20mb' }));
 app.use(express.text({ limit: '20mb', type: ['application/x-chess-pgn', 'text/plain'] }));
@@ -506,6 +509,12 @@ app.post('/api/patterns/synthesize', wrap(async (req, res) => {
   await savePatternNotes(notes);
   res.json({ note: notes[key] });
 }));
+// Free-solve puzzles derived from analysed games (no schedule). GET, so it also
+// works on the read-only mirror. source: tactics | moments | missed.
+app.get('/api/puzzles', wrap(async (req, res) => {
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
+  res.json(await buildPuzzles(req.query.source || 'tactics', limit));
+}));
 app.get('/api/drills', wrap(async (req, res) => res.json(await dueDrills(Number(req.query.limit) || 20, {
   pattern: req.query.pattern || null,
   category: req.query.category || null,
@@ -525,16 +534,8 @@ app.post('/api/drills/:id/undo', wrap(async (req, res) => {
 
 app.get(/^\/(?!api|vendor).*/, (req, res) => res.sendFile(path.join(ROOT, 'public/index.html')));
 
+// This module only builds the app: tests import { app } and listen on an
+// ephemeral port, and the Netlify function wraps it with serverless-http. The
+// local server is started by server/serve.js (npm start), which owns the
+// listen and the once-at-boot housekeeping.
 export { app };
-
-// Listen only when run directly; tests import { app } and listen on an ephemeral port.
-const PORT = Number(process.env.PORT) || 3210;
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  app.listen(PORT, process.env.HOST || '127.0.0.1', () => {
-    console.log(`chess-analyzer running at http://localhost:${PORT}  (data: ${DATA_DIR})`);
-    sweepTmpFiles().then(n => { if (n) console.log(`removed ${n} leftover .tmp file${n === 1 ? '' : 's'}`); }).catch(() => {});
-    ensureDataIgnores().catch(() => {});
-    syncAllDrills().catch(err => console.error(`drill sync failed: ${err.message}`));
-    resumeInterrupted().catch(err => console.error(`resume failed: ${err.message}`));
-  });
-}

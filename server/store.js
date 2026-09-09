@@ -2,9 +2,11 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-const ROOT = import.meta.url ? path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..') : process.cwd();
+// The repo root. Every supported entry point (npm start, tests, and the bundled
+// Netlify function) runs with the working directory at the repo root, so cwd is
+// correct here and we avoid import.meta, which the CJS function bundle leaves empty.
+const ROOT = process.cwd();
 export const DATA_DIR = process.env.DATA_DIR || path.join(ROOT, 'data');
 const GAMES_DIR = path.join(DATA_DIR, 'games');
 

@@ -7,6 +7,7 @@ import { reportView } from './views/report.js';
 import { repertoireView } from './views/repertoire.js';
 import { scoutView } from './views/scout.js';
 import { drillsView } from './views/drills.js';
+import { puzzlesView } from './views/puzzles.js';
 import { settingsView } from './views/settings.js';
 
 const app = document.getElementById('app');
@@ -20,6 +21,7 @@ const routes = [
   { re: /^#\/repertoire$/, name: 'repertoire', view: repertoireView },
   { re: /^#\/scout(?:\/(.*))?$/, name: 'scout', view: scoutView },
   { re: /^#\/drills(?:\?(.*))?$/, name: 'drills', view: drillsView }, // optional query: ?pattern=... starts a lightning round
+  { re: /^#\/puzzles(?:\?(.*))?$/, name: 'puzzles', view: puzzlesView }, // optional query: ?source=tactics|moments|missed
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
 ];
 

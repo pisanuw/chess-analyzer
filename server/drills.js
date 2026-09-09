@@ -7,7 +7,7 @@ const DAY = 86400000;
 
 /** UCI moves of the lines close enough to best. `sign` converts the stored
  * White-perspective cp to the mover's perspective. */
-function acceptedLines(lines, sign) {
+export function acceptedLines(lines, sign) {
   const best = lines[0];
   if (best?.cp == null) return [];
   // When the best move forces mate, winProb saturates near 100% and the band

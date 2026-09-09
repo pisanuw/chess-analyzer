@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-09-08 (clear the import.meta warning on publish for good)
+
+- The Netlify publish still warned `"import.meta" is not available with the "cjs" output format` even after the function was renamed to `.mjs`: the esbuild bundler emits CJS regardless, and three server files referenced `import.meta.url` (`server/index.js` and `server/store.js` for ROOT, plus the run-directly guard). Removed all three from the bundled graph. ROOT is now `process.cwd()`, which is behavior-preserving: in the CJS bundle `import.meta.url` was already empty, so the code was running the cwd fallback anyway, and every supported entry (npm start, tests, the function) has its working directory at the repo root. The listen bootstrap moved to a new CLI entry `server/serve.js`, so `server/index.js` is now a pure app module (exports `app`, no listen, no import.meta) that the tests and the Netlify function import cleanly. `npm start`/`npm run dev` now run `server/serve.js`. Verified: bundling the function to CJS with esbuild produces zero import.meta warnings.
+
+## 2026-09-08 (Puzzles tab: free-solve positions from your games)
+
+- New Puzzles tab, a free-solve counterpart to Drills. No spaced repetition and no server writes (a plain GET, so it works on the read-only hosted mirror too): find the move, keep a session streak, move on. Three switchable sources: "Decisive tactics" (winning shots from every analysed game, both sides and both your games and opponents'), "Critical moments" (the flagged pool Drills draws from, own games only), and "Missed tactics" (winning tactics you had on the board but did not find, own games only).
+- All puzzles are derived from data already stored per move (position, engine best move, MultiPV lines with evals), so there is no new engine or LLM work. Decisive-tactic detection is engine-only: a forced mate, or a clearly winning move (66+ win-% for the mover) that beats the alternatives by 20+ win-% so finding THE move matters, skipping the first few book plies. Correctness reuses the same win-probability acceptance band as Drills (`acceptedLines`, now exported from `server/drills.js`). New `server/puzzles.js`, `public/views/puzzles.js`, `GET /api/puzzles?source=&limit=`, and `test/puzzles.test.js`.
+
 ## 2026-09-08 (simpler, mobile-friendly hosted mirror)
 
 - The hosted read-only mirror no longer shows controls that cannot work there. Settings is dropped from the nav and the route redirects to Home (no engine, no LLM, and settings writes are blocked anyway, so the Stockfish path, remote-hosts, "use this machine as an analysis engine too", thresholds, and LLM provider had nowhere to go). The "Generate prep sheet" (scout) and "Synthesize pattern" (report) buttons, which POST to endpoints the mirror blocks with 405, are hidden too and replaced with a short "generated on the home machine" note. Local use is unchanged: everything still appears when not read-only.

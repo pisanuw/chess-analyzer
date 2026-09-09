@@ -4,8 +4,8 @@
   "description": "Local chess game analyzer: Stockfish + LLM explanations, weakness report, drills",
   "main": "server/index.js",
   "scripts": {
-    "start": "node server/index.js",
-    "dev": "node --watch server/index.js",
+    "start": "node server/serve.js",
+    "dev": "node --watch server/serve.js",
     "samples": "node scripts/make-samples.js 3 > samples/sample-games.pgn",
     "test": "node --test 'test/*.test.js'",
     "pull-data": "git -C data pull --rebase",
