@@ -115,6 +115,8 @@ test('analyseGame reports progress as completed positions and honours cancellati
 test('remote command falls back to a binary inside the directory; ssh engine is labelled by host', () => {
   assert.match(remoteCommand('~/stockfish'), /nice -n 19/);
   assert.match(remoteCommand('~/stockfish'), /\$0\/stockfish/);
+  assert.match(remoteCommand('~/stockfish'), /stockfish\*/); // finds stockfish-linux-x86-64-universal and the like
+  assert.match(remoteCommand(), /~\/stockfish/); // default path when unset
   const e = sshEngine('csslab9.uwb.edu', { remoteThreads: 4 });
   assert.equal(e.path, 'ssh');
   assert.equal(e.label, 'csslab9.uwb.edu');

@@ -17,11 +17,13 @@ const PROBE_TIMEOUT_MS = 15000;     // ssh connect + uci handshake
 const RETRY_FAILED_HOST_MS = 5 * 60 * 1000; // do not stall every job re-probing a downed host
 
 /** The command run on the remote host. `~` expands in the remote login shell;
- * the path may be the binary itself or a directory containing `stockfish`.
+ * the path may be the binary itself or a directory containing Stockfish. When
+ * it is a directory we take `stockfish` if present, else the first `stockfish*`
+ * binary (the official release names it e.g. stockfish-linux-x86-64-universal).
  * nice -n 19: these are shared lab machines. */
 export function remoteCommand(remotePath) {
   const p = remotePath || '~/stockfish';
-  return `nice -n 19 sh -c 'if [ -d "$0" ]; then exec "$0/stockfish"; else exec "$0"; fi' ${p}`;
+  return `nice -n 19 sh -c 'if [ -d "$0" ]; then b="$0/stockfish"; [ -x "$b" ] || b=$(ls "$0"/stockfish* 2>/dev/null | head -n1); exec "$b"; else exec "$0"; fi' ${p}`;
 }
 
 export function sshEngine(host, settings) {
