@@ -98,6 +98,9 @@ export class Board {
   /** Show a position. `movableFor` = 'white' | 'black' | null to allow input for that side. */
   set(fen, { lastMove = null, movableFor = null, shapes = [] } = {}) {
     const { dests, turn, inCheck } = legalDests(fen);
+    // A caller asking to move for the side NOT to move yields a dead, unmovable
+    // board with no other signal: surface a likely FEN/side or off-by-one bug.
+    if (movableFor && movableFor !== turn) console.warn(`Board.set: movableFor "${movableFor}" but ${turn} is to move; board will be read-only`);
     this.cg.set({
       fen,
       turnColor: turn,

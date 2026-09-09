@@ -24,10 +24,10 @@
     <a href="#/drills" data-nav="drills">Drills <span id="drill-badge" class="badge" hidden></span></a>
     <a href="#/settings" data-nav="settings">Settings</a>
   </nav>
-  <div id="jobs" class="jobs"></div>
+  <div id="jobs" class="jobs" role="status" aria-live="polite" aria-label="Background job progress"></div>
 </header>
 <main id="app"></main>
-<div id="toast" class="toast" hidden></div>
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -39,7 +39,13 @@ async function route() {
     current = view;
   } catch (err) {
     if (token !== nav) return;
-    app.innerHTML = `<div class="card"><b>Error:</b> ${esc(err.message)}</div>`;
+    if (err.handled) return; // e.g. a 401 already raised the login overlay
+    if (err.offline) {
+      app.innerHTML = `<div class="card"><b>Cannot reach the server.</b> ${esc(err.message)} <button class="small" id="retry-route">Retry</button></div>`;
+      app.querySelector('#retry-route').onclick = () => route();
+    } else {
+      app.innerHTML = `<div class="card"><b>Error:</b> ${esc(err.message)}</div>`;
+    }
     console.error(err);
   }
 }

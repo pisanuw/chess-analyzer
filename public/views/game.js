@@ -132,9 +132,10 @@ export async function gameView(root, id, startPly) {
   renderActions();
   actions.addEventListener('click', async e => {
     const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.act === 'guessgame') return startGuessGame();
+    b.disabled = true; // no double-submit while a queueing/mutating call is in flight
     try {
       if (b.dataset.color) { ({ game } = await api.setPlayer(id, b.dataset.color, true)); toast('Colour set, analysis queued'); return rerender(); }
-      if (b.dataset.act === 'guessgame') return startGuessGame();
       if (b.dataset.act === 'analyse') { await api.analyse(id); toast('Analysis queued'); }
       if (b.dataset.act === 'reanalyse') { if (confirm('Re-run engine analysis? Explanations for this game will be cleared.')) { await api.analyse(id, true); toast('Re-analysis queued'); } }
       if (b.dataset.act === 'explain') { await api.explain(id); toast('Explanations queued'); }
@@ -147,6 +148,7 @@ export async function gameView(root, id, startPly) {
         window.dispatchEvent(new HashChangeEvent('hashchange')); // header and labels derive from the names: rebuild the view
       }
     } catch (err) { toast(err.message, true); }
+    finally { b.disabled = false; }
   });
 
   // --- board controls ----------------------------------------------------------------

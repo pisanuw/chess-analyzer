@@ -30,7 +30,8 @@ export function barChart(container, items, { format = v => String(v), maxValue =
   const rowH = 26, labelW = 150, valueW = 46, W = Math.max(360, container.clientWidth || 600), H = items.length * rowH + 8;
   const max = maxValue || Math.max(...items.map(i => i.value), 1);
   const plotW = W - labelW - valueW - 8;
-  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}` });
+  const label = `Bar chart: ${items.map(i => `${i.label} ${format(i.value)}`).join(', ')}`.slice(0, 400);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': label });
   const tip = tooltip(container);
   items.forEach((it, i) => {
     const y = i * rowH + 4;
@@ -62,7 +63,8 @@ export function lineChart(container, points, { yMin = 0, yMax = 100, format = v 
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const xs = i => padL + (points.length === 1 ? plotW / 2 : (i / (points.length - 1)) * plotW);
   const ys = v => padT + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
-  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}` });
+  const label = `Line chart of ${points.length} point${points.length === 1 ? '' : 's'}, from ${format(points[0].y)} to ${format(points[points.length - 1].y)}`;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': label });
   for (const t of [yMin, (yMin + yMax) / 2, yMax]) {
     svg.appendChild(svgEl('line', { x1: padL, y1: ys(t), x2: W - padR, y2: ys(t), class: 'axis' }));
     svg.appendChild(svgEl('text', { x: padL - 6, y: ys(t) + 4, 'text-anchor': 'end' }, format(t)));
@@ -114,7 +116,9 @@ export function evalGraph(container, moves, { currentPly = 0, onSelect = null, t
   const xs = ply => pad + (ply / n) * (W - 2 * pad);
   const wpWhite = m => (m.color === 'white' ? m.wpAfter : 100 - m.wpAfter); // white perspective after the move
   const ys = wp => pad + (1 - wp / 100) * (evalH - 2 * pad);
-  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, style: 'background: var(--surface-2); border-radius: 6px' });
+  const flagged = moves.filter(m => m.isPlayer && flaggedJudgment(m.judgment)).length;
+  const label = `Evaluation graph across ${n} move${n === 1 ? '' : 's'}, White win probability; ${flagged} flagged player moment${flagged === 1 ? '' : 's'}`;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': label, style: 'background: var(--surface-2); border-radius: 6px' });
   let d = `M${xs(0)},${ys(50)}`;
   moves.forEach(m => { d += ` L${xs(m.ply).toFixed(1)},${ys(wpWhite(m)).toFixed(1)}`; });
   svg.appendChild(svgEl('path', { d: d + ` L${xs(n)},${ys(0)} L${xs(0)},${ys(0)} Z`, class: 'area' }));

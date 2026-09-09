@@ -1,5 +1,5 @@
 // Games list and PGN import.
-import { api, esc, toast } from '../api.js';
+import { api, esc, toast, busy } from '../api.js';
 
 export async function gamesView(root) {
   const { settings } = await api.settings();
@@ -100,11 +100,12 @@ export async function gamesView(root) {
     }
     if (btn?.dataset.act) {
       e.stopPropagation();
+      btn.disabled = true; // no double-submit; the row is replaced by refresh() anyway
       try {
         if (btn.dataset.act === 'analyse') { await api.analyse(id); toast('Analysis queued'); }
         if (btn.dataset.act === 'explain') { await api.explain(id); toast('Explanations queued'); }
         if (btn.dataset.act === 'delete') { if (confirm('Delete this game and its drills?')) await api.deleteGame(id); }
-      } catch (err) { toast(err.message, true); }
+      } catch (err) { btn.disabled = false; toast(err.message, true); }
       return refresh();
     }
     if (e.target.closest('[data-stop]')) return;
@@ -152,25 +153,29 @@ export async function gamesView(root) {
     }
   }));
 
-  root.querySelector('#import')?.addEventListener('click', async () => {
+  root.querySelector('#import')?.addEventListener('click', async e => {
     const pgn = root.querySelector('#pgn').value.trim();
     if (!pgn) return toast('Paste a PGN or choose a file first', true);
     const purpose = root.querySelector('input[name="gpurpose"]:checked').value;
     const subject = root.querySelector('#subject').value.trim();
     if (purpose === 'scout' && !subject) return toast('Enter the opponent name to scout', true);
     try {
-      const r = await api.importPgn(pgn, root.querySelector('#auto').checked, purpose, subject);
-      toast(`Imported ${r.imported.length}${r.skipped.length ? `, ${r.skipped.length} already present` : ''}${r.failed.length ? `, ${r.failed.length} failed to parse` : ''}`);
-      if (r.failed.length) console.warn('Failed games', r.failed);
-      root.querySelector('#pgn').value = '';
-      await refresh();
+      await busy(e.currentTarget, async () => {
+        const r = await api.importPgn(pgn, root.querySelector('#auto').checked, purpose, subject);
+        toast(`Imported ${r.imported.length}${r.skipped.length ? `, ${r.skipped.length} already present` : ''}${r.failed.length ? `, ${r.failed.length} failed to parse` : ''}`);
+        if (r.failed.length) console.warn('Failed games', r.failed);
+        root.querySelector('#pgn').value = '';
+        await refresh();
+      });
     } catch (err) { toast(err.message, true); }
   });
 
-  root.querySelector('#analyse-all')?.addEventListener('click', async () => {
+  root.querySelector('#analyse-all')?.addEventListener('click', async e => {
     try {
-      const r = await api.analyseAll();
-      toast(`${r.queued.length} job${r.queued.length === 1 ? '' : 's'} queued`);
+      await busy(e.currentTarget, async () => {
+        const r = await api.analyseAll();
+        toast(`${r.queued.length} job${r.queued.length === 1 ? '' : 's'} queued`);
+      });
     } catch (err) { toast(err.message, true); }
   });
 
