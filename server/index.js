@@ -458,6 +458,7 @@ app.get('/api/scout', wrap(async (req, res) => {
   // describes merge into one entry even when the engine data came in by name.
   const players = await getPlayers();
   const books = await listScoutBooks();
+  const sheets = await getPrepSheets(); // keyed by subject name: lets the UI colour prep readiness
   const norm = s => (s || '').trim().toLowerCase();
   const bookIdByName = new Map(books.map(b => [norm(b.name), b.fideId]));
   const resolve = (name, tagId) => tagId || bookIdByName.get(norm(name)) || lookupFideId(players, name);
@@ -490,7 +491,12 @@ app.get('/api/scout', wrap(async (req, res) => {
     s.subject = b.name; // the book name is the canonical display name
     s.bookGames = b.total || (b.games || []).length;
   }
-  const subjects = [...byKey.values()].map(s => ({ ...s, names: undefined, aliases: [...s.names].filter(n => n !== s.subject) }));
+  const subjects = [...byKey.values()].map(s => ({
+    ...s, names: undefined, aliases: [...s.names].filter(n => n !== s.subject),
+    // Prep-sheet readiness for the UI: the sheet plus the analysed-game count it
+    // was built from, so the client can tell fresh (green) from missing/stale (yellow).
+    prep: sheets[s.subject] ? { games: sheets[s.subject].games ?? 0, createdAt: sheets[s.subject].createdAt || '' } : null,
+  }));
   res.json({ subjects: subjects.sort((a, b) => (b.bookGames + b.games) - (a.bookGames + a.games) || a.subject.localeCompare(b.subject)) });
 }));
 

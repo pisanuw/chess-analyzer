@@ -29,16 +29,39 @@ export async function scoutView(root) {
     <div class="row" id="subject-list" style="gap: 6px; flex-wrap: wrap; margin-bottom: 14px"></div>
     <div id="dossier"></div>`;
   const listEl = root.querySelector('#subject-list');
+  const COLLAPSE_AT = 15;
+  let showAll = false;
+  // Prep-sheet readiness: green = a sheet exists and no newer games since; yellow
+  // = a scout target (has a book, or once had a sheet) whose sheet is missing or
+  // stale; blank = an incidental opponent with nothing to prep.
+  const prepStatus = s => {
+    const stale = s.prep && (s.analysed || 0) > (s.prep.games || 0);
+    if (s.prep && !stale) return 'green';
+    if ((s.bookGames || 0) > 0 || s.prep) return 'yellow';
+    return '';
+  };
+  const btnHtml = s => {
+    const n = s.bookGames || s.games;
+    const st = prepStatus(s);
+    const isCur = s.subject === current;
+    const col = st === 'green' ? '70,196,106' : st === 'yellow' ? '224,180,0' : '';
+    const style = col ? `border-left:4px solid rgb(${col})${isCur ? '' : `;background:rgba(${col},.14)`}` : '';
+    const prepTip = st === 'green' ? '; prep sheet ready' : st === 'yellow' ? (s.prep ? '; prep sheet stale, regenerate' : '; prep sheet not generated') : '';
+    const tip = (s.fideId ? `FIDE ${s.fideId}${s.fed ? ` (${s.fed})` : ''}, ${n} game${n === 1 ? '' : 's'}` : `no FIDE id, ${n} game${n === 1 ? '' : 's'}`) + prepTip;
+    return `<button class="small${isCur ? ' primary' : ''}" data-subject="${esc(s.subject)}" style="${style}" title="${esc(tip)}">${esc(s.subject)}${s.fed ? ` <small class="muted">${esc(s.fed)}</small>` : ''} (${n})${s.bookGames ? ' \u{1F4D6}' : ''}</button>`;
+  };
   const renderSubjects = q => {
     const needle = q.trim().toLowerCase();
-    const shown = subjects.filter(s => !needle || s.subject.toLowerCase().includes(needle));
-    listEl.innerHTML = shown.map(s => {
-      const n = s.bookGames || s.games;
-      // Show the federation as the at-a-glance "linked" signal; full id in the
-      // tooltip; the book icon only for opponents that actually have a book.
-      const tip = s.fideId ? `FIDE ${s.fideId}${s.fed ? ` (${s.fed})` : ''}, ${n} game${n === 1 ? '' : 's'}` : `no FIDE id, ${n} game${n === 1 ? '' : 's'}`;
-      return `<button class="small${s.subject === current ? ' primary' : ''}" data-subject="${esc(s.subject)}" title="${esc(tip)}">${esc(s.subject)}${s.fed ? ` <small class="muted">${esc(s.fed)}</small>` : ''} (${n})${s.bookGames ? ' \u{1F4D6}' : ''}</button>`;
-    }).join('') || '<span class="muted">No opponents match.</span>';
+    const matched = subjects.filter(s => !needle || s.subject.toLowerCase().includes(needle));
+    if (!matched.length) { listEl.innerHTML = '<span class="muted">No opponents match.</span>'; return; }
+    const collapsed = !needle && !showAll && matched.length > COLLAPSE_AT;
+    const shown = collapsed ? matched.slice(0, COLLAPSE_AT) : matched;
+    if (collapsed && !shown.some(s => s.subject === current)) { const cur = matched.find(s => s.subject === current); if (cur) shown.push(cur); }
+    const toggle = collapsed ? `<button class="small" id="subj-more">Show all ${matched.length}</button>`
+      : (!needle && matched.length > COLLAPSE_AT ? '<button class="small" id="subj-fewer">Show fewer</button>' : '');
+    listEl.innerHTML = shown.map(btnHtml).join('') + toggle;
+    listEl.querySelector('#subj-more')?.addEventListener('click', () => { showAll = true; renderSubjects(q); });
+    listEl.querySelector('#subj-fewer')?.addEventListener('click', () => { showAll = false; renderSubjects(q); });
     listEl.querySelectorAll('button[data-subject]').forEach(b => b.onclick = () => { location.hash = `#/scout/${encodeURIComponent(b.dataset.subject)}`; });
   };
   renderSubjects('');

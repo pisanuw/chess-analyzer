@@ -48,6 +48,7 @@ export async function gamesView(root) {
   let sortKey = 'date', sortDir = -1; // -1 = descending, 1 = ascending
   let filter = 'all'; // 'all' | 'own' | a subject name
   let query = '';     // free-text filter on players and event
+  let limit = 50;     // rows shown at once; "show more" raises it
 
   const matchesQuery = g => !query || [g.white, g.black, g.event, g.subject].some(s => (s || '').toLowerCase().includes(query));
   // PGN dates are often not zero-padded ("2026.7.29"); sort on a numeric key so
@@ -86,13 +87,14 @@ export async function gamesView(root) {
     .filter(g => filter === 'all' || (filter === 'own' ? g.purpose !== 'scout' : g.subject === filter))
     .filter(matchesQuery)
     .sort(cmp);
+  const shownRows = () => visibleRows().slice(0, limit);
 
   const updateSel = () => {
     const c = root.querySelector('#sel-count');
     if (c) c.textContent = selected.size ? `${selected.size} selected` : '';
     const all = root.querySelector('#select-all');
     if (all) {
-      const rows = visibleRows();
+      const rows = shownRows();
       const sel = rows.filter(g => selected.has(g.id)).length;
       all.checked = rows.length > 0 && sel === rows.length;
       all.indeterminate = sel > 0 && sel < rows.length;
@@ -106,8 +108,9 @@ export async function gamesView(root) {
       ${[['all', 'All'], ['own', 'My games'], ...subjects.map(s => [s, 'Scout: ' + s])].map(([v, label]) =>
       `<button class="small${filter === v ? ' primary' : ''}" data-filter="${esc(v)}">${esc(label)}</button>`).join('')}
     </div>` : '';
-    const rows = visibleRows();
-    if (!rows.length) { list.innerHTML = filterBar + '<div class="empty">No games match.</div>'; updateSel(); return; }
+    const all = visibleRows();
+    if (!all.length) { list.innerHTML = filterBar + '<div class="empty">No games match.</div>'; updateSel(); return; }
+    const rows = all.slice(0, limit);
     const arrow = k => sortKey === k ? (sortDir === 1 ? ' ↑' : ' ↓') : '';
     const selHead = status.readonly ? '' : '<th style="width:26px"><input type="checkbox" id="select-all" title="Select all shown"></th>';
     const head = `<tr>${selHead}${cols.map(c => `<th data-sortkey="${c.key}"${c.num ? ' class="num"' : ''} style="cursor:pointer" title="Sort by ${c.label}">${c.label}${arrow(c.key)}</th>`).join('')}</tr>`;
@@ -121,11 +124,15 @@ export async function gamesView(root) {
           <td>${esc(g.result)}</td>
           <td><small>${esc(g.event)}${g.round ? ' R' + esc(g.round) : ''}</small></td>
           <td>${g.playerColor ? `<span class="chip ${g.playerColor}">${g.playerColor}</span>` : (status.readonly ? '' : `<span data-stop>I played <button class="small" data-color="white">White</button> <button class="small" data-color="black">Black</button></span>`)}</td>
-          <td><span class="chip status-${g.status}">${g.status}${g.status === 'analysed' && g.explained ? ` (${g.explained}/${g.moments} explained)` : ''}</span>${g.purpose === 'scout' ? ` <span class="chip" title="Scouting ${esc(g.subject)}">scout</span>` : ''}</td>
+          <td><span class="chip status-${g.status}">${g.status}${g.status === 'analysed' && g.explained ? ` (${g.explained}/${g.moments} explained)` : ''}</span></td>
           <td class="num">${g.accuracy != null ? g.accuracy + '%' : ''}</td>
           <td class="num">${g.moments != null ? `${g.moments}${g.blunders ? ` <span class="chip blunder">${g.blunders}??</span>` : ''}${g.mistakes ? ` <span class="chip mistake">${g.mistakes}?</span>` : ''}` : ''}</td>
         </tr>`).join('')}
-      </tbody></table>`;
+      </tbody></table>` + (all.length > rows.length ? `<div class="row" style="padding:10px; gap:8px; justify-content:center; align-items:center; flex-wrap:wrap">
+        <span class="muted"><small>Showing ${rows.length} of ${all.length}</small></span>
+        <button class="small" data-page="more">Show ${Math.min(50, all.length - rows.length)} more</button>
+        <button class="small" data-page="all">Show all ${all.length}</button>
+      </div>` : '');
     updateSel();
   };
   render();
@@ -139,7 +146,7 @@ export async function gamesView(root) {
   // Checkbox selection (change, so it does not open the game row).
   list.addEventListener('change', e => {
     if (e.target.id === 'select-all') {
-      const rows = visibleRows();
+      const rows = shownRows();
       rows.forEach(g => e.target.checked ? selected.add(g.id) : selected.delete(g.id));
       list.querySelectorAll('input.rowsel').forEach(cb => { cb.checked = selected.has(cb.dataset.id); });
       return updateSel();
@@ -150,6 +157,8 @@ export async function gamesView(root) {
 
   list.addEventListener('click', async e => {
     if (e.target.closest('input')) return; // checkboxes handled on 'change'
+    const pg = e.target.closest('button[data-page]');
+    if (pg) { limit = pg.dataset.page === 'all' ? Infinity : limit + 50; return render(); }
     const sh = e.target.closest('th[data-sortkey]');
     if (sh) {
       const k = sh.dataset.sortkey;
