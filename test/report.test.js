@@ -147,6 +147,17 @@ test('foreign drill mirrors merge into drill stats with pattern speed', async ()
   assert.equal(r.drillStats.speed[0].medianMs, 8000);
 });
 
+test('recognition-speed median averages the two central values on an even sample', async () => {
+  writeFileSync(path.join(dir, 'drills-evenmachine.json'), JSON.stringify({ drills: [{
+    id: 'y:1', gameId: 'y', ply: 1, phase: 'endgame', category: 'defence', pattern: 'Even pattern',
+    reviews: [10000, 20000, 30000, 50000].map((ms, i) => ({ at: `2026-02-0${i + 1}T00:00:00Z`, grade: 'good', correct: true, ms })),
+  }] }));
+  const r = await buildReport();
+  const s = r.drillStats.speed.find(x => x.pattern === 'Even pattern');
+  assert.ok(s, 'pattern with 4 timed reviews appears');
+  assert.equal(s.medianMs, 25000); // average of the central 20000 and 30000
+});
+
 test('prep card renders focus areas, rules, and the clock line', async () => {
   const r = await buildReport();
   const notes = { 'hanging piece': { pattern: 'Hanging piece', count: 3, rule: 'Check every capture.', triggers: 'Loose pieces on open lines.', advice: 'Scan checks and captures before moving.' } };

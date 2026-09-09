@@ -88,8 +88,8 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
       byCategory[cat].moments.push(ref);
       if (m.phase === 'endgame') {
         const sig = materialSignature(m.fenBefore, m.color);
-        const eg = endgames.get(sig) || { signature: sig, count: 0, weight: 0, moments: [] };
-        eg.count++; eg.weight += w;
+        const eg = endgames.get(sig) || { signature: sig, count: 0, weight: 0, games: new Set(), moments: [] };
+        eg.count++; eg.weight += w; eg.games.add(g.id);
         if (eg.moments.length < 6) eg.moments.push(ref);
         endgames.set(sig, eg);
       }
@@ -163,7 +163,19 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
   };
   tally(dstore.drills);
   for (const f of foreign) tally(f.drills);
-  const median = xs => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  // Guess-first attempts from the game view are recognition evidence too (a
+  // correct first try even advances the ladder), but they live outside
+  // reviews[]; fold them in so the rate and per-category strength include them.
+  const drillById = new Map(dstore.drills.map(d => [d.id, d]));
+  for (const [key, guesses] of Object.entries(dstore.guesses || {})) {
+    const d = drillById.get(key);
+    for (const gs of guesses) {
+      drillAttempts++; if (gs.correct) drillCorrect++;
+      const bump = (obj, k) => { if (!k) return; const o = obj[k] = obj[k] || { attempts: 0, correct: 0 }; o.attempts++; if (gs.correct) o.correct++; };
+      bump(drillByPhase, d?.phase); bump(drillByCategory, d?.category);
+    }
+  }
+  const median = xs => { const s = [...xs].sort((a, b) => a - b); const mid = s.length >> 1; return s.length % 2 ? s[mid] : Math.round((s[mid - 1] + s[mid]) / 2); };
   const speed = [...patternSpeed.values()]
     .filter(p => p.times.length >= 3)
     .map(p => ({ pattern: p.pattern, attempts: p.times.length, medianMs: median(p.times) }))
@@ -227,7 +239,12 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
     drillStats,
     feedback,
     timeManagement,
-    endgames: [...endgames.values()].sort((a, b) => b.weight - a.weight).slice(0, 10),
+    // Rank by how many distinct games a signature recurs in, not raw moment
+    // count: three blunders in one endgame is one trouble spot, not three.
+    endgames: [...endgames.values()]
+      .map(eg => ({ signature: eg.signature, count: eg.count, games: eg.games.size, weight: eg.weight, moments: eg.moments }))
+      .sort((a, b) => b.games - a.games || b.weight - a.weight)
+      .slice(0, 10),
   };
 }
 

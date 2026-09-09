@@ -8,9 +8,17 @@ const DAY = 86400000;
 /** UCI moves of the lines close enough to best. `sign` converts the stored
  * White-perspective cp to the mover's perspective. */
 function acceptedLines(lines, sign) {
-  const bestCp = lines[0]?.cp;
-  if (bestCp == null) return [];
-  const bestWp = winProb(bestCp * sign);
+  const best = lines[0];
+  if (best?.cp == null) return [];
+  // When the best move forces mate, winProb saturates near 100% and the band
+  // would accept any clearly-winning-but-not-mating move. Require another mate
+  // for the same side instead. Stored `mate` is from the side to move (the
+  // mover), so its sign already reads from the mover's perspective.
+  if (best.mate != null) {
+    const moverMates = best.mate > 0;
+    return lines.filter(l => l.mate != null && (l.mate > 0) === moverMates).map(l => l.uci);
+  }
+  const bestWp = winProb(best.cp * sign);
   return lines.filter(l => l.cp != null && bestWp - winProb(l.cp * sign) <= WP_ACCEPT).map(l => l.uci);
 }
 

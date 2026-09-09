@@ -10,6 +10,13 @@ export { winProb, formatEval };
 
 const MATE_CP = 10000;
 
+// A move is a critical moment only if the position was still worth contesting:
+// the mover's win probability before the move was at least this. Piling loss
+// onto an already-lost position is not something a coach flags. The winning
+// side is kept (throwing part of a win is a real conversion lesson), so only
+// this already-lost floor applies.
+const MOMENT_CONTEST_FLOOR = 15;
+
 /** Sign that converts a side-to-move value to White's perspective (and back). */
 const stmSign = stm => (stm === 'white' ? 1 : -1);
 
@@ -41,7 +48,11 @@ export function phaseOf(fen, ply) {
   const board = fen.split(' ')[0];
   const pieces = board.replace(/[^qrbnQRBN]/g, '').length; // majors + minors on board
   const queens = board.replace(/[^qQ]/g, '').length;
-  if (pieces <= 6 || (queens === 0 && pieces <= 8)) return 'endgame';
+  const pawns = board.replace(/[^pP]/g, '').length;
+  // Endgame: little material left. Queens off is not enough on its own, or a
+  // queenless middlegame with rooks, minors, and a full pawn set gets misfiled;
+  // require a small total force too.
+  if (pieces <= 6 || (queens === 0 && pieces + pawns <= 10)) return 'endgame';
   if (ply <= 24 && pieces >= 12) return 'opening';
   return 'middlegame';
 }
@@ -210,8 +221,9 @@ export function summarize(moves, player, threshold) {
       byPhase,
     };
   };
+  const contestable = m => winProb((m.evalBefore || 0) * (m.color === 'white' ? 1 : -1)) >= MOMENT_CONTEST_FLOOR;
   const moments = moves
-    .filter(m => m.isPlayer && m.loss >= threshold)
+    .filter(m => m.isPlayer && m.loss >= threshold && contestable(m))
     .map(m => m.ply);
   return { white: forColor('white'), black: forColor('black'), player, moments };
 }

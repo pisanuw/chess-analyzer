@@ -42,6 +42,17 @@ test('acceptance band is win-probability, not fixed centipawns', async () => {
   assert.deepEqual(drills.find(d => d.id === 'aaaaaaaaaa06:1').acceptedUci, ['d2d4', 'g1f3']);
 });
 
+test('a forced mate accepts only other mating moves, not merely winning ones', async () => {
+  const g = makeGame({ id: 'aaaaaaaaaa20', moments: [{ ply: 1, loss: 25 }] });
+  g.analysis.moves[0].lines = [
+    { multipv: 1, cp: 9995, mate: 3, uci: 'd2d4', san: ['d4'] },    // forced mate
+    { multipv: 2, cp: 900, mate: null, uci: 'g1f3', san: ['Nf3'] }, // winning, but not a mate
+  ];
+  await syncDrillsForGame(g, settings);
+  const d = (await getDrills()).drills.find(x => x.id === 'aaaaaaaaaa20:1');
+  assert.deepEqual(d.acceptedUci, ['d2d4'], 'only the mating move is accepted when mate is available');
+});
+
 test('re-sync preserves review state', async () => {
   const game = makeGame({ id: 'aaaaaaaaaa01', moments: [{ ply: 1, loss: 25 }, { ply: 3, loss: 14 }] });
   await reviewDrill('aaaaaaaaaa01:1', 'good', true);
