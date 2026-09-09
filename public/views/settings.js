@@ -33,6 +33,8 @@ export async function settingsView(root) {
           <label class="field"><span>Stockfish path on hosts</span><input type="text" name="remoteEnginePath" value="${esc(s.remoteEnginePath)}" placeholder="~/stockfish"></label>
           <label class="field"><span>Threads per host</span><input type="number" name="remoteThreads" value="${s.remoteThreads}" min="1" max="64"></label>
         </div>
+        <label class="check"><input type="checkbox" name="useLocalEngine" ${s.useLocalEngine ? 'checked' : ''}> Use this machine as an analysis engine too</label>
+        <small class="muted" style="display:block;margin:-6px 0 12px">Uncheck to offload all engine work to the remote hosts; this machine only coordinates and runs the LLM explanations. It still analyses locally if no remote host is reachable.</small>
         <div class="row">
           <button id="test-hosts" ${s.remoteHosts.length ? '' : 'disabled'}>Test remote hosts</button>
           <small id="hosts-result" class="muted"></small>

@@ -39,6 +39,16 @@ export function remoteHostList(settings) {
   return (settings.remoteHosts || []).map(h => String(h).trim()).filter(Boolean);
 }
 
+/** Whether the local machine joins the analysis pool. Off by request keeps it
+ * out so it only coordinates dispatch and runs the LLM explanations, offloading
+ * all engine work to the remotes; but it always rejoins when no remote engine
+ * is reachable, so analysis never stalls for want of an engine. The sparring
+ * engine (drills, play-out) is separate and always local, so interactive
+ * features stay responsive either way. */
+export function shouldIncludeLocal(settings, remoteEngineCount) {
+  return settings.useLocalEngine !== false || remoteEngineCount === 0;
+}
+
 // Connected remote engines and recent probe failures survive across jobs, so a
 // bulk import pays the ssh handshake once per host, and a downed host (or a
 // disabled VPN) costs one probe per cooldown window instead of one per job.
@@ -96,11 +106,15 @@ export async function getEnginePool(settings) {
   const missing = hosts.filter(h => !remotes.has(h) && Date.now() - (failedAt.get(h) || 0) > RETRY_FAILED_HOST_MS);
   if (missing.length) await Promise.all(missing.map(h => connect(h, settings)));
 
-  const local = await getEngine(settings);
-  const engines = [local, ...hosts.map(h => remotes.get(h)).filter(e => e?.proc)];
-  const warning = hosts.length >= 2 && engines.length === 1
-    ? `All ${hosts.length} remote engine hosts are unreachable (analysing locally only). If they should be up, check that the VPN is connected.`
-    : null;
+  const remoteEngines = hosts.map(h => remotes.get(h)).filter(e => e?.proc);
+  const local = shouldIncludeLocal(settings, remoteEngines.length) ? await getEngine(settings) : null;
+  const engines = [...(local ? [local] : []), ...remoteEngines];
+  let warning = null;
+  if (hosts.length >= 2 && !remoteEngines.length) {
+    warning = settings.useLocalEngine === false
+      ? `All ${hosts.length} remote engine hosts are unreachable, so this machine is analysing locally despite the local-engine switch being off. If the hosts should be up, check that the VPN is connected.`
+      : `All ${hosts.length} remote engine hosts are unreachable (analysing locally only). If they should be up, check that the VPN is connected.`;
+  }
   return makePool(engines, warning);
 }
 

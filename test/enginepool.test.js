@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { tempData } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
-const { poolAnalyse, singleEnginePool, remoteCommand, sshEngine, remoteHostList } = await import('../server/enginepool.js');
+const { poolAnalyse, singleEnginePool, remoteCommand, sshEngine, remoteHostList, shouldIncludeLocal } = await import('../server/enginepool.js');
 const { analyseGame } = await import('../server/analyze.js');
 const { parsePgnFile } = await import('../server/pgn.js');
 
@@ -128,4 +128,11 @@ test('remote command falls back to a binary inside the directory; ssh engine is 
 test('remoteHostList trims and drops blanks', () => {
   assert.deepEqual(remoteHostList({ remoteHosts: [' a.edu ', '', 'b.edu'] }), ['a.edu', 'b.edu']);
   assert.deepEqual(remoteHostList({}), []);
+});
+
+test('shouldIncludeLocal: local joins by default, is excluded on request, rejoins when no remote is up', () => {
+  assert.equal(shouldIncludeLocal({}, 5), true, 'default: local joins');
+  assert.equal(shouldIncludeLocal({ useLocalEngine: true }, 5), true);
+  assert.equal(shouldIncludeLocal({ useLocalEngine: false }, 5), false, 'excluded when remotes are available');
+  assert.equal(shouldIncludeLocal({ useLocalEngine: false }, 0), true, 'rejoins so analysis never stalls with no remote');
 });

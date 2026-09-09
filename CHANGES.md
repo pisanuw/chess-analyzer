@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-08 (offload analysis fully to remote engines)
+
+- New "Use this machine as an analysis engine too" switch (Settings, on by default). Turn it off to keep the local machine out of the analysis pool: it only coordinates dispatch and runs the LLM explanations while the remote hosts do all the engine work. It rejoins the pool automatically if no remote host is reachable, so analysis never stalls, and the sparring engine (drills, play-out) is always local so interactive features stay responsive.
+- Remote paths that point at a directory now resolve `stockfish` or the first `stockfish*` binary inside it (the official release is named e.g. stockfish-linux-x86-64-universal), so the default `~/stockfish` works against an extracted release directory.
+
 ## 2026-09-08 (distributed engine analysis over ssh)
 
 - Analysis positions now fan out across a pool of engines: the local Stockfish plus one per configured remote host, driven over plain ssh (`ssh host stockfish` is itself a UCI engine on stdio, so the remotes need no daemon and no admin access, just a binary and key auth). Work-stealing dispatch: fast machines take more positions, a dying machine's position is re-queued on the survivors, and the last-engine failure fails the job as before. Remote searches run under `nice -n 19` with modest threads since the hosts are shared lab machines.
