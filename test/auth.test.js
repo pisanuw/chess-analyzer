@@ -21,6 +21,9 @@ const req = (method, path, { body, headers = {} } = {}) => fetch(base + path, {
 test('api is locked without credentials; static is not', async () => {
   assert.equal((await req('GET', '/api/games')).status, 401);
   assert.equal((await req('GET', '/')).status, 200);
+  // The frontend module api.js must NOT be auth-gated: "/api.js" starts with
+  // "/api" but is a static file, and blocking it blanks the whole app.
+  assert.equal((await req('GET', '/api.js')).status, 200);
 });
 
 test('login: wrong password rejected, right password sets a working cookie', async () => {

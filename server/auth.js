@@ -79,7 +79,10 @@ function verify(token) {
 }
 
 export function authMiddleware(req, res, next) {
-  if (!password() || !req.path.startsWith('/api') || req.path === '/api/login') return next();
+  // Guard only real API routes (note the trailing slash): "/api.js" is a static
+  // frontend module and startsWith('/api') would wrongly 401 it, breaking the
+  // whole app when run locally with a password set.
+  if (!password() || !req.path.startsWith('/api/') || req.path === '/api/login') return next();
   const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
   if (bearer && passwordOk(bearer)) return next();
   const cookie = ((req.headers.cookie || '').match(/(?:^|;\s*)auth=([^;]+)/) || [])[1];
