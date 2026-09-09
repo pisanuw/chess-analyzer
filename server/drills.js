@@ -269,7 +269,10 @@ async function recordGuessUnlocked(game, ply, uci, correct, settings) {
     seeded = true;
   }
   if (correct && firstTry && drill.reviews.length === 0) {
-    drill.step = Math.max(drill.step, 2);
+    // A correct first-try guess is thin evidence: one rep, on a position the
+    // player got wrong in the real game. Seed one rung up, not two; a real
+    // review (or a second success) moves it further.
+    drill.step = Math.max(drill.step, 1);
     drill.due = new Date(Date.now() + LADDER_DAYS[drill.step] * DAY).toISOString();
   }
   await saveDrills(store);
@@ -333,7 +336,11 @@ async function reviewUnlocked(id, grade, correct, practice, ms) {
   if (!d) throw new Error('drill not found');
   const prev = { prevStep: d.step, prevDue: d.due }; // lets undoReview restore the ladder
   if (grade === 'again' || correct === false) {
-    d.step = 0;
+    // Soften the lapse: drop two rungs, not all the way to day one. A single
+    // slip on a mature drill should not erase months of spacing (the up-ladder
+    // is gentle at +1/+2, so the down-step should be comparable). It still
+    // comes back at the end of this session.
+    d.step = Math.max(0, d.step - 2);
     d.due = new Date().toISOString(); // due now: it comes back at the end of this session
   } else if (!practice) {
     if (grade === 'easy') d.step = Math.min(LADDER_DAYS.length - 1, d.step + 2);

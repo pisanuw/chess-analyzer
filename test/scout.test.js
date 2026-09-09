@@ -103,7 +103,7 @@ test('final-move mistakes make no punish drill; scout guesses seed punish drills
   writeGame(dir, g);
   const r = await recordGuess(g, 1, 'd2d4', true, { drillThreshold: 20 });
   assert.equal(r.seeded, true);
-  assert.equal(r.step, 2, 'correct first-try punishment starts up the ladder');
+  assert.equal(r.step, 1, 'correct first-try punishment starts one rung up the ladder');
   const d = (await getDrills()).drills.find(x => x.gameId === 'dddddddddd01');
   assert.equal(d.kind, 'punish');
 });

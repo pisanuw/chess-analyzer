@@ -81,13 +81,25 @@ test('dueDrills lists core before sharpen', async () => {
   assert.ok(due.some(d => d.tier === 'core') && due.some(d => d.tier === 'sharpen'));
 });
 
-test('correct first-try guess starts the drill at step 2', async () => {
+test('correct first-try guess seeds the drill one rung up', async () => {
   const game = makeGame({ id: 'aaaaaaaaaa02', moments: [{ ply: 1, loss: 30 }] });
   const r = await recordGuess(game, 1, 'd2d4', true, settings);
   assert.equal(r.seeded, true);
-  assert.equal(r.step, 2);
+  assert.equal(r.step, 1); // thin evidence: one rung, not two
   const days = (Date.parse(r.due) - Date.now()) / 86400000;
-  assert.ok(days > 6.9 && days < 7.1, `expected ~7 days, got ${days}`);
+  assert.ok(days > 2.9 && days < 3.1, `expected ~3 days, got ${days}`);
+});
+
+test('a lapse drops two rungs, not all the way to day one', async () => {
+  const game = makeGame({ id: 'aaaaaaaaaa21', moments: [{ ply: 1, loss: 25 }] });
+  await syncDrillsForGame(game, settings);
+  await reviewDrill('aaaaaaaaaa21:1', 'good', true); // step 1
+  await reviewDrill('aaaaaaaaaa21:1', 'good', true); // step 2
+  const climbed = await reviewDrill('aaaaaaaaaa21:1', 'good', true); // step 3
+  assert.equal(climbed.step, 3);
+  const lapsed = await reviewDrill('aaaaaaaaaa21:1', 'again', false);
+  assert.equal(lapsed.step, 1, 'step 3 lapses to step 1, not 0');
+  assert.ok(Date.parse(lapsed.due) <= Date.now(), 'still due now');
 });
 
 test('a missed guess seeds a drill; later guesses do not boost', async () => {

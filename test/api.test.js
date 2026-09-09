@@ -58,7 +58,7 @@ test('guess endpoint seeds a drill and boosts first-try success', async () => {
   const r = await req('POST', '/api/games/abcdefabcdef/moments/1/guess', { uci: 'd2d4', correct: true });
   assert.equal(r.status, 200);
   assert.equal(r.data.seeded, true);
-  assert.equal(r.data.step, 2);
+  assert.equal(r.data.step, 1); // first-try guess seeds one rung up
   const notMoment = await req('POST', '/api/games/abcdefabcdef/moments/2/guess', { uci: 'd2d4', correct: true });
   assert.equal(notMoment.status, 404);
 });
