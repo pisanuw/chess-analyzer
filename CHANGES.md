@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-09-09 (FIDE ids shown in Scouting; config; first real dossier runs)
+
+- The Scouting view now shows each opponent's FIDE id (linked to their ratings.fide.com profile) and federation in a per-subject header, and the subject list shows the federation as the at-a-glance "linked" signal; the book icon is reserved for opponents that actually have a scouting book (it previously showed for anyone with an id, misleading after bulk linking). Frontend only, no restart needed.
+- `scoutAnalyseCount` default raised 30 -> 50 (promote analyses the 50 most recent on-strength games). `downloaded/` is gitignored, and `scouts/` was added to the data-repo ignore list (`ensureDataIgnores`) so the per-opponent book PGN blobs never sync between machines.
+- note: first real opponent dossiers were run this session. Harish Neeraj (FIDE 30958130): 50 recent games promoted and analysed across the 22 UWB VPN engines with claude-CLI explanations. Vemparala Nikash (FIDE 30960967): 466-game book imported (current ~2242), 49 recent games promoted. The shared analysis queue was still draining at session end; the server (`npm start`) was left running.
+- note: a one-off bulk FIDE resolution linked ~80 players into `data/players.json` (70 unambiguous single-match auto-links, Kai = 39904881, 8 homonyms chosen by matching the opponent's recorded game rating to the closest FIDE candidate). Three held back for a manual pick: Liu Austin, Xiong Michael, Kwiatkowski Maciej. There is no unlink/replace UI yet, so correcting a wrong link means editing `data/players.json`. Also deleted a corrupt own game (6a7c95314964, Pappier vs Kai) whose PGN left queens on the board after a trade.
+
 ## 2026-09-09 (opt-in FIDE id lookup from the official rating site)
 
 - A "find FIDE id" action on any unlinked opponent in the Scouting view searches ratings.fide.com by name and returns candidates (name, title, federation, standard rating, id, profile link) to confirm by hand. Picking one records the chosen id against both the local name spelling and FIDE's canonical name in the players map, so a differently-spelled opponent then merges with their scouting book and your games against them. This is the only third party the app contacts besides the claude CLI, strictly on an explicit click, never at import: auto-matching by name is too ambiguous to trust.
