@@ -3,7 +3,7 @@
 // dossier for the recent subset once it has been analysed.
 import { api, esc, toast, movePrefix, busy, formatEval } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
-import { Board } from '../board.js';
+import { Board, walkSans } from '../board.js';
 import { CATEGORY_LABEL } from './report.js';
 
 const fmtLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
@@ -436,30 +436,31 @@ function clashEdgeStats(node, e) {
 }
 
 /** Recursive nested list. Each edge is one move; its child holds the reply tree.
- * data-fen/data-uci drive the board; data-orient flips it to the player's side. */
-function renderClashEdges(node, orient) {
+ * data-path carries the whole SAN line to this move (so the board and the move
+ * list under it show the sequence played); data-orient flips to the player's side. */
+function renderClashEdges(node, orient, path = []) {
   if (!node.edges.length) return '';
   return `<ul class="clash-tree">${node.edges.map(e => {
     const label = `${movePrefix({ moveNumber: Math.floor(node.ply / 2) + 1, color: node.side })} ${esc(e.san)}`;
     const who = node.mover === 'kai' ? 'Your move' : 'Their reply';
-    return `<li><span class="clash-move ${node.mover}" data-fen="${esc(e.fenAfter)}" data-uci="${esc(e.uci)}" data-orient="${orient}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${clashLeafEngine(e.child, orient)}${renderClashEdges(e.child, orient)}</li>`;
+    const line = [...path, e.san];
+    return `<li><span class="clash-move ${node.mover}" data-path="${esc(line.join(' '))}" data-orient="${orient}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${clashLeafEngine(e.child, orient, line)}${renderClashEdges(e.child, orient, line)}</li>`;
   }).join('')}</ul>`;
 }
 
 /** Engine suggestion attached to a prep-end leaf (phase 3). For your-move leaves
  * it is what to play with no book to guide you; for opponent leaves it is the
  * likely engine move to expect. A move that transposes into a structure the
- * opponent scores badly in is flagged. */
-function clashLeafEngine(node, orient) {
+ * opponent scores badly in is flagged. `path` is the line up to the leaf. */
+function clashLeafEngine(node, orient, path = []) {
   if (!node.engineBest) return '';
   const who = node.mover === 'kai' ? 'engine suggests' : 'likely engine reply';
   const lines = node.engineLines?.length ? node.engineLines : [node.engineBest];
   const items = lines.map(l => {
-    const attrs = l.childFen ? ` data-fen="${esc(l.childFen)}" data-uci="${esc(l.uci)}" data-orient="${orient}"` : '';
     const steer = l.oppScorePct != null
-      ? ` <span class="chip warn" title="Transposes into a position ${esc(node.mover === 'kai' ? 'they have' : 'they have')} reached ${l.oppCount} time${l.oppCount === 1 ? '' : 's'}, scoring ${l.oppScorePct}%">they score ${l.oppScorePct}% here (${l.oppCount}g)</span>`
+      ? ` <span class="chip warn" title="Transposes into a position they have reached ${l.oppCount} time${l.oppCount === 1 ? '' : 's'}, scoring ${l.oppScorePct}%">they score ${l.oppScorePct}% here (${l.oppCount}g)</span>`
       : '';
-    return `<li><span class="clash-move engine"${attrs}>${esc(l.san)}</span> <small class="muted">${formatEval(l.cp)}</small>${steer}</li>`;
+    return `<li><span class="clash-move engine" data-path="${esc([...path, l.san].join(' '))}" data-orient="${orient}">${esc(l.san)}</span> <small class="muted">${formatEval(l.cp)}</small>${steer}</li>`;
   }).join('');
   return `<div class="clash-engine"><small class="muted">${who}:</small><ul class="clash-tree">${items}</ul></div>`;
 }
@@ -484,28 +485,50 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
     ? ''
     : `<button class="small" id="clash-narrate" title="Ask the coach model for one grounded note per predicted line">${clash.narration ? 'Regenerate explanation' : 'Explain the key lines'}</button>`;
   container.innerHTML = `
-    <p class="muted">Your openings (bold) crossed with ${esc(clash.name)}'s games, showing their most likely replies weighted toward recent, on-strength games. Percentages are how often they chose that reply; "Ng" is the game count behind it. Click any move to see the position. Badges: <span class="chip warn">not faced</span> they never reached the position, <span class="chip warn">book thins out</span> too few games to trust, <span class="chip warn">your line ends</span> you have no games continuing.</p>
+    <p class="muted">Your openings (bold) crossed with ${esc(clash.name)}'s games, showing their most likely replies weighted toward recent, on-strength games. Percentages are how often they chose that reply; "Ng" is the game count behind it. Click any move to follow the line on the board. Badges: <span class="chip warn">not faced</span> they never reached the position, <span class="chip warn">book thins out</span> too few games to trust, <span class="chip warn">your line ends</span> you have no games continuing.</p>
     <div class="row" style="gap:10px;align-items:center;margin-bottom:6px">${extendCtl}${narrateCtl}</div>
     ${clashNarration(clash)}
     <div class="grid grid-2">
-      <div><div class="board-wrap"><div id="clash-board"></div></div></div>
+      <div class="clash-board-col">
+        <div class="board-wrap"><div id="clash-board"></div></div>
+        <div id="clash-line" class="clash-line muted">Click any move to follow the line here.</div>
+      </div>
       <div id="clash-forests">${forest('white')}${forest('black')}</div>
     </div>
     <p class="muted"><small>${clash.nodeCount} positions${clash.truncated ? ', capped for size' : ''}, from ${clash.coverage.bookGamesParsed} of the opponent's games.</small></p>`;
 
-  const boardEl = container.querySelector('#clash-board');
-  const board = new Board(boardEl, { orientation: 'white' });
+  const board = new Board(container.querySelector('#clash-board'), { orientation: 'white' });
   board.set(START_FEN);
   boardRef.board = board;
-  // One delegated listener drives the read-only board from any clicked move.
+  const lineEl = container.querySelector('#clash-line');
+  let current = null; // the line currently on the board: { sans, orient }
+
+  // Show a line up to `ply` (default its end): set the board and render the moves
+  // played beneath it, each clickable to step along the same line.
+  const showLine = (sans, orient, ply = null) => {
+    const seq = walkSans(START_FEN, sans);
+    const at = ply == null ? seq.length - 1 : Math.max(-1, Math.min(ply, seq.length - 1));
+    board.orient(orient);
+    if (at < 0) board.set(START_FEN); else board.set(seq[at].fen, { lastMove: seq[at].uci });
+    lineEl.classList.remove('muted');
+    lineEl.innerHTML = seq.map((m, i) =>
+      `${i % 2 === 0 ? `<span class="clash-num">${i / 2 + 1}.</span>` : ''}<span class="clash-ply${i === at ? ' sel' : ''}" data-ply="${i}">${esc(m.san)}</span>`).join(' ');
+  };
+
+  // One delegated listener per region: a tree move sets the whole line; a move in
+  // the list below steps the board along that same line.
   const forests = container.querySelector('#clash-forests');
   forests.addEventListener('click', e => {
     const mv = e.target.closest('.clash-move');
-    if (!mv || !mv.dataset.fen) return;
+    if (!mv || !mv.dataset.path) return;
     forests.querySelectorAll('.clash-move.sel').forEach(n => n.classList.remove('sel'));
     mv.classList.add('sel');
-    board.orient(mv.dataset.orient);
-    board.set(mv.dataset.fen, { lastMove: mv.dataset.uci });
+    current = { sans: mv.dataset.path.split(' ').filter(Boolean), orient: mv.dataset.orient };
+    showLine(current.sans, current.orient);
+  });
+  lineEl.addEventListener('click', e => {
+    const p = e.target.closest('.clash-ply');
+    if (p && current) showLine(current.sans, current.orient, Number(p.dataset.ply));
   });
 
   const extendBtn = container.querySelector('#clash-extend');

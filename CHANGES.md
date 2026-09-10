@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Opening Clash: sticky board and a moves-played list)
+
+- The board no longer scrolls out of view as you move down the variation tree: on a wide screen the board column is now sticky (pinned just below the top bar), so it stays put while the tree scrolls, closer to a lichess analysis layout. On a phone (single column) it scrolls normally.
+- Under the board is a move list showing the line played to reach the clicked move ("1.e4 c6 2.d4 d5 ..."), and each move in that list is clickable to step the board back and forth along the same line. Every tree move now carries its full SAN path (`data-path`); clicking one sets the board and renders the line, and `walkSans` replays the moves to get the position at each ply. Frontend only.
+
 ## 2026-09-10 (Opening Clash phase 4: optional coach narration)
 
 - An "Explain the key lines" button (home machine only) asks the coach model for one short, grounded note per predicted line plus a headline, rendered above the tree. It is fully engine-grounded: the server flattens the forest into the most likely root-to-leaf lines (`clashPrincipalLines`, ranked by the product of opponent-reply shares), hands the model those lines as facts (moves, why the prediction ends, and the engine eval where a leaf was extended), and the schema (`CLASH_NARRATION_SCHEMA`) exposes only a prose note keyed to a line id, so the model never picks or evaluates a move. Notes persist per FIDE id in `data/clashnotes.json` (gitignored, derived from the non-syncing book), tagged with `clashNarrationVersion()` and the model/cost; `GET .../clash` returns any stored narration so it survives a reload. `POST /api/scout/book/:fideId/clash/narrate` is home-machine only (403 on the read-only mirror) and requires the clash to be built first (409 otherwise).
