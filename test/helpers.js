@@ -17,7 +17,7 @@ export function writeGame(dataDir, game) {
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 /** Minimal analysed game. Moment plies must be odd when color is white (player moves). */
-export function makeGame({ id = 'aaaaaaaaaaaa', color = 'white', moments = [{ ply: 1, loss: 25 }], category = 'calculation', pattern = 'Test pattern', date = '2026.01.01', result = '1-0', clocks = null, timeControl = null, explained = true, plies = null, purpose = 'own', subject = null } = {}) {
+export function makeGame({ id = 'aaaaaaaaaaaa', color = 'white', moments = [{ ply: 1, loss: 25 }], category = 'calculation', pattern = 'Test pattern', date = '2026.01.01', result = '1-0', clocks = null, timeControl = null, explained = true, plies = null, purpose = 'own', subject = null, owner = null } = {}) {
   const maxPly = plies ?? Math.max(2, ...moments.map(m => m.ply), 1);
   const moves = [];
   for (let ply = 1; ply <= maxPly; ply++) {
@@ -52,6 +52,7 @@ export function makeGame({ id = 'aaaaaaaaaaaa', color = 'white', moments = [{ pl
     },
     moves, pgn: '', playerColor: color,
     purpose, subject,
+    ...(owner ? { owner } : {}),
     status: explained ? 'explained' : 'analysed',
     importedAt: '2026-01-01T00:00:00.000Z',
     analysis: {

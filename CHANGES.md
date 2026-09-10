@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Multi-user phase 2: per-user ownership of games)
+
+- Own-purpose games now carry an `owner` (a member id); scout-purpose games stay unowned and shared (the scouting library every member sees). `listGames(userId)` returns that member's own games plus all scout games; `listGames('*')` / `listAllGames()` returns everything for admin and global work. `getGame(id, userId)` and `deleteGame(id, userId)` enforce ownership only when a userId is passed (the default is unscoped, so existing by-id callers are unchanged), and `saveGame(game, userId)` stamps the owner on an own game that has none without overwriting an existing one. Ownership is a record field, not a directory, so `data/games/`, the Netlify bundle, and existing tooling are untouched, and a game two members both played never collides on its content-hash id across dirs.
+- Legacy own games (written before this) resolve to the original single user (`DEFAULT_USER`, default `kai`), so behavior is unchanged with today's Kai-only data. `buildReport` and `buildRepertoire` take an optional `userId` (default `DEFAULT_USER`) and scope their own-games view to that member; `gameIndexEntry` includes the resolved `owner`. New `ownsGame(game, userId)` helper and `test/multiuser.test.js` (8 tests). 156 tests pass. Groundwork only: nothing passes a real userId yet (that arrives with the session wiring in phase 3), and per-user drills/patterns plus the settings split are still to come.
+
 ## 2026-09-10 (Multi-user phase 1: member roster + login allowlist)
 
 - First step of turning the single-user app (Kai only) into a small allowlisted multi-user app (members Kai, Nikash, Neeraj; admin Yusuf). `server/users.js` holds the roster: id, display name, role (member/admin), FIDE id, and player-name substrings, with email addresses (the login allowlist) supplied per deployment via `data/users.json` or `AUTH_EMAIL_<ID>` env vars rather than hard-coded (identity ships with the app, personal addresses do not). Pure data plus lookups (`getUsers`, `findUserByEmail`, `buildRoster`, `resolveUserByEmail`, `isAdmin`, `publicUser`); nothing is wired into sessions, routes, or storage yet, so behavior is unchanged. `test/users.test.js` (8 tests). 148 tests pass.

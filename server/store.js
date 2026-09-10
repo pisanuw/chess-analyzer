@@ -15,6 +15,27 @@ const GAMES_DIR = path.join(DATA_DIR, 'games');
 // own game list or the analysis queue.
 const SCOUTS_DIR = path.join(DATA_DIR, 'scouts');
 
+// Per-user ownership. own-purpose games belong to one member; scout-purpose
+// games are shared (the scouting library that every member sees). Ownership is a
+// field on the record, not a directory, so GAMES_DIR, the Netlify bundle, and
+// the existing tooling are all untouched, and a game a member played against
+// another member never collides on the content-hash id across two dirs. Legacy
+// own games written before this (no owner) belong to the original single user
+// (DEFAULT_USER). Pass userId '*' (ALL_USERS) to bypass the filter for admin or
+// genuinely global work (learning FIDE ids, the analysis queue).
+export const DEFAULT_USER = process.env.DEFAULT_USER || 'kai';
+export const ALL_USERS = '*';
+
+/** True when a game (or its index entry) is visible to userId: scout games are
+ * shared with everyone; own games match their owner, and a missing owner is the
+ * original user. userId '*' sees everything. */
+export function ownsGame(game, userId = DEFAULT_USER) {
+  if (!game) return false;
+  if (userId === ALL_USERS) return true;
+  if ((game.purpose || 'own') === 'scout') return true;
+  return (game.owner || DEFAULT_USER) === userId;
+}
+
 export const DEFAULT_SETTINGS = {
   playerNames: [],          // substrings matched against White/Black headers, case-insensitive
   playerRating: 2000,
@@ -148,7 +169,7 @@ export async function saveSettings(patch) {
 // (git pull in the data repo) produce new mtimes and fall through the cache.
 const indexCache = new Map(); // absolute path -> { mtimeMs, size, entry }
 
-export async function listGames() {
+export async function listGames(userId = DEFAULT_USER) {
   await ensureDirs();
   const files = (await fs.readdir(GAMES_DIR)).filter(f => f.endsWith('.json'));
   const games = await Promise.all(files.map(async f => {
@@ -167,7 +188,15 @@ export async function listGames() {
     indexCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, entry });
     return entry;
   }));
-  return games.filter(Boolean).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt));
+  return games.filter(Boolean)
+    .filter(e => ownsGame(e, userId))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt));
+}
+
+/** Every game regardless of owner (own of all members plus the shared scout
+ * library): for admin views and global work. Shorthand for listGames('*'). */
+export function listAllGames() {
+  return listGames(ALL_USERS);
 }
 
 export function gameIndexEntry(g) {
@@ -189,6 +218,7 @@ export function gameIndexEntry(g) {
     plies: g.moves.length,
     playerColor: g.playerColor,
     purpose: g.purpose || 'own',
+    owner: (g.purpose || 'own') === 'scout' ? null : (g.owner || DEFAULT_USER),
     subject: g.subject || null,
     subjectId: g.subjectId || null,
     status: g.status,
@@ -204,20 +234,32 @@ export function gameIndexEntry(g) {
 
 const isValidId = id => /^[a-f0-9]{12}$/.test(id);
 
-export async function getGame(id) {
+// userId defaults to ALL_USERS (no ownership check) so existing by-id lookups are
+// unchanged; pass a member id to enforce that they may see this game.
+export async function getGame(id, userId = ALL_USERS) {
   if (!isValidId(id)) return null;
-  return readJson(path.join(GAMES_DIR, id + '.json'), null);
+  const g = await readJson(path.join(GAMES_DIR, id + '.json'), null);
+  if (g && !ownsGame(g, userId)) return null;
+  return g;
 }
 
-export async function saveGame(game) {
+// Stamp the owner on an own-purpose game that has none, so it belongs to the
+// member who saved it. Scout games stay unowned (shared). An existing owner is
+// never overwritten (re-saving another member's game keeps its owner).
+export async function saveGame(game, userId = DEFAULT_USER) {
+  if ((game.purpose || 'own') !== 'scout' && !game.owner) game.owner = userId;
   const file = path.join(GAMES_DIR, game.id + '.json');
   await writeJson(file, game);
   indexCache.delete(file);
   return game;
 }
 
-export async function deleteGame(id) {
+export async function deleteGame(id, userId = ALL_USERS) {
   if (!isValidId(id)) return;
+  if (userId !== ALL_USERS) {
+    const g = await readJson(path.join(GAMES_DIR, id + '.json'), null);
+    if (g && !ownsGame(g, userId)) return; // not this member's game to delete
+  }
   const file = path.join(GAMES_DIR, id + '.json');
   await fs.rm(file, { force: true });
   indexCache.delete(file);
