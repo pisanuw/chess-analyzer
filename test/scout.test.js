@@ -164,6 +164,11 @@ test('scout book: a FIDE export builds a recency-weighted book, listed by FIDE i
   const book = await (await fetch(base + '/api/scout/book/99887766')).json();
   assert.equal(book.name, 'Tester, T');
   assert.equal(book.dossier.total, 2);
+  // Promote status lets the UI hide a no-op analyse. Nothing promoted yet, so the
+  // whole subset is queueable and none is present or analysed.
+  assert.equal(book.promote.present, 0);
+  assert.equal(book.promote.analysed, 0);
+  assert.equal(book.promote.queueable, book.promote.total);
 
   assert.equal((await fetch(base + '/api/scout/book/55555')).status, 404);
   // No FIDE id anywhere (no filename): rejected, not silently mis-keyed.

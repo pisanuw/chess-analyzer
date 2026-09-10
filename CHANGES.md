@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-09 (Scouting: hide "Analyse N recent games" when nothing is queueable)
+
+- The Deep preparation promote button used to always read "Analyse N recent games" and, once every recent game was already imported, would report the confusing "0 queued, N already present". `GET /api/scout/book/:fideId` now returns a `promote` status (total / present / analysed / queueable, computed from the games index against the dossier's analysis subset). The button appears only when something is actually queueable, and its label uses that count ("Analyse N recent games", with "M of total already imported" when partway). When nothing is queueable, the card shows status instead: "All N recent games are analysed", or "M of N analysed, K still processing". After clicking, the view refreshes so the button disappears as the games enter the pipeline.
+
 ## 2026-09-09 (Prep sheet: regenerate when the format changed, not only for new games)
 
 - The Regenerate button now also enables when the sheet's format or wording has changed since it was made, even with no new games. `prepSheetVersion()` fingerprints the schema plus `prompts/prep-sheet.md`; the fingerprint is stored on each generated sheet and returned by `GET /api/scout/:subject`. When the stored version differs from the current one (including any sheet made before this field existed, and any sheet made before a later edit to the instructions file), the card shows a "new format available" chip and the button reads "Regenerate (new format)". It stays disabled ("Up to date") only when there are no new games and the format matches. The fingerprint is null on the read-only mirror (the instructions file is not bundled there and it never regenerates), so the check is simply skipped.

@@ -572,8 +572,25 @@ app.post('/api/scout/import', wrap(async (req, res) => {
 app.get('/api/scout/book/:fideId', wrap(async (req, res) => {
   const book = await getScoutBook(req.params.fideId);
   if (!book) return res.status(404).json({ error: 'no scout book for this FIDE id' });
-  res.json({ fideId: book.fideId, name: book.name, importedAt: book.importedAt, dossier: scoutDossier(book, dossierOpts(await getSettings())) });
+  const dossier = scoutDossier(book, dossierOpts(await getSettings()));
+  res.json({ fideId: book.fideId, name: book.name, importedAt: book.importedAt, dossier, promote: await promoteStatus(book, dossier) });
 }));
+
+// How much of the recent, on-strength analysis subset is already in the pipeline,
+// so the UI can hide a promote that would queue nothing. A game is "queueable"
+// only if it has PGN and no record yet; games already imported (whatever their
+// status) or lacking PGN cannot be newly queued.
+async function promoteStatus(book, dossier) {
+  const status = new Map((await listGames()).map(g => [g.id, g.status]));
+  const byId = new Map(book.games.map(g => [g.id, g]));
+  let present = 0, analysed = 0, queueable = 0;
+  for (const id of dossier.analysisSet) {
+    const st = status.get(id);
+    if (st) { present++; if (st === 'analysed') analysed++; }
+    else if (byId.get(id)?.pgn) queueable++;
+  }
+  return { total: dossier.analysisSet.length, present, analysed, queueable };
+}
 
 // Promote the recent, on-strength subset into the engine/LLM dossier: create
 // scout game records (matched to the existing name-keyed scout machinery) and

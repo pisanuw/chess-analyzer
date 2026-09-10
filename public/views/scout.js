@@ -92,12 +92,12 @@ async function renderDossier(el, entry, readonly) {
   el.innerHTML = subjectHeader(entry)
     + (data ? prepSheetCard(subject, data.report, data.prepSheet, pending, readonly, data.prepSheetVersion) : '')
     + (linkable ? fideLinkCard(subject) : '')
-    + (book ? bookSection(book.dossier, readonly) : '')
+    + (book ? bookSection(book.dossier, readonly, book.promote) : '')
     + `<div id="engine-dossier">${data ? '' : engineHint(book, readonly)}</div>`;
 
   if (data) wirePrep(el, subject, data.report, pending, refresh);
   if (linkable) wireFideLink(el, subject);
-  if (book) { wirePromote(el, book.dossier, subject, readonly); renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend); }
+  if (book) { wirePromote(el, book.dossier, subject, book.promote, refresh); renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend); }
   if (data) renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly);
 }
 
@@ -276,7 +276,7 @@ function wireFideLink(el, subject) {
 }
 
 /** The book tier: what they play, weighted to recent, on-strength games. */
-function bookSection(d, readonly) {
+function bookSection(d, readonly, promote) {
   const cov = d.coverage;
   // Rating over time is a small line graph (filled in after insertion by
   // renderRatingTrend); a row of "year: elo" chips was hard to read as a trend.
@@ -315,10 +315,27 @@ function bookSection(d, readonly) {
     <div class="card" style="margin-top: 16px">
       <h3 style="margin-top:0">Deep preparation</h3>
       <p class="muted">Run Stockfish and the coach model on their ${cov.analysing} most recent, on-strength games to find where they go wrong: error types, clock behaviour, recurring weaknesses, and "punish" drills from the positions after their mistakes.</p>
-      ${readonly
-        ? '<p class="muted"><small>Analysis runs on the home machine, then publishes here.</small></p>'
-        : `<button class="primary" id="promote">Analyse ${cov.analysing} recent games</button> <span id="promote-note" class="muted"></span>`}
+      ${deepPrepAction(cov, readonly, promote)}
     </div>`;
+}
+
+/** The promote control: a button only when there is something new to queue.
+ * Once every recent game is imported or analysed, promoting would queue nothing
+ * (the confusing "0 queued, N already present"), so show status instead. */
+function deepPrepAction(cov, readonly, promote) {
+  if (readonly) return '<p class="muted"><small>Analysis runs on the home machine, then publishes here.</small></p>';
+  const pm = promote || { total: cov.analysing, present: 0, analysed: 0, queueable: cov.analysing };
+  if (pm.queueable > 0) {
+    const note = pm.present ? ` <span class="muted"><small>${pm.present} of ${pm.total} already imported.</small></span>` : '';
+    return `<button class="primary" id="promote">Analyse ${pm.queueable} recent game${pm.queueable === 1 ? '' : 's'}</button> <span id="promote-note" class="muted"></span>${note}`;
+  }
+  const processing = pm.present - pm.analysed;
+  const msg = pm.analysed >= pm.total
+    ? `All ${pm.total} recent games are analysed. The dossier below is up to date.`
+    : processing > 0
+      ? `${pm.analysed} of ${pm.total} recent games analysed, ${processing} still processing.`
+      : `Nothing new to analyse (${pm.present} of ${pm.total} recent games imported, ${pm.analysed} analysed).`;
+  return `<p class="muted" style="margin:0"><small>${msg}</small></p>`;
 }
 
 function engineHint(book, readonly) {
@@ -326,17 +343,17 @@ function engineHint(book, readonly) {
   return `<div class="card" style="margin-top:16px"><p class="muted">${book ? 'No games analysed yet. Use "Analyse recent games" above to build the error dossier and punish drills.' : 'Their mistakes, error types, and punish drills appear here once their games are analysed.'}</p></div>`;
 }
 
-function wirePromote(el, dossier, subject, readonly) {
+function wirePromote(el, dossier, subject, promote, refresh) {
   const btn = el.querySelector('#promote');
   if (!btn) return;
+  const label = btn.textContent;
   btn.onclick = async () => {
     btn.disabled = true; btn.textContent = 'Queuing…';
     try {
       const r = await api.promoteScout(dossier.fideId);
-      el.querySelector('#promote-note').textContent = `${r.queued} queued${r.already ? `, ${r.already} already present` : ''}. The dossier builds as analysis finishes.`;
-      btn.textContent = `Queued ${r.queued} games`;
       toast(`${r.queued} of ${subject}'s recent games queued for analysis`);
-    } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = `Analyse ${dossier.coverage.analysing} recent games`; }
+      await refresh(); // re-renders with fresh promote status (now processing, so the button is gone)
+    } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = label; }
   };
 }
 
