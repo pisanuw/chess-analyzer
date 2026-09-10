@@ -473,16 +473,20 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
     const body = root.edges.length ? renderClashEdges(root, color) : '<div class="muted">Not enough of your games in this colour.</div>';
     return `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">You as ${color} <span class="muted" style="font-size:13px">(${n} of your game${n === 1 ? '' : 's'})</span></h3>${body}</div>`;
   };
-  // Engine extension control: only on the home machine, and only once (the tree
-  // carries engineExtended after a run).
+  // Home-machine controls: extend prep-end leaves with the engine (once), and an
+  // optional coach narration of the key lines.
   const extendCtl = ctx.readonly
     ? ''
     : clash.engineExtended
       ? `<span class="muted"><small>Engine lines added at prep-end leaves.${clash.engineExtendTruncated ? ' Only the earliest leaves were extended.' : ''}</small></span>`
       : `<button class="small" id="clash-extend" title="Run Stockfish on the positions where a prediction runs out and show the best move">Extend prep-end leaves with engine</button>`;
+  const narrateCtl = ctx.readonly
+    ? ''
+    : `<button class="small" id="clash-narrate" title="Ask the coach model for one grounded note per predicted line">${clash.narration ? 'Regenerate explanation' : 'Explain the key lines'}</button>`;
   container.innerHTML = `
     <p class="muted">Your openings (bold) crossed with ${esc(clash.name)}'s games, showing their most likely replies weighted toward recent, on-strength games. Percentages are how often they chose that reply; "Ng" is the game count behind it. Click any move to see the position. Badges: <span class="chip warn">not faced</span> they never reached the position, <span class="chip warn">book thins out</span> too few games to trust, <span class="chip warn">your line ends</span> you have no games continuing.</p>
-    <div class="row" style="gap:10px;align-items:center;margin-bottom:6px">${extendCtl}</div>
+    <div class="row" style="gap:10px;align-items:center;margin-bottom:6px">${extendCtl}${narrateCtl}</div>
+    ${clashNarration(clash)}
     <div class="grid grid-2">
       <div><div class="board-wrap"><div id="clash-board"></div></div></div>
       <div id="clash-forests">${forest('white')}${forest('black')}</div>
@@ -513,6 +517,29 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
       renderClashForest(r.clash, container, boardRef, ctx);
     } catch (err) { toast(err.message, true); extendBtn.textContent = 'Extend prep-end leaves with engine'; }
   });
+
+  const narrateBtn = container.querySelector('#clash-narrate');
+  if (narrateBtn) narrateBtn.onclick = () => busy(narrateBtn, async () => {
+    narrateBtn.textContent = 'Asking the coach…';
+    try {
+      const r = await api.narrateClash(ctx.fideId);
+      clash.narration = r.narration;
+      renderClashForest(clash, container, boardRef, ctx); // preserves engine lines already on the tree
+    } catch (err) { toast(err.message, true); narrateBtn.textContent = clash.narration ? 'Regenerate explanation' : 'Explain the key lines'; }
+  });
+}
+
+/** The optional coach narration: a headline and one grounded note per predicted
+ * line. The moves come from the tree; the model only wrote the prose. */
+function clashNarration(clash) {
+  const n = clash.narration;
+  if (!n) return '';
+  const items = n.lines.filter(l => l.note).map(l => `<li><code>${esc(l.sanLine)}</code> ${esc(l.note)}</li>`).join('');
+  return `<div class="card" style="margin:6px 0 12px">
+    <p style="margin:0 0 6px"><b>${esc(n.headline)}</b></p>
+    <ul style="margin:0;padding-left:20px">${items}</ul>
+    <p class="muted" style="margin:8px 0 0"><small>Coach model notes, grounded in the lines above${n.model ? ` (${esc(n.model)})` : ''}.</small></p>
+  </div>`;
 }
 
 /** The deeper dossier over the analysed subset: where they go wrong, clock,

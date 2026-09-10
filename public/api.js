@@ -90,6 +90,7 @@ export const api = {
   scoutBook: fideId => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}`),
   promoteScout: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/promote`, {}),
   scoutClash: (fideId, opts = {}) => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}/clash${opts.extend ? '?extend=1' : ''}`),
+  narrateClash: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/clash/narrate`, {}),
   players: () => req('GET', '/api/players'),
   fideSearch: name => req('GET', `/api/fide/search?name=${encodeURIComponent(name)}`),
   linkPlayer: ({ fideId, name, fideName, federation, verify }) => req('POST', '/api/players/link', { fideId, name, fideName, federation, verify }),

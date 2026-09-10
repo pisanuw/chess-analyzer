@@ -117,7 +117,7 @@ export async function sweepTmpFiles() {
  * crash leftovers, the per-machine engine eval cache, and the scout book blobs
  * (each holds hundreds of games' PGN; they are rebuilt locally from the export,
  * and the analysed subset syncs as normal game files). */
-export async function ensureDataIgnores(lines = ['*.tmp', 'evalcache.json', 'scouts/', 'clash.json']) {
+export async function ensureDataIgnores(lines = ['*.tmp', 'evalcache.json', 'scouts/', 'clash.json', 'clashnotes.json']) {
   try { await fs.stat(path.join(DATA_DIR, '.git')); } catch { return; }
   const file = path.join(DATA_DIR, '.gitignore');
   const current = await fs.readFile(file, 'utf8').catch(() => '');
@@ -328,6 +328,17 @@ export async function getClashStore() {
 export async function saveClashStore(store) {
   await writeJson(path.join(DATA_DIR, 'clash.json'), store);
   return store;
+}
+
+// Optional coach narration of the clash lines, keyed by FIDE id. Derived from
+// the non-syncing book (like the clash index), so it is gitignored too.
+export async function getClashNotes() {
+  return readJson(path.join(DATA_DIR, 'clashnotes.json'), {});
+}
+
+export async function saveClashNotes(notes) {
+  await writeJson(path.join(DATA_DIR, 'clashnotes.json'), notes);
+  return notes;
 }
 
 // Name <-> FIDE id map, keyed by id: { "<fideId>": { fideId, names: [], federation?, updatedAt } }.

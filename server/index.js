@@ -3,9 +3,9 @@ import express from 'express';
 import path from 'node:path';
 import { Chess } from 'chess.js';
 import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from './pgn.js';
-import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, getClashNotes, saveClashNotes, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { parseFideFromFilename, buildScoutBook, scoutDossier } from './scoutbook.js';
-import { loadKaiGames, buildKaiIndex, assembleClashForest, extendClashLeaves } from './clash.js';
+import { loadKaiGames, buildKaiIndex, assembleClashForest, extendClashLeaves, clashPrincipalLines } from './clash.js';
 import { assocsFromHeaders, recordAssociations, lookupFideId } from './players.js';
 import { searchFide, fideProfileName } from './fide.js';
 import { enqueue, listJobs, cancelJobs } from './jobs.js';
@@ -17,7 +17,7 @@ import { buildRepertoire } from './repertoire.js';
 import { scoreToCp, winProb, summarize } from './analyze.js';
 import { dueDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback, clearFeedback, recordDecoy } from './drills.js';
 import { buildPuzzles } from './puzzles.js';
-import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
+import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, clashLinePrompt, clashNarrationVersion, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, CLASH_NARRATION_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { knownPatterns } from './jobs.js';
 import { authMiddleware, loginRoute } from './auth.js';
 
@@ -648,7 +648,40 @@ app.get('/api/scout/book/:fideId/clash', wrap(async (req, res) => {
     if (!pool.engines.length) clash.engineWarning = pool.warning || 'No engine available to extend lines.';
     else { if (pool.warning) clash.engineWarning = pool.warning; await extendClashLeaves(clash, entry.index, settings, pool); }
   }
+  clash.narration = (await getClashNotes())[book.fideId] || null;
+  clash.narrationVersion = clashNarrationVersion();
   res.json({ clash });
+}));
+
+// Optional coach narration of the predicted lines: prose only, keyed to line ids
+// the server produced. Engine-grounded (the model never picks or evaluates a
+// move). Home machine only. Requires the clash index to be built first.
+app.post('/api/scout/book/:fideId/clash/narrate', wrap(async (req, res) => {
+  if (READONLY) return res.status(403).json({ error: 'narration is generated on the home machine' });
+  const book = await getScoutBook(req.params.fideId);
+  if (!book) return res.status(404).json({ error: 'no scout book for this FIDE id' });
+  const entry = (await getClashStore())[book.fideId];
+  if (!entry || entry.bookImportedAt !== book.importedAt) return res.status(409).json({ error: 'build the opening clash first' });
+  const kai = buildKaiIndex(await loadKaiGames());
+  const clash = assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, kai, book });
+  const lines = clashPrincipalLines(clash);
+  if (!lines.length) return res.status(400).json({ error: 'no predicted lines to narrate yet' });
+  const settings = await getSettings();
+  const { output, costUsd, model } = await complete(settings, {
+    system: scoutSystemPrompt(settings.playerRating),
+    prompt: clashLinePrompt(book.name, lines),
+    schema: CLASH_NARRATION_SCHEMA,
+  });
+  const noteByIdx = new Map((output.notes || []).map(n => [n.index, n.note]));
+  const narration = {
+    headline: output.headline,
+    lines: lines.map(l => ({ color: l.color, sanLine: l.sanLine, endReason: l.endReason, note: noteByIdx.get(l.idx) || '' })),
+    version: clashNarrationVersion(), model, costUsd, createdAt: new Date().toISOString(),
+  };
+  const store = await getClashNotes();
+  store[book.fideId] = narration;
+  await saveClashNotes(store);
+  res.json({ narration });
 }));
 
 app.get('/api/scout/:subject', wrap(async (req, res) => {

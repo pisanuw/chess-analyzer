@@ -7,7 +7,7 @@ import { tempData } from './helpers.js';
 // eval cache, and we do not want that landing in the real data dir.
 process.env.DATA_DIR = tempData();
 const { parseGame } = await import('../server/pgn.js');
-const { buildKaiIndex, buildOpponentIndex, assembleClashForest, clashParams, extendClashLeaves } = await import('../server/clash.js');
+const { buildKaiIndex, buildOpponentIndex, assembleClashForest, clashParams, extendClashLeaves, clashPrincipalLines } = await import('../server/clash.js');
 
 const NOW = new Date('2026-09-09T00:00:00Z');
 const SETTINGS = { scoutMaxAgeYears: 3, scoutHalfLifeDays: 540 };
@@ -208,6 +208,24 @@ function fakePool() {
   };
   return { engines: [engine], names: new Set(['fake 1']), drop() {} };
 }
+
+test('clashPrincipalLines flattens the forest into ranked SAN lines for narration', async () => {
+  const kaiGames = [
+    kaiGame('white', ['d4', 'Nf6']), kaiGame('white', ['d4', 'Nf6']),
+    kaiGame('white', ['b3', 'e5']), kaiGame('white', ['b3', 'd5']),
+  ];
+  const bookGames = [
+    bookGame('black', ['d4', 'g6']), bookGame('black', ['d4', 'g6']),
+    bookGame('black', ['e4', 'c5']), bookGame('black', ['e4', 'e5']), // opponent never faced 1.b3
+  ];
+  const clash = await build(kaiGames, bookGames);
+  const lines = clashPrincipalLines(clash, 12);
+  assert.ok(lines.length >= 2);
+  assert.ok(lines.every(l => typeof l.sanLine === 'string' && Number.isInteger(l.idx)));
+  assert.ok(lines.some(l => l.sanLine.startsWith('1.d4')));
+  assert.ok(lines.some(l => l.endReason.includes('never faced')), 'the 1.b3 line ends because the opponent never faced it');
+  for (let i = 1; i < lines.length; i++) assert.ok(lines[i - 1].likelihood >= lines[i].likelihood, 'sorted by likelihood');
+});
 
 test('engine extension fills prep-end leaves with White-POV evals (candidate moves from the engine)', async () => {
   const kaiGames = [

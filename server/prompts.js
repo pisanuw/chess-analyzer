@@ -354,6 +354,53 @@ ${time}
 Write ${subject}'s preparation sheet now, filling every field. Use only the data above; do not invent openings, lines, or tendencies that are not supported by it.`;
 }
 
+// Optional coach narration of the predicted opening-clash lines. The schema
+// exposes only prose keyed to line ids already in the prompt: the model never
+// picks or evaluates a move (every move, eval, and share is produced by the
+// server from real games and the engine).
+export const CLASH_NARRATION_SCHEMA = {
+  type: 'object',
+  properties: {
+    headline: { type: 'string', description: 'One short sentence: the single most useful thing to know across these lines' },
+    notes: {
+      type: 'array',
+      description: 'One note per line id given, in any order',
+      items: {
+        type: 'object',
+        properties: {
+          index: { type: 'integer', description: 'The line id from the prompt' },
+          note: { type: 'string', description: 'One short, practical sentence for the student, grounded only in the given facts' },
+        },
+        required: ['index', 'note'],
+      },
+    },
+  },
+  required: ['headline', 'notes'],
+};
+
+const CLASH_NARRATION_INSTRUCTIONS = 'v1: a headline plus one grounded, one-sentence note per predicted line; never add or evaluate moves.';
+
+export function clashNarrationVersion() {
+  return createHash('sha1').update(CLASH_NARRATION_INSTRUCTIONS + JSON.stringify(CLASH_NARRATION_SCHEMA)).digest('hex').slice(0, 12);
+}
+
+/** Narrate the predicted clash lines. Every line is a given fact (moves, why the
+ * prediction ends, and an engine eval when present); the model only writes prose. */
+export function clashLinePrompt(subjectName, lines) {
+  const subject = field(subjectName);
+  const rows = lines.map(l => {
+    const side = l.color === 'white' ? 'you as White' : 'you as Black';
+    const evalTxt = l.endEval != null ? ` Engine evaluation after the suggested move: ${formatEval(l.endEval)} (positive favours White).` : '';
+    return `Line ${l.idx} (${side}): ${l.sanLine}. The prediction ends here because ${l.endReason}.${evalTxt}`;
+  }).join('\n');
+  return `Opponent: ${subject}.
+These are predicted opening lines between the student and this opponent, built from real games (the student's own games and the opponent's whole book). Each line is given in full; the "prediction ends" note says why the tree stopped there.
+
+${rows}
+
+For each line id above, write one short, practical note (a single sentence) on what the student should know or aim for in that line, using ONLY the facts given. Do not add moves, do not evaluate positions, and do not invent variations. Then write one short headline: the single most useful thing to take from these lines. Name an opening only if you are confident; otherwise describe the pawn structure or plan.`;
+}
+
 export const PATTERN_SYNTH_SCHEMA = {
   type: 'object',
   properties: {

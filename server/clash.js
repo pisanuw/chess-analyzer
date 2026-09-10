@@ -247,6 +247,39 @@ function countNodes(node) {
   return 1 + (node.edges || []).reduce((s, e) => s + countNodes(e.child), 0);
 }
 
+// --- principal lines (for the optional LLM narration) ---------------------------
+
+const fmtSanLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
+
+function endReasonOf(node) {
+  if (node.kaiPrepEnds) return 'you have no games continuing here';
+  if (node.oppPrepEnds) return node.oppPrepEndsReason === 'nodata' ? 'the opponent has never faced this position' : 'the opponent has too few games here to trust';
+  if (node.leaf) return 'the opponent has too few games here to continue';
+  if (node.truncated) return 'the shown depth limit was reached';
+  return 'this is as far as the games go';
+}
+
+function walkPaths(node, sans, likelihood, color, out) {
+  if (node.transposesTo) return; // merges into a line collected elsewhere
+  if (!node.edges.length) {
+    if (sans.length) out.push({ color, sans: [...sans], sanLine: fmtSanLine(sans), endReason: endReasonOf(node), endEval: node.engineBest?.cp ?? null, likelihood });
+    return;
+  }
+  for (const e of node.edges) {
+    const share = node.mover === 'opponent' ? (e.share || 0) / 100 : 1; // player edges do not divide the probability
+    walkPaths(e.child, [...sans, e.san], likelihood * (share || 0.01), color, out);
+  }
+}
+
+/** Flatten the forest into full root-to-leaf lines, most likely first, for the
+ * optional coach narration. Pure data; the model only writes prose about these. */
+export function clashPrincipalLines(clash, max = 12) {
+  const out = [];
+  for (const color of ['white', 'black']) if (clash.forests[color]) walkPaths(clash.forests[color], [], 1, color, out);
+  out.sort((a, b) => b.likelihood - a.likelihood);
+  return out.slice(0, max).map((l, idx) => ({ idx, ...l }));
+}
+
 // --- optional engine extension of prep-end leaves -------------------------------
 
 const MAX_EXTEND = 40; // bound the engine work in one synchronous request
