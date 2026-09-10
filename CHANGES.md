@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Multi-user phase 1: member roster + login allowlist)
+
+- First step of turning the single-user app (Kai only) into a small allowlisted multi-user app (members Kai, Nikash, Neeraj; admin Yusuf). `server/users.js` holds the roster: id, display name, role (member/admin), FIDE id, and player-name substrings, with email addresses (the login allowlist) supplied per deployment via `data/users.json` or `AUTH_EMAIL_<ID>` env vars rather than hard-coded (identity ships with the app, personal addresses do not). Pure data plus lookups (`getUsers`, `findUserByEmail`, `buildRoster`, `resolveUserByEmail`, `isAdmin`, `publicUser`); nothing is wired into sessions, routes, or storage yet, so behavior is unchanged. `test/users.test.js` (8 tests). 148 tests pass.
+- Roster: Kai = FIDE 39904881, Nikash (Vemparala) = 30960967, Neeraj (Harish) = 30958130, Yusuf = admin. Groundwork only; per-user data scoping and the auth flows (Google + magic link via Resend) follow in later phases. Work is tracked in `.claude/marathon/multi-user-auth.md`, on branch `multi-user` (committed per phase, not pushed).
+
 ## 2026-09-10 (Scouting: collapsible sections to cut the scrolling)
 
 - The Scouting page's big sections (Preparation sheet, Repertoire book, Opening clash, Deep dossier) are now collapsible accordions: each shows a header with a triangle you click to expand, so the page fits on a screen and you open only what you want. The prep sheet is open by default (the at-the-board summary); the rest start collapsed. Native `<details>`, so it works with no JavaScript state and on the hosted mirror.
