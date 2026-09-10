@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-10 (Plan: Opening Clash, predicted lines vs a scouted opponent)
+
+- Added `PLAN-opening-clash.md`, a detailed implementation plan for BRIEFING next-step 2 (repertoire clash / predicted opening): identify Kai's top openings per colour from his own analysed games, then build an alternating, branching, transposition-merged prediction tree of what a scouted opponent (Neeraj, Nikash) would most likely play against them, extended as deep as real games support and marked per node and per side where preparation ends. No code yet. The plan is grounded in the real data: it records the measured cold-parse cost (about 11.1 seconds for Neeraj's 647 games, so the opponent index is built once as a background job and cached, not parsed per request), Kai's actual opening counts, both opponents' first-move distributions, and that `scoreToCp` is exported from `analyze.js` while `stmSign` is not (a one-line export is a prerequisite for the optional engine phase). Phasing: a data-only core (no engine, no LLM, no board), then an interactive board, then engine-grounded leaf extension, then optional LLM narration. Reuses `scoutDossier` weighting so clash shares reconcile with the prep sheet, and keeps every prompt engine-grounded.
+
 ## 2026-09-09 (Scouting: hide "Analyse N recent games" when nothing is queueable)
 
 - The Deep preparation promote button used to always read "Analyse N recent games" and, once every recent game was already imported, would report the confusing "0 queued, N already present". `GET /api/scout/book/:fideId` now returns a `promote` status (total / present / analysed / queueable, computed from the games index against the dossier's analysis subset). The button appears only when something is actually queueable, and its label uses that count ("Analyse N recent games", with "M of total already imported" when partway). When nothing is queueable, the card shows status instead: "All N recent games are analysed", or "M of N analysed, K still processing". After clicking, the view refreshes so the button disappears as the games enter the pipeline.
