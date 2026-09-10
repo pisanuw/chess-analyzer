@@ -89,6 +89,7 @@ export const api = {
   scoutImport: ({ pgn, fideId, name, filename }) => req('POST', '/api/scout/import', { pgn, fideId, name, filename }),
   scoutBook: fideId => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}`),
   promoteScout: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/promote`, {}),
+  scoutClash: fideId => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}/clash`),
   players: () => req('GET', '/api/players'),
   fideSearch: name => req('GET', `/api/fide/search?name=${encodeURIComponent(name)}`),
   linkPlayer: ({ fideId, name, fideName, federation, verify }) => req('POST', '/api/players/link', { fideId, name, fideName, federation, verify }),

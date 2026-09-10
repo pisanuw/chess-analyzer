@@ -117,7 +117,7 @@ export async function sweepTmpFiles() {
  * crash leftovers, the per-machine engine eval cache, and the scout book blobs
  * (each holds hundreds of games' PGN; they are rebuilt locally from the export,
  * and the analysed subset syncs as normal game files). */
-export async function ensureDataIgnores(lines = ['*.tmp', 'evalcache.json', 'scouts/']) {
+export async function ensureDataIgnores(lines = ['*.tmp', 'evalcache.json', 'scouts/', 'clash.json']) {
   try { await fs.stat(path.join(DATA_DIR, '.git')); } catch { return; }
   const file = path.join(DATA_DIR, '.gitignore');
   const current = await fs.readFile(file, 'utf8').catch(() => '');
@@ -313,6 +313,21 @@ export async function getPrepSheets() {
 export async function savePrepSheets(sheets) {
   await writeJson(path.join(DATA_DIR, 'prepsheets.json'), sheets);
   return sheets;
+}
+
+// Cached opponent opening indexes for the clash feature, keyed by FIDE id. The
+// expensive part (parsing hundreds of full PGNs) is done once per book import and
+// stored here; the tree itself is assembled cheaply per request. Ignored by the
+// data repo (like the eval cache and the book blobs): it is derived from a
+// non-syncing book and cheap to rebuild, and a synced copy could point at a book
+// the other machine lacks.
+export async function getClashStore() {
+  return readJson(path.join(DATA_DIR, 'clash.json'), {});
+}
+
+export async function saveClashStore(store) {
+  await writeJson(path.join(DATA_DIR, 'clash.json'), store);
+  return store;
 }
 
 // Name <-> FIDE id map, keyed by id: { "<fideId>": { fideId, names: [], federation?, updatedAt } }.

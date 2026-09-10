@@ -3,8 +3,9 @@ import express from 'express';
 import path from 'node:path';
 import { Chess } from 'chess.js';
 import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from './pgn.js';
-import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { parseFideFromFilename, buildScoutBook, scoutDossier } from './scoutbook.js';
+import { loadKaiGames, buildKaiIndex, assembleClashForest } from './clash.js';
 import { assocsFromHeaders, recordAssociations, lookupFideId } from './players.js';
 import { searchFide, fideProfileName } from './fide.js';
 import { enqueue, listJobs, cancelJobs } from './jobs.js';
@@ -618,6 +619,27 @@ app.post('/api/scout/book/:fideId/promote', wrap(async (req, res) => {
     if (game.playerColor) { enqueue('analyse', game.id); queued.push(game.id); }
   }
   res.json({ subject: book.name, fideId: book.fideId, queued: queued.length, already: already.length, analysisSet: dossier.analysisSet.length });
+}));
+
+// Opening clash: the predicted, branching, alternating tree of how this opponent
+// would meet the player's own openings. The expensive part (parsing the whole
+// book) is cached per FIDE id and rebuilt as a background job when the book has
+// changed; the tree itself is assembled cheaply here from that cache plus the
+// player's analysed games. GET so the read-only hosted mirror can serve a cached
+// forest. Returns { clash } when ready, or { building, job } while the index is
+// (re)built.
+app.get('/api/scout/book/:fideId/clash', wrap(async (req, res) => {
+  const book = await getScoutBook(req.params.fideId);
+  if (!book) return res.status(404).json({ error: 'no scout book for this FIDE id' });
+  const entry = (await getClashStore())[book.fideId];
+  if (!entry || entry.bookImportedAt !== book.importedAt) {
+    const job = enqueue('clash', 'clash:' + book.fideId);
+    return res.json({ building: true, job: { id: job.id, kind: job.kind, gameId: job.gameId } });
+  }
+  const kaiGames = await loadKaiGames();
+  const kai = buildKaiIndex(kaiGames);
+  const clash = assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, kai, book, params: req.query });
+  res.json({ clash });
 }));
 
 app.get('/api/scout/:subject', wrap(async (req, res) => {

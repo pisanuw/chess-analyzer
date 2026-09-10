@@ -1,7 +1,7 @@
 // Scouting: a FIDE-keyed "book" dossier built instantly from an opponent's
 // whole game history (recency/rating weighted), plus the deeper engine/LLM
 // dossier for the recent subset once it has been analysed.
-import { api, esc, toast, movePrefix } from '../api.js';
+import { api, esc, toast, movePrefix, busy, formatEval } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 import { CATEGORY_LABEL } from './report.js';
 
@@ -93,11 +93,12 @@ async function renderDossier(el, entry, readonly) {
     + (data ? prepSheetCard(subject, data.report, data.prepSheet, pending, readonly, data.prepSheetVersion) : '')
     + (linkable ? fideLinkCard(subject) : '')
     + (book ? bookSection(book.dossier, readonly, book.promote) : '')
+    + (book ? clashCard() : '')
     + `<div id="engine-dossier">${data ? '' : engineHint(book, readonly)}</div>`;
 
   if (data) wirePrep(el, subject, data.report, pending, refresh);
   if (linkable) wireFideLink(el, subject);
-  if (book) { wirePromote(el, book.dossier, subject, book.promote, refresh); renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend); }
+  if (book) { wirePromote(el, book.dossier, subject, book.promote, refresh); renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend); wireClash(el, entry.fideId); }
   if (data) renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly);
 }
 
@@ -355,6 +356,101 @@ function wirePromote(el, dossier, subject, promote, refresh) {
       await refresh(); // re-renders with fresh promote status (now processing, so the button is gone)
     } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = label; }
   };
+}
+
+// --- opening clash: predicted lines vs the player's own openings ---------------
+
+/** The card shell. The tree itself is fetched lazily on the button, so opening
+ * the page never pays the one-time parse of the opponent's whole book. */
+function clashCard() {
+  return `<div class="card" id="clash-card" style="margin-top:16px">
+    <h3 style="margin-top:0">Opening clash: what they play against you</h3>
+    <p class="muted">How this opponent would most likely meet your own openings: an alternating, branching tree built from your analysed games and their whole book. The first build parses their games and can take a few seconds.</p>
+    <div id="clash-body"><button class="primary" id="clash-build">Build opening clash</button></div>
+  </div>`;
+}
+
+function wireClash(el, fideId) {
+  const btn = el.querySelector('#clash-build');
+  const body = el.querySelector('#clash-body');
+  if (!btn || !body || !fideId) return;
+  btn.onclick = () => busy(btn, async () => {
+    try {
+      const r = await api.scoutClash(fideId);
+      if (r.building) return pollClash(fideId, body);
+      renderClashForest(r.clash, body);
+    } catch (err) { toast(err.message, true); }
+  });
+}
+
+/** Poll the job queue while the opponent index builds, then render. */
+async function pollClash(fideId, body) {
+  body.innerHTML = '<p class="muted">Building the clash tree (parsing the opponent’s games)…</p>';
+  for (let i = 0; i < 200; i++) {
+    await new Promise(r => setTimeout(r, 1500));
+    const { jobs = [] } = await api.jobs().catch(() => ({ jobs: [] }));
+    const job = jobs.find(j => j.gameId === 'clash:' + fideId && j.kind === 'clash');
+    if (job && job.total) body.innerHTML = `<p class="muted">Building the clash tree: parsed ${job.progress} of ${job.total} games…</p>`;
+    if (job && job.status === 'failed') { body.innerHTML = `<div class="empty">Could not build the clash tree: ${esc(job.error || 'unknown error')}</div>`; return; }
+    if (!job || job.status === 'done' || job.status === 'cancelled') {
+      const r = await api.scoutClash(fideId);
+      if (r.building) continue; // re-queued; keep waiting
+      return renderClashForest(r.clash, body);
+    }
+  }
+  body.innerHTML = '<div class="empty">The clash build is taking longer than expected. Reload the page to check.</div>';
+}
+
+/** A per-node marker for where a prediction runs out (coverage, not just depth). */
+function clashFlag(node) {
+  if (node.transposesTo) return '<span class="chip" title="Same position reached by a move order already shown">transposes</span>';
+  if (node.kaiPrepEnds) return '<span class="chip warn" title="You have no games continuing here: your prepared line ends">your line ends</span>';
+  if (node.oppPrepEnds) return node.oppPrepEndsReason === 'nodata'
+    ? '<span class="chip warn" title="This opponent has never reached this position">not faced</span>'
+    : '<span class="chip warn" title="The opponent reached this but in too few games to trust a prediction">book thins out</span>';
+  if (node.truncated) return '<span class="chip" title="Reached the depth limit; the line may continue">depth limit</span>';
+  return '';
+}
+
+function clashEdgeStats(node, e) {
+  if (node.mover === 'opponent') {
+    const bits = [`${e.share}%`, `${e.count}g`];
+    if (e.scorePct != null) bits.push(`scores ${e.scorePct}%`);
+    if (e.avgOppElo) bits.push(`vs ~${e.avgOppElo}`);
+    return `<small class="muted">${bits.join(' · ')}</small>`;
+  }
+  const bits = [`${e.count}g`];
+  if (e.cp != null) bits.push(formatEval(e.cp));
+  if (e.accuracy != null) bits.push(`${e.accuracy}%`);
+  let s = `<small class="muted">${bits.join(' · ')}</small>`;
+  if (e.deviation) s += ' <span class="chip warn" title="In your games this is where you left theory or lost ground">deviation</span>';
+  return s;
+}
+
+/** Recursive nested list. Each edge is one move; its child holds the reply tree.
+ * data-fen/data-uci are for the board wired in a later phase. */
+function renderClashEdges(node) {
+  if (!node.edges.length) return '';
+  return `<ul class="clash-tree">${node.edges.map(e => {
+    const label = `${movePrefix({ moveNumber: Math.floor(node.ply / 2) + 1, color: node.side })} ${esc(e.san)}`;
+    const who = node.mover === 'kai' ? 'Your move' : 'Their reply';
+    return `<li><span class="clash-move ${node.mover}" data-fen="${esc(e.fenAfter)}" data-uci="${esc(e.uci)}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${renderClashEdges(e.child)}</li>`;
+  }).join('')}</ul>`;
+}
+
+function renderClashForest(clash, container) {
+  const forest = color => {
+    const root = clash.forests[color];
+    if (!root) return '';
+    const n = clash.kaiColorCounts[color] || 0;
+    const body = root.edges.length ? renderClashEdges(root) : '<div class="muted">Not enough of your games in this colour.</div>';
+    return `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">You as ${color} <span class="muted" style="font-size:13px">(${n} of your game${n === 1 ? '' : 's'})</span></h3>${body}</div>`;
+  };
+  container.innerHTML = `
+    <p class="muted">Your openings (bold) crossed with ${esc(clash.name)}'s games, showing their most likely replies weighted toward recent, on-strength games. Percentages are how often they chose that reply; "Ng" is the game count behind it. Badges: <span class="chip warn">not faced</span> they never reached the position, <span class="chip warn">book thins out</span> too few games to trust, <span class="chip warn">your line ends</span> you have no games continuing.</p>
+    ${forest('white')}
+    ${forest('black')}
+    <p class="muted"><small>${clash.nodeCount} positions${clash.truncated ? ', capped for size' : ''}, from ${clash.coverage.bookGamesParsed} of the opponent's games.</small></p>`;
 }
 
 /** The deeper dossier over the analysed subset: where they go wrong, clock,
