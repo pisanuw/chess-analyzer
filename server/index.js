@@ -633,6 +633,9 @@ app.get('/api/scout/book/:fideId/clash', wrap(async (req, res) => {
   if (!book) return res.status(404).json({ error: 'no scout book for this FIDE id' });
   const entry = (await getClashStore())[book.fideId];
   if (!entry || entry.bookImportedAt !== book.importedAt) {
+    // The read-only mirror ships a pre-built index and cannot parse or run jobs;
+    // if it is missing or stale there, say so rather than trying to build.
+    if (READONLY) return res.json({ unavailable: true });
     const job = enqueue('clash', 'clash:' + book.fideId);
     return res.json({ building: true, job: { id: job.id, kind: job.kind, gameId: job.gameId } });
   }

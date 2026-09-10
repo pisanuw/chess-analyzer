@@ -367,28 +367,32 @@ function wirePromote(el, dossier, subject, promote, refresh) {
 
 // --- opening clash: predicted lines vs the player's own openings ---------------
 
-/** The card shell. The tree itself is fetched lazily on the button, so opening
- * the page never pays the one-time parse of the opponent's whole book. */
+/** The card shell. The tree loads itself on open (indexes are pre-built at
+ * startup, so this is normally instant); no button. */
 function clashCard() {
   return `<div class="card" id="clash-card" style="margin-top:16px">
     <h3 style="margin-top:0">Opening clash: what they play against you</h3>
-    <p class="muted">How this opponent would most likely meet your own openings: an alternating, branching tree built from your analysed games and their whole book. The first build parses their games and can take a few seconds.</p>
-    <div id="clash-body"><button class="primary" id="clash-build">Build opening clash</button></div>
+    <div id="clash-body"><p class="muted">Loading opening clash…</p></div>
   </div>`;
 }
 
 function wireClash(el, fideId, boardRef, readonly) {
-  const btn = el.querySelector('#clash-build');
   const body = el.querySelector('#clash-body');
-  if (!btn || !body || !fideId) return;
-  const ctx = { fideId, readonly };
-  btn.onclick = () => busy(btn, async () => {
-    try {
-      const r = await api.scoutClash(fideId);
-      if (r.building) return pollClash(fideId, body, boardRef, ctx);
-      renderClashForest(r.clash, body, boardRef, ctx);
-    } catch (err) { toast(err.message, true); }
-  });
+  if (!body || !fideId) return;
+  loadClash(fideId, body, boardRef, { fideId, readonly });
+}
+
+async function loadClash(fideId, body, boardRef, ctx) {
+  try {
+    const r = await api.scoutClash(fideId);
+    if (r.unavailable) return unavailableClash(body);
+    if (r.building) return pollClash(fideId, body, boardRef, ctx);
+    renderClashForest(r.clash, body, boardRef, ctx);
+  } catch (err) { body.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
+}
+
+function unavailableClash(body) {
+  body.innerHTML = '<div class="empty">The opening clash is prepared on the home machine; it will appear here after the next publish.</div>';
 }
 
 /** Poll the job queue while the opponent index builds, then render. */
@@ -403,6 +407,7 @@ async function pollClash(fideId, body, boardRef, ctx) {
     if (!job || job.status === 'done' || job.status === 'cancelled') {
       const r = await api.scoutClash(fideId);
       if (r.building) continue; // re-queued; keep waiting
+      if (r.unavailable) return unavailableClash(body);
       return renderClashForest(r.clash, body, boardRef, ctx);
     }
   }

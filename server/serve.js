@@ -6,7 +6,7 @@ import { app } from './index.js';
 import { sweepTmpFiles, ensureDataIgnores, DATA_DIR } from './store.js';
 import { syncAllDrills } from './drills.js';
 import { syncPlayers } from './players.js';
-import { resumeInterrupted } from './jobs.js';
+import { resumeInterrupted, prebuildClashes } from './jobs.js';
 
 const PORT = Number(process.env.PORT) || 3210;
 app.listen(PORT, process.env.HOST || '127.0.0.1', () => {
@@ -16,4 +16,5 @@ app.listen(PORT, process.env.HOST || '127.0.0.1', () => {
   syncAllDrills().catch(err => console.error(`drill sync failed: ${err.message}`));
   syncPlayers().then(n => { if (n) console.log(`players map: learned ${n} name/FIDE-id association${n === 1 ? '' : 's'}`); }).catch(err => console.error(`players sync failed: ${err.message}`));
   resumeInterrupted().catch(err => console.error(`resume failed: ${err.message}`));
+  prebuildClashes().then(n => { if (n) console.log(`pre-building opening clashes for ${n} opponent${n === 1 ? '' : 's'}`); }).catch(err => console.error(`clash pre-build failed: ${err.message}`));
 });

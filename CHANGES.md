@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-10 (Opening Clash: auto-built, no button, and works on the hosted mirror)
+
+- The "Build opening clash" button is gone: the card loads the clash itself on open. Every opponent's index is pre-built at startup (`prebuildClashes` enqueues a `clash` job per book; `ensureClashIndex` skips the parse when the stored index already matches the book, so the pass is near-instant when nothing changed), so opening a Scouting page normally shows the clash immediately.
+- The opening clash now works on the read-only web mirror. The pre-built index (`data/clash.json`) and any narration (`data/clashnotes.json`) are bundled into the Netlify function (`included_files`), and `scripts/prebuild-clashes.js` runs in `publish-web.sh` before deploy so the bundle is current. The web request assembles the tree from the bundled index and the player's bundled games (pure JS, no engine, no `claude` CLI, no PGN parsing at request time); on the mirror it never tries to build, returning `unavailable` if an index is missing rather than queuing a job. Engine extension and narration stay home-machine only, but their results, once generated and published, display on the mirror.
+- Refactor: the clash-index build moved into `ensureClashIndex` in `server/clash.js`, shared by the job runner, the startup pre-build, and the publish script. 140 tests pass.
+
 ## 2026-09-10 (Opening Clash: sticky board and a moves-played list)
 
 - The board no longer scrolls out of view as you move down the variation tree: on a wide screen the board column is now sticky (pinned just below the top bar), so it stays put while the tree scrolls, closer to a lichess analysis layout. On a phone (single column) it scrolls normally.

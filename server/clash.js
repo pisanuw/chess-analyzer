@@ -19,7 +19,7 @@ import { Chess } from 'chess.js';
 import { parseGame } from './pgn.js';
 import { ageDays } from './scoutbook.js';
 import { resultScore } from './report.js';
-import { getGame, listGames } from './store.js';
+import { getGame, listGames, getScoutBook, getClashStore, saveClashStore, getSettings } from './store.js';
 import { scoreToCp, stmSign } from './analyze.js';
 import { winProb, WP_ACCEPT } from '../public/shared.js';
 import { getCachedEval, putCachedEval, evalCacheKey, flushCache } from './evalcache.js';
@@ -131,6 +131,22 @@ export async function buildOpponentIndex(book, settings, { onProgress, cancelled
   }
   onProgress?.(games.length, games.length);
   return { index, coverage: { total: games.length, bookGamesParsed: parsed, bookGamesSkipped: skipped, oppColorCounts: colorCounts } };
+}
+
+/** Build (or reuse) one opponent's parsed opening index, persisted to the local
+ * clash store (data/clash.json). The parse is the only expensive step, so it is
+ * skipped when the stored index already matches the book's import. Shared by the
+ * clash job (with progress/cancel), the startup pre-build, and the publish step. */
+export async function ensureClashIndex(fideId, { force = false, onProgress, cancelled, now } = {}) {
+  const book = await getScoutBook(fideId);
+  if (!book) return null;
+  const store = await getClashStore();
+  if (!force && store[book.fideId]?.bookImportedAt === book.importedAt) return store[book.fideId];
+  const { index, coverage } = await buildOpponentIndex(book, await getSettings(), { onProgress, cancelled, now });
+  if (cancelled?.()) return null;
+  store[book.fideId] = { bookImportedAt: book.importedAt, builtAt: new Date().toISOString(), coverage, index };
+  await saveClashStore(store);
+  return store[book.fideId];
 }
 
 const clampInt = (v, lo, hi, dflt) => { const n = Math.round(Number(v)); return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : dflt; };

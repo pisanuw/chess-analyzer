@@ -9,6 +9,9 @@ set -a; source .env.web; set +a
 
 npm run push-data
 
+echo "Pre-building opening clashes (bundled into the function)..."
+node scripts/prebuild-clashes.js
+
 echo "Syncing hosted drill store..."
 node scripts/web-sync-drills.js
 

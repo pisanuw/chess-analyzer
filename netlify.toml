@@ -7,7 +7,9 @@
   node_bundler = "esbuild"
 
 [functions.api]
-  included_files = ["data/games/*.json", "data/patterns.json", "data/prepsheets.json", "data/scouts/*.json", "data/players.json"]
+  # Pre-built clash index + narration are bundled too, so the mirror serves the
+  # opening clash without an engine, the claude CLI, or parsing at request time.
+  included_files = ["data/games/*.json", "data/patterns.json", "data/prepsheets.json", "data/scouts/*.json", "data/players.json", "data/clash.json", "data/clashnotes.json"]
 
 [[redirects]]
   from = "/api/*"

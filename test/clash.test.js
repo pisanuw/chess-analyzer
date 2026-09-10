@@ -7,7 +7,8 @@ import { tempData } from './helpers.js';
 // eval cache, and we do not want that landing in the real data dir.
 process.env.DATA_DIR = tempData();
 const { parseGame } = await import('../server/pgn.js');
-const { buildKaiIndex, buildOpponentIndex, assembleClashForest, clashParams, extendClashLeaves, clashPrincipalLines } = await import('../server/clash.js');
+const { buildKaiIndex, buildOpponentIndex, assembleClashForest, clashParams, extendClashLeaves, clashPrincipalLines, ensureClashIndex } = await import('../server/clash.js');
+const { saveScoutBook } = await import('../server/store.js');
 
 const NOW = new Date('2026-09-09T00:00:00Z');
 const SETTINGS = { scoutMaxAgeYears: 3, scoutHalfLifeDays: 540 };
@@ -173,6 +174,19 @@ test('evals are stored White-POV, matching the source analysis', async () => {
   const clash = await build(kaiGames, bookGames);
   const e4 = clash.forests.white.edges.find(e => e.san === 'e4');
   assert.equal(e4.cp, 25);
+});
+
+test('ensureClashIndex builds once, reuses when fresh, and returns null with no book', async () => {
+  await saveScoutBook({
+    fideId: '55501', name: 'Idx Opp', aliases: [], importedAt: '2026-02-02T00:00:00Z', total: 2,
+    games: [bookGame('black', ['d4', 'Nf6']), bookGame('black', ['d4', 'Nf6'])],
+  });
+  const first = await ensureClashIndex('55501', { now: NOW });
+  assert.ok(first?.index?.black && Object.keys(first.index.black).length >= 1);
+  assert.equal(first.bookImportedAt, '2026-02-02T00:00:00Z');
+  const second = await ensureClashIndex('55501', { now: NOW });
+  assert.equal(second.builtAt, first.builtAt, 'a fresh index is reused, not rebuilt');
+  assert.equal(await ensureClashIndex('99999', { now: NOW }), null);
 });
 
 test('clashParams clamps caller input to sane ranges', () => {

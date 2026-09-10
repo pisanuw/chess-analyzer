@@ -1,8 +1,8 @@
 // Sequential job queue: engine analysis, then LLM explanations. Progress is polled by the UI.
 import { getEnginePool } from './enginepool.js';
 import { analyseGame, summarize } from './analyze.js';
-import { getGame, saveGame, getSettings, listGames, getScoutBook, getClashStore, saveClashStore } from './store.js';
-import { buildOpponentIndex } from './clash.js';
+import { getGame, saveGame, getSettings, listGames, listScoutBooks } from './store.js';
+import { ensureClashIndex } from './clash.js';
 import { complete, LlmError } from './llm.js';
 import { flushCache } from './evalcache.js';
 import { systemPrompt, momentPrompt, momentsBatchPrompt, gameSummaryPrompt, gameSummarySystemPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutMomentsBatchPrompt, scoutGameSummaryPrompt, batchExplanationSchema, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA, CATEGORIES } from './prompts.js';
@@ -257,24 +257,27 @@ async function runExplain(job) {
   await syncDrillsForGame(done, settings); // copy fresh categories/patterns onto drills
 }
 
-/** Build (or rebuild) one opponent's opening index for the clash feature. The
- * gameId is the synthetic "clash:<fideId>" so the dedup guard keys per opponent.
- * Parsing hundreds of full PGNs is the only cost; buildOpponentIndex yields to
- * the event loop as it goes, so the server stays responsive. */
+/** Build one opponent's clash index (the synthetic gameId "clash:<fideId>" keys
+ * the dedup guard per opponent). The parse yields to the event loop as it goes,
+ * and ensureClashIndex skips it entirely when the stored index is already fresh,
+ * so a pre-build pass over unchanged books is near-instant. */
 async function runClash(job) {
   const fideId = job.gameId.replace(/^clash:/, '');
-  const book = await getScoutBook(fideId);
-  if (!book) throw new Error('no scout book for this FIDE id');
-  const settings = await getSettings();
   job.stage = 'parse';
-  const { index, coverage } = await buildOpponentIndex(book, settings, {
+  const entry = await ensureClashIndex(fideId, {
     onProgress: (done, total) => { job.progress = done; job.total = total; },
     cancelled: () => job.cancelled,
   });
-  if (job.cancelled) throw new Error('cancelled');
-  const store = await getClashStore();
-  store[fideId] = { bookImportedAt: book.importedAt, builtAt: new Date().toISOString(), coverage, index };
-  await saveClashStore(store);
+  if (!entry && !job.cancelled) throw new Error('no scout book for this FIDE id');
+}
+
+/** Warm every opponent's clash index at startup so the Scouting page shows the
+ * clash immediately (no button) and the published mirror bundles a current
+ * index. Non-blocking: each is a queued job that no-ops when already fresh. */
+export async function prebuildClashes() {
+  const books = await listScoutBooks();
+  for (const b of books) if (b.fideId) enqueue('clash', 'clash:' + b.fideId);
+  return books.length;
 }
 
 /** Pattern and concept names used so far (most frequent first, capped), so the
