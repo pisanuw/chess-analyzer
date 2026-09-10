@@ -105,7 +105,7 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
 
   if (data) wirePrep(el, subject, data.report, pending, refresh);
   if (linkable) wireFideLink(el, subject);
-  if (book) { wirePromote(el, book.dossier, subject, book.promote, refresh); renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend); wireClash(el, entry.fideId, boardRef); }
+  if (book) { wirePromote(el, book.dossier, subject, book.promote, refresh); renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend); wireClash(el, entry.fideId, boardRef, readonly); }
   if (data) renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly);
 }
 
@@ -377,21 +377,22 @@ function clashCard() {
   </div>`;
 }
 
-function wireClash(el, fideId, boardRef) {
+function wireClash(el, fideId, boardRef, readonly) {
   const btn = el.querySelector('#clash-build');
   const body = el.querySelector('#clash-body');
   if (!btn || !body || !fideId) return;
+  const ctx = { fideId, readonly };
   btn.onclick = () => busy(btn, async () => {
     try {
       const r = await api.scoutClash(fideId);
-      if (r.building) return pollClash(fideId, body, boardRef);
-      renderClashForest(r.clash, body, boardRef);
+      if (r.building) return pollClash(fideId, body, boardRef, ctx);
+      renderClashForest(r.clash, body, boardRef, ctx);
     } catch (err) { toast(err.message, true); }
   });
 }
 
 /** Poll the job queue while the opponent index builds, then render. */
-async function pollClash(fideId, body, boardRef) {
+async function pollClash(fideId, body, boardRef, ctx) {
   body.innerHTML = '<p class="muted">Building the clash tree (parsing the opponent’s games)…</p>';
   for (let i = 0; i < 200; i++) {
     await new Promise(r => setTimeout(r, 1500));
@@ -402,7 +403,7 @@ async function pollClash(fideId, body, boardRef) {
     if (!job || job.status === 'done' || job.status === 'cancelled') {
       const r = await api.scoutClash(fideId);
       if (r.building) continue; // re-queued; keep waiting
-      return renderClashForest(r.clash, body, boardRef);
+      return renderClashForest(r.clash, body, boardRef, ctx);
     }
   }
   body.innerHTML = '<div class="empty">The clash build is taking longer than expected. Reload the page to check.</div>';
@@ -441,11 +442,29 @@ function renderClashEdges(node, orient) {
   return `<ul class="clash-tree">${node.edges.map(e => {
     const label = `${movePrefix({ moveNumber: Math.floor(node.ply / 2) + 1, color: node.side })} ${esc(e.san)}`;
     const who = node.mover === 'kai' ? 'Your move' : 'Their reply';
-    return `<li><span class="clash-move ${node.mover}" data-fen="${esc(e.fenAfter)}" data-uci="${esc(e.uci)}" data-orient="${orient}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${renderClashEdges(e.child, orient)}</li>`;
+    return `<li><span class="clash-move ${node.mover}" data-fen="${esc(e.fenAfter)}" data-uci="${esc(e.uci)}" data-orient="${orient}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${clashLeafEngine(e.child, orient)}${renderClashEdges(e.child, orient)}</li>`;
   }).join('')}</ul>`;
 }
 
-function renderClashForest(clash, container, boardRef = { board: null }) {
+/** Engine suggestion attached to a prep-end leaf (phase 3). For your-move leaves
+ * it is what to play with no book to guide you; for opponent leaves it is the
+ * likely engine move to expect. A move that transposes into a structure the
+ * opponent scores badly in is flagged. */
+function clashLeafEngine(node, orient) {
+  if (!node.engineBest) return '';
+  const who = node.mover === 'kai' ? 'engine suggests' : 'likely engine reply';
+  const lines = node.engineLines?.length ? node.engineLines : [node.engineBest];
+  const items = lines.map(l => {
+    const attrs = l.childFen ? ` data-fen="${esc(l.childFen)}" data-uci="${esc(l.uci)}" data-orient="${orient}"` : '';
+    const steer = l.oppScorePct != null
+      ? ` <span class="chip warn" title="Transposes into a position ${esc(node.mover === 'kai' ? 'they have' : 'they have')} reached ${l.oppCount} time${l.oppCount === 1 ? '' : 's'}, scoring ${l.oppScorePct}%">they score ${l.oppScorePct}% here (${l.oppCount}g)</span>`
+      : '';
+    return `<li><span class="clash-move engine"${attrs}>${esc(l.san)}</span> <small class="muted">${formatEval(l.cp)}</small>${steer}</li>`;
+  }).join('');
+  return `<div class="clash-engine"><small class="muted">${who}:</small><ul class="clash-tree">${items}</ul></div>`;
+}
+
+function renderClashForest(clash, container, boardRef = { board: null }, ctx = {}) {
   boardRef.board?.destroy(); boardRef.board = null; // a fresh build replaces the board div
   const forest = color => {
     const root = clash.forests[color];
@@ -454,8 +473,16 @@ function renderClashForest(clash, container, boardRef = { board: null }) {
     const body = root.edges.length ? renderClashEdges(root, color) : '<div class="muted">Not enough of your games in this colour.</div>';
     return `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">You as ${color} <span class="muted" style="font-size:13px">(${n} of your game${n === 1 ? '' : 's'})</span></h3>${body}</div>`;
   };
+  // Engine extension control: only on the home machine, and only once (the tree
+  // carries engineExtended after a run).
+  const extendCtl = ctx.readonly
+    ? ''
+    : clash.engineExtended
+      ? `<span class="muted"><small>Engine lines added at prep-end leaves.${clash.engineExtendTruncated ? ' Only the earliest leaves were extended.' : ''}</small></span>`
+      : `<button class="small" id="clash-extend" title="Run Stockfish on the positions where a prediction runs out and show the best move">Extend prep-end leaves with engine</button>`;
   container.innerHTML = `
     <p class="muted">Your openings (bold) crossed with ${esc(clash.name)}'s games, showing their most likely replies weighted toward recent, on-strength games. Percentages are how often they chose that reply; "Ng" is the game count behind it. Click any move to see the position. Badges: <span class="chip warn">not faced</span> they never reached the position, <span class="chip warn">book thins out</span> too few games to trust, <span class="chip warn">your line ends</span> you have no games continuing.</p>
+    <div class="row" style="gap:10px;align-items:center;margin-bottom:6px">${extendCtl}</div>
     <div class="grid grid-2">
       <div><div class="board-wrap"><div id="clash-board"></div></div></div>
       <div id="clash-forests">${forest('white')}${forest('black')}</div>
@@ -470,11 +497,21 @@ function renderClashForest(clash, container, boardRef = { board: null }) {
   const forests = container.querySelector('#clash-forests');
   forests.addEventListener('click', e => {
     const mv = e.target.closest('.clash-move');
-    if (!mv) return;
+    if (!mv || !mv.dataset.fen) return;
     forests.querySelectorAll('.clash-move.sel').forEach(n => n.classList.remove('sel'));
     mv.classList.add('sel');
     board.orient(mv.dataset.orient);
     board.set(mv.dataset.fen, { lastMove: mv.dataset.uci });
+  });
+
+  const extendBtn = container.querySelector('#clash-extend');
+  if (extendBtn) extendBtn.onclick = () => busy(extendBtn, async () => {
+    extendBtn.textContent = 'Running Stockfish…';
+    try {
+      const r = await api.scoutClash(ctx.fideId, { extend: true });
+      if (r.clash?.engineWarning) toast(r.clash.engineWarning, true);
+      renderClashForest(r.clash, container, boardRef, ctx);
+    } catch (err) { toast(err.message, true); extendBtn.textContent = 'Extend prep-end leaves with engine'; }
   });
 }
 

@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Opening Clash phase 3: engine-grounded leaf extension)
+
+- An "Extend prep-end leaves with engine" button (home machine only) runs Stockfish on the positions where a prediction ran out and attaches the best line to each leaf: for your-move leaves it is what to play with no book to guide you, for opponent leaves the likely engine move to expect. Candidate moves come from the engine, never a model (the codebase rule); evals are stored White-POV via `scoreToCp(line) * stmSign(stm)`. It is cache-first across the pool (`evalCacheKey` for every engine name), so the many shared opening positions cost nothing, and bounded to the 40 shallowest leaves per build. Where an engine-approved move (within `WP_ACCEPT` of best) transposes into a position the opponent has reached at least 4 times, the leaf is flagged with their historical score there, so the recommendation steers toward structures they handle badly. `?extend=1` on `GET /api/scout/book/:fideId/clash`; skipped on the read-only mirror and when no engine is reachable (a warning is surfaced instead of failing).
+- `server/analyze.js` now exports `stmSign`. `server/clash.js`: `extendClashLeaves` (cache-first pool eval, one retry on an empty remote reply rather than a fabricated eval), plus `collectExtendable`, `annotateLeaf`, and `oppScoreAt`. `test/clash.test.js` gains an extension test with a stand-in engine, verifying White-POV conversion for both a your-move (White) and an opponent (Black) leaf. 138 tests pass.
+
 ## 2026-09-10 (Opening Clash phase 2: interactive board)
 
 - The clash tree now drives a read-only board: clicking any move shows that position with the last move highlighted, and the board flips to the side you would be playing (white forest orients White, black forest orients Black). The board and forests sit in a grid that collapses to one column on a phone. `scoutView` now returns a `{ destroy }` hook and holds the one Chessground instance in a ref, so the board is torn down on navigation and on every re-render (subject switch, prep-sheet regenerate, promote), with no leaked listeners. Frontend only.

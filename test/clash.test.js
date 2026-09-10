@@ -1,8 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Chess } from 'chess.js';
-import { parseGame } from '../server/pgn.js';
-import { buildKaiIndex, buildOpponentIndex, assembleClashForest, clashParams } from '../server/clash.js';
+import { tempData } from './helpers.js';
+
+// Set DATA_DIR before importing server modules: extendClashLeaves writes the
+// eval cache, and we do not want that landing in the real data dir.
+process.env.DATA_DIR = tempData();
+const { parseGame } = await import('../server/pgn.js');
+const { buildKaiIndex, buildOpponentIndex, assembleClashForest, clashParams, extendClashLeaves } = await import('../server/clash.js');
 
 const NOW = new Date('2026-09-09T00:00:00Z');
 const SETTINGS = { scoutMaxAgeYears: 3, scoutHalfLifeDays: 540 };
@@ -187,4 +192,51 @@ test('the FENs used for the board are real and legal (chess.js accepts each edge
       assert.doesNotThrow(() => new Chess(e.fenAfter), `edge FEN should be legal: ${e.fenAfter}`);
     }
   }
+});
+
+// A stand-in engine: it returns the position's first few legal moves with
+// descending centipawns (side-to-move perspective), so extendClashLeaves has
+// something deterministic to convert and attach.
+function fakePool() {
+  const engine = {
+    name: 'fake 1',
+    async analyse(fen, { multipv }) {
+      const moves = new Chess(fen).moves({ verbose: true }).slice(0, multipv);
+      const lines = moves.map((m, i) => ({ multipv: i + 1, depth: 10, cp: 30 - i * 10, mate: null, pv: [m.from + m.to + (m.promotion || '')] }));
+      return { bestmove: lines[0]?.pv[0] || null, lines };
+    },
+  };
+  return { engines: [engine], names: new Set(['fake 1']), drop() {} };
+}
+
+test('engine extension fills prep-end leaves with White-POV evals (candidate moves from the engine)', async () => {
+  const kaiGames = [
+    kaiGame('white', ['d4', 'Nf6']), kaiGame('white', ['d4', 'Nf6']), // knows d4 Nf6
+    kaiGame('white', ['b3', 'e5']), kaiGame('white', ['b3', 'd5']),    // and 1.b3
+  ];
+  const bookGames = [
+    bookGame('black', ['d4', 'g6']), bookGame('black', ['d4', 'g6']), // opp meets 1.d4 with g6 (the player has no games here)
+    // opponent never faced 1.b3
+    bookGame('black', ['e4', 'c5']), bookGame('black', ['e4', 'e5']),
+  ];
+  const { index, coverage } = await buildOpponentIndex(bookOf(bookGames), SETTINGS, { now: NOW });
+  const kai = buildKaiIndex(kaiGames);
+  const clash = assembleClashForest({ oppIndex: index, coverage, kai, book: bookOf(bookGames) });
+
+  await extendClashLeaves(clash, index, { engineDepth: 10, engineMultiPv: 3 }, fakePool());
+  assert.equal(clash.engineExtended, true);
+
+  const nodes = allNodes(clash.forests.white);
+  // Your-move leaf (White to move after 1.d4 g6): best line cp 30, White POV = +30.
+  const kaiLeaf = nodes.find(n => n.kaiPrepEnds && n.engineBest);
+  assert.ok(kaiLeaf, 'the kaiPrepEnds leaf got an engine suggestion');
+  assert.equal(kaiLeaf.side, 'white');
+  assert.equal(kaiLeaf.engineBest.cp, 30);
+  assert.ok(kaiLeaf.engineLines.length >= 1 && kaiLeaf.engineLines[0].childFen);
+
+  // Opponent-to-move leaf (Black to move after 1.b3): 30 from Black's view is -30 for White.
+  const oppLeaf = nodes.find(n => n.oppPrepEnds && n.oppPrepEndsReason === 'nodata' && n.engineBest);
+  assert.ok(oppLeaf, 'the oppPrepEnds leaf got an engine suggestion');
+  assert.equal(oppLeaf.side, 'black');
+  assert.equal(oppLeaf.engineBest.cp, -30);
 });

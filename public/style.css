@@ -136,6 +136,9 @@ tr.clickable:hover td { background: var(--surface-2); }
 .clash-move.sel { background: var(--accent-soft); }
 .clash-move.kai { font-weight: 600; }
 .clash-move.opponent { color: var(--text-2); }
+.clash-move.engine { color: var(--accent); }
+.clash-engine { margin: 2px 0 2px 16px; }
+.clash-engine .clash-tree { border-left-style: dashed; margin-top: 1px; }
 
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: 14px; z-index: 20; box-shadow: 0 4px 16px rgba(0,0,0,.2); }
 .toast.error { background: var(--critical); color: #fff; }

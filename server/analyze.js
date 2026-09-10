@@ -18,7 +18,7 @@ const MATE_CP = 10000;
 const MOMENT_CONTEST_FLOOR = 15;
 
 /** Sign that converts a side-to-move value to White's perspective (and back). */
-const stmSign = stm => (stm === 'white' ? 1 : -1);
+export const stmSign = stm => (stm === 'white' ? 1 : -1);
 
 /** Convert a UCI score (side-to-move perspective) to centipawns; mates map to +/- (MATE_CP - plies). */
 export function scoreToCp(line) {

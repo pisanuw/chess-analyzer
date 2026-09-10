@@ -15,10 +15,15 @@
 // the same 3-field posKey used everywhere else, branching is capped, and every
 // node records, per side, where preparation runs out (the player leaving his own
 // lines, or the opponent having no or too few games in the position).
+import { Chess } from 'chess.js';
 import { parseGame } from './pgn.js';
 import { ageDays } from './scoutbook.js';
 import { resultScore } from './report.js';
 import { getGame, listGames } from './store.js';
+import { scoreToCp, stmSign } from './analyze.js';
+import { winProb, WP_ACCEPT } from '../public/shared.js';
+import { getCachedEval, putCachedEval, evalCacheKey, flushCache } from './evalcache.js';
+import { poolAnalyse } from './enginepool.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -240,4 +245,101 @@ function expand(fen, ply, kaiMoved, ctx) {
 function countNodes(node) {
   if (!node) return 0;
   return 1 + (node.edges || []).reduce((s, e) => s + countNodes(e.child), 0);
+}
+
+// --- optional engine extension of prep-end leaves -------------------------------
+
+const MAX_EXTEND = 40; // bound the engine work in one synchronous request
+
+/** Every terminal node worth an engine suggestion: a position where a side ran
+ * out of data (yours, or the opponent's). Keyed by FEN so a position reached
+ * more than once is evaluated once. Skips transposition stubs and finished
+ * positions. */
+function collectExtendable(node, byFen) {
+  if (!node) return;
+  if (!node.edges.length && !node.transposesTo && (node.kaiPrepEnds || node.oppPrepEnds || node.leaf || node.truncated)) {
+    let over = false;
+    try { const c = new Chess(node.fenBefore); over = c.isGameOver(); } catch { over = true; }
+    if (!over) (byFen.get(node.fenBefore) || byFen.set(node.fenBefore, []).get(node.fenBefore)).push(node);
+  }
+  for (const e of node.edges) collectExtendable(e.child, byFen);
+}
+
+/** Opponent's aggregate score in a position they have reached (across all their
+ * moves there), or null. Used to flag when a candidate transposes into a
+ * structure the opponent handles badly. */
+function oppScoreAt(oppMapForColor, posKey) {
+  const moves = oppMapForColor?.[posKey];
+  if (!moves) return null;
+  let count = 0, scoreW = 0, scoredW = 0;
+  for (const m of Object.values(moves)) { count += m.count; scoreW += m.scoreW; scoredW += m.scoredW; }
+  return { count, scorePct: scoredW ? Math.round((scoreW / scoredW) * 100) : null };
+}
+
+/** Attach the engine's view to one leaf: its best line(s) as White-POV evals,
+ * and, for your-move leaves, which engine-approved move steers into a structure
+ * the opponent scores worst in (min 4 games, so it is signal not noise). */
+function annotateLeaf(node, fen, result, oppIndex) {
+  if (!result?.lines?.length) return;
+  const stm = sideOf(fen);
+  const sign = stmSign(stm);
+  const lines = result.lines.map(l => {
+    const uci = l.pv?.[0];
+    if (!uci) return null;
+    let san = uci, childFen = null;
+    try { const c = new Chess(fen); const mv = c.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] }); if (mv) { san = mv.san; childFen = c.fen(); } } catch { /* keep uci */ }
+    return { uci, san, cp: scoreToCp(l) * sign, stmCp: scoreToCp(l), childFen };
+  }).filter(Boolean);
+  if (!lines.length) return;
+
+  // Steering only makes sense when it is your move (you choose). Look up the
+  // opponent's historical score in each engine-approved candidate's resulting
+  // position; prefer the acceptable move that heads into their worst structure.
+  if (node.mover === 'kai' && oppIndex) {
+    const oppColor = stm === 'white' ? 'black' : 'white';
+    const bestStm = lines[0].stmCp;
+    let steer = null;
+    for (const l of lines) {
+      if (winProb(bestStm) - winProb(l.stmCp) > WP_ACCEPT || !l.childFen) continue; // not engine-approved
+      const opp = oppScoreAt(oppIndex[oppColor], posKeyOf(l.childFen));
+      if (!opp || opp.count < 4 || opp.scorePct == null) continue;
+      l.oppScorePct = opp.scorePct; l.oppCount = opp.count;
+      if (!steer || opp.scorePct < steer.oppScorePct) steer = { uci: l.uci, san: l.san, cp: l.cp, oppScorePct: opp.scorePct, oppCount: opp.count };
+    }
+    if (steer) node.steer = steer;
+  }
+
+  node.engineBest = { uci: lines[0].uci, san: lines[0].san, cp: lines[0].cp };
+  node.engineLines = lines.map(l => ({ uci: l.uci, san: l.san, cp: l.cp, childFen: l.childFen, ...(l.oppScorePct != null ? { oppScorePct: l.oppScorePct, oppCount: l.oppCount } : {}) }));
+}
+
+/** Evaluate the tree's prep-end leaves with Stockfish (engine-grounded: candidate
+ * moves come from the engine, never a model), cache-first so the many opening
+ * positions already seen cost nothing. Mutates and returns the forest. */
+export async function extendClashLeaves(forest, oppIndex, settings, pool) {
+  const depth = settings.engineDepth || 18;
+  const multipv = Math.max(2, settings.engineMultiPv || 3);
+  const byFen = new Map();
+  collectExtendable(forest.forests.white, byFen);
+  collectExtendable(forest.forests.black, byFen);
+  // Shallowest leaves first, so if we hit the cap the earliest (most relevant)
+  // positions are the ones that get engine data.
+  const fens = [...byFen.entries()].sort((a, b) => Math.min(...a[1].map(n => n.ply)) - Math.min(...b[1].map(n => n.ply))).map(([f]) => f);
+  const chosen = fens.slice(0, MAX_EXTEND);
+  forest.engineExtendTruncated = fens.length > chosen.length;
+
+  await poolAnalyse(pool, chosen,
+    async (engine, fen) => {
+      for (const name of pool.names) { const hit = await getCachedEval(evalCacheKey(name, depth, multipv, fen)); if (hit) return hit; }
+      let r = await engine.analyse(fen, { depth, multipv });
+      if (!r.lines.length) r = await engine.analyse(fen, { depth, multipv }); // one retry: a remote pipe can drop the info lines
+      if (!r.lines.length) return { bestmove: null, lines: [] };            // give up rather than fabricate an eval
+      await putCachedEval(evalCacheKey(engine.name, depth, multipv, fen), { bestmove: r.bestmove, lines: r.lines });
+      return r;
+    },
+    async (fen, result) => { for (const node of byFen.get(fen)) annotateLeaf(node, fen, result, oppIndex); },
+  );
+  await flushCache();
+  forest.engineExtended = true;
+  return forest;
 }

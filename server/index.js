@@ -5,12 +5,12 @@ import { Chess } from 'chess.js';
 import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from './pgn.js';
 import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
 import { parseFideFromFilename, buildScoutBook, scoutDossier } from './scoutbook.js';
-import { loadKaiGames, buildKaiIndex, assembleClashForest } from './clash.js';
+import { loadKaiGames, buildKaiIndex, assembleClashForest, extendClashLeaves } from './clash.js';
 import { assocsFromHeaders, recordAssociations, lookupFideId } from './players.js';
 import { searchFide, fideProfileName } from './fide.js';
 import { enqueue, listJobs, cancelJobs } from './jobs.js';
 import { findStockfish, getSparringEngine } from './engine.js';
-import { probeHosts, remoteHostList } from './enginepool.js';
+import { probeHosts, remoteHostList, getEnginePool } from './enginepool.js';
 import { checkClaudeCli, complete } from './llm.js';
 import { buildReport, buildPrepCard } from './report.js';
 import { buildRepertoire } from './repertoire.js';
@@ -639,6 +639,15 @@ app.get('/api/scout/book/:fideId/clash', wrap(async (req, res) => {
   const kaiGames = await loadKaiGames();
   const kai = buildKaiIndex(kaiGames);
   const clash = assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, kai, book, params: req.query });
+  // Optional, engine-grounded: fill prep-end leaves with Stockfish's best move
+  // (candidate moves from the engine, never a model). Cache-first, so the many
+  // shared opening positions are near free. Off on the read-only mirror (no engine).
+  if (req.query.extend === '1' && !READONLY) {
+    const settings = await getSettings();
+    const pool = await getEnginePool(settings);
+    if (!pool.engines.length) clash.engineWarning = pool.warning || 'No engine available to extend lines.';
+    else { if (pool.warning) clash.engineWarning = pool.warning; await extendClashLeaves(clash, entry.index, settings, pool); }
+  }
   res.json({ clash });
 }));
 
