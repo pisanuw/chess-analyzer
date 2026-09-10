@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-10 (Opening Clash phase 2: interactive board)
+
+- The clash tree now drives a read-only board: clicking any move shows that position with the last move highlighted, and the board flips to the side you would be playing (white forest orients White, black forest orients Black). The board and forests sit in a grid that collapses to one column on a phone. `scoutView` now returns a `{ destroy }` hook and holds the one Chessground instance in a ref, so the board is torn down on navigation and on every re-render (subject switch, prep-sheet regenerate, promote), with no leaked listeners. Frontend only.
+
 ## 2026-09-10 (Opening Clash phase 1: predicted, branching lines vs a scouted opponent)
 
 - New Scouting card, "Opening clash: what they play against you", that crosses the player's own openings with a scouted opponent's whole book and predicts, as an alternating branching tree, how they would meet each line. The player's side comes from his analysed games (`analysis.moves[]`, no re-parse); the opponent's side from parsing every book game's full PGN (the book keeps only 10 SAN plies), weighted with `scoutDossier`'s exact recency scheme so a predicted reply's share reconciles with the repertoire book shown alongside. The tree is a position-keyed forest: transpositions merge on the same 3-field posKey used elsewhere, branching is capped (top 3 opponent replies, min 2 games, depth cap 20), and every node marks per side where a prediction runs out: `not faced` (opponent never reached the position), `book thins out` (too few games), and `your line ends` (the player has no game continuing). The white forest roots at the player's own opening menu; the black forest roots at the opponent's first move (they choose the opening), then the player replies. Verified on the real books: Neeraj 145 nodes, Nikash 49, and Kai's Caro-Kann shows correctly against both opponents' 1.e4.

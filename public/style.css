@@ -131,7 +131,9 @@ tr.clickable:hover td { background: var(--surface-2); }
 /* Opening clash: an indented, alternating move tree. */
 .clash-tree { list-style: none; margin: 3px 0; padding-left: 16px; border-left: 1px solid var(--border); }
 .clash-tree li { margin: 3px 0; line-height: 1.5; }
-.clash-move { font-variant-numeric: tabular-nums; }
+.clash-move { font-variant-numeric: tabular-nums; cursor: pointer; border-radius: 4px; padding: 0 3px; }
+.clash-move:hover { background: var(--surface-2); }
+.clash-move.sel { background: var(--accent-soft); }
 .clash-move.kai { font-weight: 600; }
 .clash-move.opponent { color: var(--text-2); }
 

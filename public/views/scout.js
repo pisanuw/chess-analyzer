@@ -3,10 +3,12 @@
 // dossier for the recent subset once it has been analysed.
 import { api, esc, toast, movePrefix, busy, formatEval } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
+import { Board } from '../board.js';
 import { CATEGORY_LABEL } from './report.js';
 
 const fmtLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
 const lichess = sans => `https://lichess.org/analysis/pgn/${encodeURIComponent(fmtLine(sans))}`;
+const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 export async function scoutView(root) {
   const { subjects } = await api.scoutSubjects();
@@ -67,10 +69,15 @@ export async function scoutView(root) {
   renderSubjects('');
   root.querySelector('#subject-search').addEventListener('input', e => renderSubjects(e.target.value));
   const entry = subjects.find(s => s.subject === current) || { subject: current, fideId: null };
-  await renderDossier(root.querySelector('#dossier'), entry, readonly);
+  // The clash board (created lazily) is the one Chessground instance on this page;
+  // hold it so the router can tear it down on navigation and re-renders can too.
+  const boardRef = { board: null };
+  await renderDossier(root.querySelector('#dossier'), entry, readonly, boardRef);
+  return { destroy() { boardRef.board?.destroy(); boardRef.board = null; } };
 }
 
-async function renderDossier(el, entry, readonly) {
+async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
+  boardRef.board?.destroy(); boardRef.board = null; // re-render replaces the DOM; drop the old board first
   const subject = entry.subject;
   // Book dossier (instant, whole history) and engine dossier (analysed subset)
   // are independent: a freshly imported opponent has a book but no engine data.
@@ -86,7 +93,7 @@ async function renderDossier(el, entry, readonly) {
   }
   const pending = subjectGameStats(gamesRes.games, subject, entry.fideId);
   const linkable = !entry.fideId && !readonly;
-  const refresh = () => renderDossier(el, entry, readonly);
+  const refresh = () => renderDossier(el, entry, readonly, boardRef);
   // The prep sheet sits high: it must be generated here on the home machine, so
   // it should be the first thing you reach for on the page.
   el.innerHTML = subjectHeader(entry)
@@ -98,7 +105,7 @@ async function renderDossier(el, entry, readonly) {
 
   if (data) wirePrep(el, subject, data.report, pending, refresh);
   if (linkable) wireFideLink(el, subject);
-  if (book) { wirePromote(el, book.dossier, subject, book.promote, refresh); renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend); wireClash(el, entry.fideId); }
+  if (book) { wirePromote(el, book.dossier, subject, book.promote, refresh); renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend); wireClash(el, entry.fideId, boardRef); }
   if (data) renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly);
 }
 
@@ -370,21 +377,21 @@ function clashCard() {
   </div>`;
 }
 
-function wireClash(el, fideId) {
+function wireClash(el, fideId, boardRef) {
   const btn = el.querySelector('#clash-build');
   const body = el.querySelector('#clash-body');
   if (!btn || !body || !fideId) return;
   btn.onclick = () => busy(btn, async () => {
     try {
       const r = await api.scoutClash(fideId);
-      if (r.building) return pollClash(fideId, body);
-      renderClashForest(r.clash, body);
+      if (r.building) return pollClash(fideId, body, boardRef);
+      renderClashForest(r.clash, body, boardRef);
     } catch (err) { toast(err.message, true); }
   });
 }
 
 /** Poll the job queue while the opponent index builds, then render. */
-async function pollClash(fideId, body) {
+async function pollClash(fideId, body, boardRef) {
   body.innerHTML = '<p class="muted">Building the clash tree (parsing the opponent’s games)…</p>';
   for (let i = 0; i < 200; i++) {
     await new Promise(r => setTimeout(r, 1500));
@@ -395,7 +402,7 @@ async function pollClash(fideId, body) {
     if (!job || job.status === 'done' || job.status === 'cancelled') {
       const r = await api.scoutClash(fideId);
       if (r.building) continue; // re-queued; keep waiting
-      return renderClashForest(r.clash, body);
+      return renderClashForest(r.clash, body, boardRef);
     }
   }
   body.innerHTML = '<div class="empty">The clash build is taking longer than expected. Reload the page to check.</div>';
@@ -428,29 +435,47 @@ function clashEdgeStats(node, e) {
 }
 
 /** Recursive nested list. Each edge is one move; its child holds the reply tree.
- * data-fen/data-uci are for the board wired in a later phase. */
-function renderClashEdges(node) {
+ * data-fen/data-uci drive the board; data-orient flips it to the player's side. */
+function renderClashEdges(node, orient) {
   if (!node.edges.length) return '';
   return `<ul class="clash-tree">${node.edges.map(e => {
     const label = `${movePrefix({ moveNumber: Math.floor(node.ply / 2) + 1, color: node.side })} ${esc(e.san)}`;
     const who = node.mover === 'kai' ? 'Your move' : 'Their reply';
-    return `<li><span class="clash-move ${node.mover}" data-fen="${esc(e.fenAfter)}" data-uci="${esc(e.uci)}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${renderClashEdges(e.child)}</li>`;
+    return `<li><span class="clash-move ${node.mover}" data-fen="${esc(e.fenAfter)}" data-uci="${esc(e.uci)}" data-orient="${orient}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${renderClashEdges(e.child, orient)}</li>`;
   }).join('')}</ul>`;
 }
 
-function renderClashForest(clash, container) {
+function renderClashForest(clash, container, boardRef = { board: null }) {
+  boardRef.board?.destroy(); boardRef.board = null; // a fresh build replaces the board div
   const forest = color => {
     const root = clash.forests[color];
     if (!root) return '';
     const n = clash.kaiColorCounts[color] || 0;
-    const body = root.edges.length ? renderClashEdges(root) : '<div class="muted">Not enough of your games in this colour.</div>';
+    const body = root.edges.length ? renderClashEdges(root, color) : '<div class="muted">Not enough of your games in this colour.</div>';
     return `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">You as ${color} <span class="muted" style="font-size:13px">(${n} of your game${n === 1 ? '' : 's'})</span></h3>${body}</div>`;
   };
   container.innerHTML = `
-    <p class="muted">Your openings (bold) crossed with ${esc(clash.name)}'s games, showing their most likely replies weighted toward recent, on-strength games. Percentages are how often they chose that reply; "Ng" is the game count behind it. Badges: <span class="chip warn">not faced</span> they never reached the position, <span class="chip warn">book thins out</span> too few games to trust, <span class="chip warn">your line ends</span> you have no games continuing.</p>
-    ${forest('white')}
-    ${forest('black')}
+    <p class="muted">Your openings (bold) crossed with ${esc(clash.name)}'s games, showing their most likely replies weighted toward recent, on-strength games. Percentages are how often they chose that reply; "Ng" is the game count behind it. Click any move to see the position. Badges: <span class="chip warn">not faced</span> they never reached the position, <span class="chip warn">book thins out</span> too few games to trust, <span class="chip warn">your line ends</span> you have no games continuing.</p>
+    <div class="grid grid-2">
+      <div><div class="board-wrap"><div id="clash-board"></div></div></div>
+      <div id="clash-forests">${forest('white')}${forest('black')}</div>
+    </div>
     <p class="muted"><small>${clash.nodeCount} positions${clash.truncated ? ', capped for size' : ''}, from ${clash.coverage.bookGamesParsed} of the opponent's games.</small></p>`;
+
+  const boardEl = container.querySelector('#clash-board');
+  const board = new Board(boardEl, { orientation: 'white' });
+  board.set(START_FEN);
+  boardRef.board = board;
+  // One delegated listener drives the read-only board from any clicked move.
+  const forests = container.querySelector('#clash-forests');
+  forests.addEventListener('click', e => {
+    const mv = e.target.closest('.clash-move');
+    if (!mv) return;
+    forests.querySelectorAll('.clash-move.sel').forEach(n => n.classList.remove('sel'));
+    mv.classList.add('sel');
+    board.orient(mv.dataset.orient);
+    board.set(mv.dataset.fen, { lastMove: mv.dataset.uci });
+  });
 }
 
 /** The deeper dossier over the analysed subset: where they go wrong, clock,
