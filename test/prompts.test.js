@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { makeGame } from './helpers.js';
 import {
   EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA,
-  momentPrompt, scoutMomentPrompt, scoutGameSummaryPrompt, prepSheetPrompt,
+  momentPrompt, scoutMomentPrompt, scoutGameSummaryPrompt, prepSheetPrompt, prepSheetVersion,
   momentsBatchPrompt, scoutMomentsBatchPrompt, batchExplanationSchema,
 } from '../server/prompts.js';
 
@@ -66,5 +66,13 @@ test('scoutGameSummaryPrompt and prepSheetPrompt are grounded in the dossier', (
   assert.ok(p.includes('Passive rook'));
   assert.ok(p.includes('1.e4 e5'));
   assert.ok(p.includes('on their own from move 5'));
-  assert.ok(Object.keys(PREP_SHEET_SCHEMA.properties).length === 4);
+  assert.ok(p.includes('preparation sheet'), 'the instructions from prompts/prep-sheet.md are included');
+  assert.deepEqual(PREP_SHEET_SCHEMA.required, ['headline', 'profile', 'exploit_plan', 'openings', 'watch_fors']);
+  assert.deepEqual(PREP_SHEET_SCHEMA.properties.profile.required, ['style', 'strongest_phase', 'weakest_phase', 'main_errors', 'time_trouble']);
+});
+
+test('prepSheetVersion is a stable, non-empty fingerprint of the sheet format', () => {
+  const v = prepSheetVersion();
+  assert.match(v, /^[0-9a-f]{12}$/, 'a short hex fingerprint (instructions + schema)');
+  assert.equal(v, prepSheetVersion(), 'stable across calls, so an unchanged format is not flagged as new');
 });

@@ -16,7 +16,7 @@ import { buildRepertoire } from './repertoire.js';
 import { scoreToCp, winProb, summarize } from './analyze.js';
 import { dueDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback, clearFeedback, recordDecoy } from './drills.js';
 import { buildPuzzles } from './puzzles.js';
-import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
+import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { knownPatterns } from './jobs.js';
 import { authMiddleware, loginRoute } from './auth.js';
 
@@ -609,7 +609,9 @@ app.get('/api/scout/:subject', wrap(async (req, res) => {
   if (!report.games) return res.status(404).json({ error: 'no analysed games for this subject' });
   const repertoire = await buildRepertoire({ purpose: 'scout', subject });
   const prepSheet = (await getPrepSheets())[subject] || null;
-  res.json({ subject, report, repertoire, prepSheet });
+  // The current format fingerprint lets the UI offer a regenerate when the sheet
+  // style has changed, not only when new games arrive (null on the hosted mirror).
+  res.json({ subject, report, repertoire, prepSheet, prepSheetVersion: prepSheetVersion() });
 }));
 
 app.post('/api/scout/:subject/prepsheet', wrap(async (req, res) => {
@@ -624,7 +626,7 @@ app.post('/api/scout/:subject/prepsheet', wrap(async (req, res) => {
     schema: PREP_SHEET_SCHEMA,
   });
   const sheets = await getPrepSheets();
-  sheets[subject] = { ...output, games: report.games, model, costUsd, createdAt: new Date().toISOString() };
+  sheets[subject] = { ...output, games: report.games, version: prepSheetVersion(), model, costUsd, createdAt: new Date().toISOString() };
   await savePrepSheets(sheets);
   res.json({ prepSheet: sheets[subject] });
 }));

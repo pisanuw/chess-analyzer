@@ -19,6 +19,9 @@
   --seq-250: #86b6ef;
   --seq-400: #3987e5;
   --seq-550: #1c5cab;
+  /* Prep-sheet reading panel: soft cream (no stark white), dark softened text. */
+  --prep-bg: #fbf6e9;
+  --prep-text: #1b1b18;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -38,6 +41,9 @@
     --seq-250: #6da7ec;
     --seq-400: #3987e5;
     --seq-550: #86b6ef;
+    /* Warm, low-glare dark surface with off-white (not stark) text. */
+    --prep-bg: #232320;
+    --prep-text: #ececdf;
   }
 }
 
@@ -219,3 +225,51 @@ pre.prompt { white-space: pre-wrap; font-size: 12px; background: var(--surface-2
   .board-controls { flex-wrap: wrap; }
   .toast { left: 12px; right: 12px; transform: none; text-align: center; }
 }
+
+/* Prep-sheet reading panel. The sheet is read at the board (often on a phone),
+   so it is tuned for legibility: an open sans-serif stack, wide line spacing,
+   a short line length, block headings, and a real list for the cues. Follows
+   the dyslexia-friendly guidance (clean font, 1.5+ line height, left aligned,
+   soft low-glare background, dark-on-light text, bold not italics). */
+.prep-sheet {
+  background: var(--prep-bg);
+  color: var(--prep-text);
+  border-radius: 8px;
+  padding: 4px 20px 14px;
+  margin: 10px 0 12px;
+  max-width: 62ch;             /* keeps lines to roughly 60-70 characters */
+  font-family: Lexend, "Atkinson Hyperlegible", Verdana, Arial, system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  letter-spacing: .01em;
+  word-spacing: .04em;
+  text-align: left;            /* never justified: no uneven word gaps */
+}
+.prep-sheet h3 {
+  color: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  text-transform: none;        /* no all-caps blocks */
+  letter-spacing: 0;
+  margin: 20px 0 6px;
+}
+.prep-sheet > :first-child { margin-top: 0; }
+.prep-sheet p { margin: 6px 0; }
+.prep-sheet ul, .prep-sheet ol { margin: 6px 0; padding-left: 24px; }
+.prep-sheet li { margin: 6px 0; }
+/* Headline reads like a pull-quote: the one thing to know, set off from the rest. */
+.prep-sheet .prep-headline {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.5;
+  margin: 0 0 4px;
+  padding-left: 12px;
+  border-left: 4px solid var(--accent);
+}
+/* Compact, low-clutter tables inside the reading panel: soft row rules, roomy
+   cells, left aligned, and free to wrap (never forced to scroll on a phone). */
+.prep-sheet .prep-table { min-width: 0; font-size: inherit; margin: 6px 0 4px; }
+.prep-sheet .prep-table th,
+.prep-sheet .prep-table td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+.prep-sheet .prep-table thead th { font-weight: 700; }
+.prep-sheet .prep-table tbody th { font-weight: 700; white-space: nowrap; width: 1%; }

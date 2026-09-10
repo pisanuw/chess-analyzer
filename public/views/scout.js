@@ -2,7 +2,7 @@
 // whole game history (recency/rating weighted), plus the deeper engine/LLM
 // dossier for the recent subset once it has been analysed.
 import { api, esc, toast, movePrefix } from '../api.js';
-import { barChart } from '../charts.js';
+import { barChart, lineChart } from '../charts.js';
 import { CATEGORY_LABEL } from './report.js';
 
 const fmtLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
@@ -90,15 +90,29 @@ async function renderDossier(el, entry, readonly) {
   // The prep sheet sits high: it must be generated here on the home machine, so
   // it should be the first thing you reach for on the page.
   el.innerHTML = subjectHeader(entry)
-    + (data ? prepSheetCard(subject, data.report, data.prepSheet, pending, readonly) : '')
+    + (data ? prepSheetCard(subject, data.report, data.prepSheet, pending, readonly, data.prepSheetVersion) : '')
     + (linkable ? fideLinkCard(subject) : '')
     + (book ? bookSection(book.dossier, readonly) : '')
     + `<div id="engine-dossier">${data ? '' : engineHint(book, readonly)}</div>`;
 
   if (data) wirePrep(el, subject, data.report, pending, refresh);
   if (linkable) wireFideLink(el, subject);
-  if (book) wirePromote(el, book.dossier, subject, readonly);
+  if (book) { wirePromote(el, book.dossier, subject, readonly); renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend); }
   if (data) renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly);
+}
+
+/** Rating over time as a simple line graph. The y-range is padded around the
+ * player's own min/max (elo, not 0), snapped to 50s, so the trend fills the
+ * plot instead of hugging one edge. Hovering a point shows the game count. */
+function renderRatingTrend(container, eloTrend) {
+  if (!container || !eloTrend?.length) return;
+  const points = eloTrend.map(e => ({ x: String(e.year), y: e.elo, sub: `${e.games} game${e.games === 1 ? '' : 's'}` }));
+  const elos = eloTrend.map(e => e.elo);
+  const lo = Math.min(...elos), hi = Math.max(...elos);
+  const pad = Math.max(30, Math.round((hi - lo) * 0.15));
+  const yMin = Math.floor((lo - pad) / 50) * 50;
+  const yMax = Math.ceil((hi + pad) / 50) * 50;
+  lineChart(container, points, { yMin, yMax, format: v => String(Math.round(v)) });
 }
 
 /** Games of this subject still moving through the pipeline (so the prep sheet
@@ -115,29 +129,71 @@ function subjectGameStats(games, subject, fideId) {
   };
 }
 
+/** The reading panel for a generated sheet. The sheet is read at the board, so
+ * it is broken into a headline, a fixed-row profile table (same rows for every
+ * opponent, so players compare at a glance), a numbered plan, an openings table,
+ * and cue bullets, all in a calm high-legibility panel. Sheets made before the
+ * structured format are free-text (overview / openings_advice), so fall back. */
+function prepSheetBody(sheet) {
+  const asList = v => Array.isArray(v) ? v : (v ? [v] : []);
+  const isStructured = sheet.headline || sheet.profile || Array.isArray(sheet.openings);
+  if (!isStructured) return legacyPrepBody(sheet);
+  const p = sheet.profile || {};
+  const rows = [
+    ['Style', p.style], ['Strongest phase', p.strongest_phase], ['Weakest phase', p.weakest_phase],
+    ['Main errors', p.main_errors], ['Time trouble', p.time_trouble],
+  ].filter(([, v]) => v);
+  const plan = asList(sheet.exploit_plan), openings = asList(sheet.openings), watch = asList(sheet.watch_fors);
+  return `<div class="prep-sheet">
+    ${sheet.headline ? `<p class="prep-headline">${esc(sheet.headline)}</p>` : ''}
+    ${rows.length ? `<h3>Profile</h3><table class="prep-table"><tbody>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${plan.length ? `<h3>Game plan</h3><ol>${plan.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}
+    ${openings.length ? `<h3>Openings</h3><table class="prep-table"><thead><tr><th>When</th><th>You play</th><th>Why</th></tr></thead><tbody>${openings.map(o => `<tr><td>${esc(o.when)}</td><td>${esc(o.play)}</td><td>${esc(o.why)}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${watch.length ? `<h3>Watch for</h3><ul>${watch.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+  </div>`;
+}
+
+/** Older free-text sheets (overview / exploit_plan / openings_advice as prose). */
+function legacyPrepBody(sheet) {
+  const watch = Array.isArray(sheet.watch_fors)
+    ? `<ul>${sheet.watch_fors.map(w => `<li>${esc(w)}</li>`).join('')}</ul>`
+    : `<p>${esc(sheet.watch_fors)}</p>`;
+  return `<div class="prep-sheet">
+    <h3>Overview</h3><p>${esc(sheet.overview)}</p>
+    <h3>Game plan</h3><p>${esc(sheet.exploit_plan)}</p>
+    <h3>Openings</h3><p>${esc(sheet.openings_advice)}</p>
+    <h3>Watch for</h3>${watch}
+  </div>`;
+}
+
 /** The prep sheet, surfaced high on the page because it must be generated on
  * the home machine (it uses the claude CLI). Flags a stale sheet (games analysed
  * since it was made) and warns when games are still being processed. */
-function prepSheetCard(subject, report, prepSheet, pending, readonly) {
+function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVersion) {
   const analysedNow = report.games;
   const staleN = prepSheet ? Math.max(0, analysedNow - (prepSheet.games || 0)) : 0;
   const pendingTotal = pending.toAnalyse + pending.toExplain;
-  const flag = staleN > 0 || (prepSheet && pendingTotal > 0);
+  // The sheet's format/wording changed since it was made: worth regenerating
+  // even with no new games. currentVersion is null on the mirror (no regen there).
+  const outdated = !!(prepSheet && currentVersion && prepSheet.version !== currentVersion);
+  const flag = staleN > 0 || outdated || (prepSheet && pendingTotal > 0);
   const badge = staleN ? `<span class="chip mistake">stale · ${staleN} new game${staleN === 1 ? '' : 's'}</span>`
+    : outdated ? '<span class="chip cat">new format available</span>'
     : (prepSheet && pendingTotal ? '<span class="chip inaccuracy">more games coming</span>' : '');
   const pendingNote = pendingTotal
     ? `<p class="muted" style="margin:6px 0"><small>⏳ ${pendingTotal} of ${esc(subject)}'s game${pendingTotal === 1 ? ' is' : 's are'} still being processed (${pending.toAnalyse} to analyse, ${pending.toExplain} to explain). ${prepSheet ? 'Regenerate once they finish for the full picture.' : `The sheet will be built from the ${analysedNow} already analysed.`}</small></p>`
     : '';
-  const body = prepSheet ? `
-    <p><b>Overview:</b> ${esc(prepSheet.overview)}</p>
-    <p><b>Game plan:</b> ${esc(prepSheet.exploit_plan)}</p>
-    <p><b>Openings:</b> ${esc(prepSheet.openings_advice)}</p>
-    <p><b>Watch for:</b> ${esc(prepSheet.watch_fors)}</p>
-    <p class="muted"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}</small></p>`
+  const meta = prepSheet ? `<p class="muted"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}</small></p>` : '';
+  const body = prepSheet
+    ? prepSheetBody(prepSheet) + meta
     : `<p class="muted">One page for the board: their weaknesses, the plan against them, and what to watch for. Built here on the home machine (uses the claude CLI), then published to the phone.</p>`;
+  // Disabled only when regenerating would produce the same thing: no new games
+  // AND the same format. New games or a format change re-enable it.
+  const upToDate = prepSheet && staleN === 0 && !outdated;
+  const regenLabel = staleN ? `Regenerate (${staleN} new)` : outdated ? 'Regenerate (new format)' : 'Regenerate';
   const button = readonly
     ? (prepSheet ? '' : '<p class="muted"><small>Prep sheets are generated on the home machine and published here.</small></p>')
-    : `<button class="primary" id="gen-prep">${prepSheet ? (staleN ? `Regenerate (${staleN} new)` : 'Regenerate') : 'Generate prep sheet'}${prepSheet ? '' : ' (about a minute)'}</button>`;
+    : `<button class="primary" id="gen-prep"${upToDate ? ' disabled title="No games analysed and no format change since this sheet was generated"' : ''}>${prepSheet ? regenLabel : 'Generate prep sheet (about a minute)'}</button>${upToDate && pendingTotal === 0 ? ' <small class="muted">Up to date with all analysed games.</small>' : ''}`;
   return `<div class="card" style="margin-bottom:16px${flag ? '; border-color: var(--warning)' : ''}">
     <div class="row" style="justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap">
       <h2 style="margin:0">Preparation sheet</h2>${badge}
@@ -222,9 +278,11 @@ function wireFideLink(el, subject) {
 /** The book tier: what they play, weighted to recent, on-strength games. */
 function bookSection(d, readonly) {
   const cov = d.coverage;
-  const trend = d.eloTrend.length
-    ? d.eloTrend.map(e => `<span class="chip" title="${e.games} game${e.games === 1 ? '' : 's'}">${e.year}: ${e.elo}</span>`).join(' ')
-    : '<span class="muted">no ratings in the file</span>';
+  // Rating over time is a small line graph (filled in after insertion by
+  // renderRatingTrend); a row of "year: elo" chips was hard to read as a trend.
+  const trendBlock = d.eloTrend.length
+    ? '<div id="elo-trend" class="chart" style="margin-top:4px"></div>'
+    : '<p class="muted" style="margin:6px 0 0"><small>No ratings in the file.</small></p>';
   const repTable = color => {
     const rows = d.repertoire.filter(r => r.color === color);
     if (!rows.length) return `<div class="empty">No ${color} games in range.</div>`;
@@ -248,7 +306,8 @@ function bookSection(d, readonly) {
       <div class="tile"><div class="v">${d.results.white.recentScorePct ?? '–'}% / ${d.results.black.recentScorePct ?? '–'}%</div><div class="l">Recent score W / B</div></div>
       <div class="tile"><div class="v">${cov.analysing}</div><div class="l">Recent games to analyse</div></div>
     </div>
-    <p class="muted" style="margin:10px 0 0"><small>Rating over time: ${trend}</small></p>
+    <h3 style="margin:16px 0 0">Rating over time</h3>
+    ${trendBlock}
     <div class="grid grid-2" style="margin-top: 16px">
       <div class="card"><h3 style="margin-top:0">As White <span class="muted">(${d.results.white.games} games, scores ${d.results.white.scorePct ?? '–'}% all-time)</span></h3>${repTable('white')}</div>
       <div class="card"><h3 style="margin-top:0">As Black <span class="muted">(${d.results.black.games} games, scores ${d.results.black.scorePct ?? '–'}% all-time)</span></h3>${repTable('black')}</div>

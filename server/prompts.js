@@ -1,4 +1,7 @@
 // Prompt construction for the explanation step. Everything the model sees is engine-grounded.
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { formatEval, spentPerMove } from '../public/shared.js';
 
 const sanLine = ms => ms.map(x => (x.color === 'white' ? `${x.moveNumber}.` : '') + x.san).join(' ');
@@ -93,16 +96,65 @@ export function batchExplanationSchema(scout = false) {
   };
 }
 
+// The sheet is read at the board, so it is structured (a headline, a fixed-row
+// profile table, a numbered plan, an openings table, cue bullets) rather than
+// four prose blobs. Full style and field guidance lives in prompts/prep-sheet.md;
+// keep the field names here in sync with that file.
 export const PREP_SHEET_SCHEMA = {
   type: 'object',
   properties: {
-    overview: { type: 'string', description: 'Two to four sentences describing this opponent\'s play and main weaknesses' },
-    exploit_plan: { type: 'string', description: 'The concrete game plan to exploit them: which phases and structures to steer toward and why, one paragraph' },
-    openings_advice: { type: 'string', description: 'What to play against their repertoire, referencing their actual lines and where their preparation ends' },
-    watch_fors: { type: 'string', description: 'Three to five specific cues to watch for during the game, as one compact list in prose' },
+    headline: { type: 'string', description: 'One short sentence: the single most useful thing to know before the game' },
+    profile: {
+      type: 'object',
+      description: 'Quick-facts table with the same rows for every opponent, so two players can be compared at a glance. A few words per value, grounded in the data.',
+      properties: {
+        style: { type: 'string', description: 'How they play, in a few words (e.g. "aggressive, tactical")' },
+        strongest_phase: { type: 'string', description: 'Opening, middlegame, or endgame, from the phase accuracies, a few words' },
+        weakest_phase: { type: 'string', description: 'The phase where they go wrong most, from the phase accuracies, a few words' },
+        main_errors: { type: 'string', description: 'Their most common error types, from the error-type counts, a few words' },
+        time_trouble: { type: 'string', description: 'How they handle the clock in a few words, or "no clock data"' },
+      },
+      required: ['style', 'strongest_phase', 'weakest_phase', 'main_errors', 'time_trouble'],
+    },
+    exploit_plan: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 5, description: 'Numbered game-plan steps in order, each one short action sentence in active voice' },
+    openings: {
+      type: 'array',
+      description: 'Opening advice as one row per line, so it scans quickly. Reference their actual lines only.',
+      items: {
+        type: 'object',
+        properties: {
+          when: { type: 'string', description: 'Their colour and line, e.g. "As Black in the Sveshnikov"' },
+          play: { type: 'string', description: 'What you should play against it, short' },
+          why: { type: 'string', description: 'One short reason, from their scores or where their prep ends' },
+        },
+        required: ['when', 'play', 'why'],
+      },
+      minItems: 1, maxItems: 6,
+    },
+    watch_fors: { type: 'array', items: { type: 'string' }, minItems: 3, maxItems: 5, description: 'Three to five short cues to watch for during the game, one per item' },
   },
-  required: ['overview', 'exploit_plan', 'openings_advice', 'watch_fors'],
+  required: ['headline', 'profile', 'exploit_plan', 'openings', 'watch_fors'],
 };
+
+// Read fresh each generation (rare, tiny file) so the .md can be tuned without a
+// restart. cwd is the repo root, the same convention as server/index.js and
+// server/store.js (keeps this file free of import.meta, which the CJS function
+// bundle would leave empty).
+function prepSheetInstructions() {
+  return readFileSync(path.join(process.cwd(), 'server/prompts/prep-sheet.md'), 'utf8').trim();
+}
+
+// A short fingerprint of the current sheet format: the schema plus the editable
+// instructions. Stored on each generated sheet so the UI can offer a regenerate
+// when the format or wording has changed, not only when new games arrive. Edit
+// prep-sheet.md and this changes, so existing sheets read as "new format".
+// Returns null when the instructions file is unavailable (the read-only hosted
+// mirror does not bundle it and never regenerates), so callers there skip the check.
+export function prepSheetVersion() {
+  try {
+    return createHash('sha1').update(prepSheetInstructions() + JSON.stringify(PREP_SHEET_SCHEMA)).digest('hex').slice(0, 12);
+  } catch { return null; }
+}
 
 export function scoutSystemPrompt(rating) {
   return `You are a chess coach preparing a FIDE ${rating || 2000} rated student to play against a specific opponent.
@@ -277,7 +329,11 @@ export function prepSheetPrompt(subjectName, report, repertoire) {
   const pats = report.patterns.slice(0, 10).map(p => `- "${p.pattern}" (${p.count}x)`).join('\n');
   const lines = repertoire.map(l => `- as ${l.color}: ${l.line.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ')}${l.eco ? ` (${l.eco})` : ''}, ${l.count} game${l.count === 1 ? '' : 's'}, scored ${l.scorePct ?? '?'}%${l.prepEndsPly ? `, on their own from move ${Math.ceil(l.prepEndsPly / 2)}` : ''}`).join('\n');
   const time = report.timeManagement ? `Clock behaviour: ${report.timeManagement.comfortBlunders} mistakes with over 5 minutes left, ${report.timeManagement.underTwoMinMoments} mistakes under 2 minutes, ${report.timeManagement.fastMoments} failed snap-moves.` : 'No clock data.';
-  return `Preparation dossier for the opponent ${subject}, from ${report.games} engine-analysed game${report.games === 1 ? '' : 's'}.
+  return `${prepSheetInstructions()}
+
+---
+
+Preparation dossier for the opponent ${subject}, from ${report.games} engine-analysed game${report.games === 1 ? '' : 's'}.
 
 Their errors by type:
 ${cats || '- none recorded'}
@@ -293,7 +349,9 @@ ${lines || '- unknown'}
 
 ${time}
 
-Write the preparation sheet for a student about to face ${subject}: overview, exploit_plan, openings_advice, watch_fors. Use only the data above; do not invent openings, lines, or tendencies that are not supported by it.`;
+---
+
+Write ${subject}'s preparation sheet now, filling every field. Use only the data above; do not invent openings, lines, or tendencies that are not supported by it.`;
 }
 
 export const PATTERN_SYNTH_SCHEMA = {

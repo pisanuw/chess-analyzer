@@ -48,7 +48,9 @@ export async function gamesView(root) {
   let sortKey = 'date', sortDir = -1; // -1 = descending, 1 = ascending
   let filter = 'all'; // 'all' | 'own' | a subject name
   let query = '';     // free-text filter on players and event
-  let limit = 50;     // rows shown at once; "show more" raises it
+  const PAGE_SIZE = 50;
+  let page = 0;       // 0-based page; each page is PAGE_SIZE rows (1-50, 51-100, ...)
+  let showAll = false; // "Show all" ignores paging and lists every match
 
   const matchesQuery = g => !query || [g.white, g.black, g.event, g.subject].some(s => (s || '').toLowerCase().includes(query));
   // PGN dates are often not zero-padded ("2026.7.29"); sort on a numeric key so
@@ -87,7 +89,46 @@ export async function gamesView(root) {
     .filter(g => filter === 'all' || (filter === 'own' ? g.purpose !== 'scout' : g.subject === filter))
     .filter(matchesQuery)
     .sort(cmp);
-  const shownRows = () => visibleRows().slice(0, limit);
+  // Rows on screen now: the current page, or everything when "Show all" is on.
+  const shownRows = () => {
+    const all = visibleRows();
+    if (showAll) return all;
+    const pageCount = Math.max(1, Math.ceil(all.length / PAGE_SIZE));
+    if (page >= pageCount) page = pageCount - 1; // clamp after a filter shrinks the set
+    return all.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  };
+
+  // Page numbers to show: always first and last, a window of one either side of
+  // the current page, ellipses for the gaps. Keeps the bar short with many pages.
+  const pageWindow = (cur, count) => {
+    const want = [...new Set([0, cur - 1, cur, cur + 1, count - 1])].filter(n => n >= 0 && n < count).sort((a, b) => a - b);
+    const out = [];
+    let prev = -1;
+    for (const n of want) { if (n - prev > 1) out.push('gap'); out.push(n); prev = n; }
+    return out;
+  };
+
+  // The pager: page buttons in chunks of PAGE_SIZE, plus a "Show all" toggle.
+  const pager = total => {
+    const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const from = showAll ? 1 : page * PAGE_SIZE + 1;
+    const to = showAll ? total : Math.min(total, page * PAGE_SIZE + PAGE_SIZE);
+    if (pageCount <= 1 && !showAll) return ''; // one page: nothing to page through
+    const btn = (label, data, { on = false, off = false } = {}) =>
+      `<button class="small${on ? ' primary' : ''}" data-page="${data}"${off ? ' disabled' : ''}>${label}</button>`;
+    let controls;
+    if (showAll) {
+      controls = btn('Show in pages', 'pages');
+    } else {
+      const nums = pageWindow(page, pageCount)
+        .map(n => n === 'gap' ? '<span class="muted"><small>…</small></span>' : btn(n + 1, n, { on: n === page })).join(' ');
+      controls = `${btn('‹', 'prev', { off: page === 0 })} ${nums} ${btn('›', 'next', { off: page >= pageCount - 1 })} `
+        + `<span class="muted">·</span> ${btn(`Show all ${total}`, 'all')}`;
+    }
+    return `<div class="row" style="padding:10px; gap:6px; justify-content:center; align-items:center; flex-wrap:wrap">
+      <span class="muted"><small>Showing ${from}–${to} of ${total}</small></span> ${controls}
+    </div>`;
+  };
 
   const updateSel = () => {
     const c = root.querySelector('#sel-count');
@@ -110,7 +151,7 @@ export async function gamesView(root) {
     </div>` : '';
     const all = visibleRows();
     if (!all.length) { list.innerHTML = filterBar + '<div class="empty">No games match.</div>'; updateSel(); return; }
-    const rows = all.slice(0, limit);
+    const rows = shownRows();
     const arrow = k => sortKey === k ? (sortDir === 1 ? ' ↑' : ' ↓') : '';
     const selHead = status.readonly ? '' : '<th style="width:26px"><input type="checkbox" id="select-all" title="Select all shown"></th>';
     const head = `<tr>${selHead}${cols.map(c => `<th data-sortkey="${c.key}"${c.num ? ' class="num"' : ''} style="cursor:pointer" title="Sort by ${c.label}">${c.label}${arrow(c.key)}</th>`).join('')}</tr>`;
@@ -128,11 +169,7 @@ export async function gamesView(root) {
           <td class="num">${g.accuracy != null ? g.accuracy + '%' : ''}</td>
           <td class="num">${g.moments != null ? `${g.moments}${g.blunders ? ` <span class="chip blunder">${g.blunders}??</span>` : ''}${g.mistakes ? ` <span class="chip mistake">${g.mistakes}?</span>` : ''}` : ''}</td>
         </tr>`).join('')}
-      </tbody></table>` + (all.length > rows.length ? `<div class="row" style="padding:10px; gap:8px; justify-content:center; align-items:center; flex-wrap:wrap">
-        <span class="muted"><small>Showing ${rows.length} of ${all.length}</small></span>
-        <button class="small" data-page="more">Show ${Math.min(50, all.length - rows.length)} more</button>
-        <button class="small" data-page="all">Show all ${all.length}</button>
-      </div>` : '');
+      </tbody></table>` + pager(all.length);
     updateSel();
   };
   render();
@@ -158,16 +195,25 @@ export async function gamesView(root) {
   list.addEventListener('click', async e => {
     if (e.target.closest('input')) return; // checkboxes handled on 'change'
     const pg = e.target.closest('button[data-page]');
-    if (pg) { limit = pg.dataset.page === 'all' ? Infinity : limit + 50; return render(); }
+    if (pg) {
+      const v = pg.dataset.page;
+      if (v === 'all') showAll = true;
+      else if (v === 'pages') { showAll = false; page = 0; }
+      else if (v === 'prev') page = Math.max(0, page - 1);
+      else if (v === 'next') page += 1; // clamped in shownRows
+      else { showAll = false; page = +v; }
+      return render();
+    }
     const sh = e.target.closest('th[data-sortkey]');
     if (sh) {
       const k = sh.dataset.sortkey;
       if (sortKey === k) sortDir = -sortDir;
       else { sortKey = k; sortDir = (k === 'accuracy' || k === 'moments' || k === 'date') ? -1 : 1; } // numbers/dates default high-to-low
+      page = 0; // reordering changes what each page holds; start from the top
       return render();
     }
     const fbtn = e.target.closest('button[data-filter]');
-    if (fbtn) { filter = fbtn.dataset.filter; return render(); }
+    if (fbtn) { filter = fbtn.dataset.filter; page = 0; return render(); }
     const tr = e.target.closest('tr[data-id]');
     if (!tr) return;
     const id = tr.dataset.id;
@@ -270,7 +316,7 @@ export async function gamesView(root) {
   });
   root.querySelector('#pgn')?.addEventListener('input', () => { scoutFile = null; updateHint(); });
 
-  root.querySelector('#game-search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); render(); });
+  root.querySelector('#game-search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); page = 0; render(); });
 
   root.querySelector('#import')?.addEventListener('click', async e => {
     const pgn = root.querySelector('#pgn').value.trim();

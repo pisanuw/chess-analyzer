@@ -2,6 +2,30 @@
 
 Newest first.
 
+## 2026-09-09 (Prep sheet: regenerate when the format changed, not only for new games)
+
+- The Regenerate button now also enables when the sheet's format or wording has changed since it was made, even with no new games. `prepSheetVersion()` fingerprints the schema plus `prompts/prep-sheet.md`; the fingerprint is stored on each generated sheet and returned by `GET /api/scout/:subject`. When the stored version differs from the current one (including any sheet made before this field existed, and any sheet made before a later edit to the instructions file), the card shows a "new format available" chip and the button reads "Regenerate (new format)". It stays disabled ("Up to date") only when there are no new games and the format matches. The fingerprint is null on the read-only mirror (the instructions file is not bundled there and it never regenerates), so the check is simply skipped.
+
+## 2026-09-09 (Games list: numbered pages instead of "show more")
+
+- The games list is now paged in fixed chunks of 50: page 1 is games 1-50, page 2 is 51-100, and so on, with a "Showing 51-100 of N" label, ‹ prev / next › arrows, and a windowed set of numbered page buttons (first, last, and a window around the current page, with ellipses so the bar stays short at many pages). "Show all N" still lists everything at once, and "Show in pages" returns to paging. Changing the filter, search, or sort resets to page 1, and the page clamps down if a filter shrinks the set. Frontend only.
+
+## 2026-09-09 (Prep sheet: structured for scanning; instructions in an editable file)
+
+- The prep sheet is no longer four prose blocks. `PREP_SHEET_SCHEMA` is now a `headline` (one-line pull-quote), a fixed-row `profile` table (style, strongest/weakest phase, main errors, time trouble, the same rows for every opponent so two players can be compared side by side), a numbered `exploit_plan` list, an `openings` table (when / you play / why, one row per line), and `watch_fors` cue bullets. The renderer detects the new shape and falls back to the old free-text layout for sheets generated before the change, so nothing already stored breaks.
+- The generation instructions (who it is for, grounding rules, style rules, and the field-by-field structure) now live in `server/prompts/prep-sheet.md`, read fresh at generation time by `prepSheetPrompt`. Tune the sheet by editing that file and clicking Regenerate: no code change and no restart. The file is home-machine only (prep sheets are never generated on the read-only hosted mirror), and the read uses `process.cwd()` to stay free of `import.meta`.
+- `style.css`: headline pull-quote, numbered-list, and compact in-panel table styles, all inside the dyslexia-friendly `.prep-sheet` reading panel (tables wrap rather than scroll on a phone).
+
+## 2026-09-09 (Scouting: disable a no-op Regenerate; rating trend as a graph)
+
+- The prep-sheet "Regenerate" button is now disabled when a sheet already exists and no games have been analysed since it was made (regenerating would produce the same sheet). It reads "Up to date with all analysed games" in that case, and re-enables as "Regenerate (N new)" once new games finish. Frontend only.
+- "Rating over time" in the repertoire book is now a small line graph (reusing the existing `lineChart`) instead of a row of "year: elo" chips. The y-axis is padded around the player's own min/max and snapped to 50s so the trend fills the plot; hovering a point shows the game count for that year.
+
+## 2026-09-09 (Prep sheet: legible, dyslexia-friendly reading panel)
+
+- The scouting prep sheet is the one block a player actually reads at the board, so it now renders in a dedicated reading panel (`.prep-sheet`) tuned for legibility: an open sans-serif stack (Lexend / Atkinson Hyperlegible / Verdana / Arial, falling back to system-ui, no web-font download), 16px text at 1.6 line height with a little letter/word spacing, lines capped near 60-70 characters (`max-width: 62ch`), left aligned (never justified), and a soft low-glare background (cream in light mode, a warm dark surface with off-white text in dark mode). The four inline `<b>label:</b>` runs became block headings (not the uppercase site `h3`), and "Watch for" is now a real bulleted list.
+- To back the list, `watch_fors` in `PREP_SHEET_SCHEMA` changed from a prose string to an array of 3-5 short cues; the renderer handles both so already-generated sheets still display. The prep-sheet prompt now asks for short sentences and active voice ("attack the isolated pawn", not "the pawn should be attacked") and to avoid jargon and double negatives, so the copy itself reads plainly.
+
 ## 2026-09-09 (Games page controls; hosted mirror bundles scout data)
 
 - Games page: the single "Analyse and explain everything pending" button is split into "Analyze pending" and "Explain pending"; every row has a checkbox with a select-all header and a bulk action bar (Analyze / Explain / Delete, delete confirms); every column header is sortable (dates sort on a numeric key so non-zero-padded PGN dates order right). Frontend only. `analyseAll()` takes an options object so "Analyze pending" queues analysis without explanations.
