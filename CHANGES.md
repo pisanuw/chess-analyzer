@@ -2,7 +2,10 @@
 
 Newest first.
 
-## 2026-09-10 (Opening Clash: auto-built, no button, and works on the hosted mirror)
+## 2026-09-10 (Scouting: collapsible sections to cut the scrolling)
+
+- The Scouting page's big sections (Preparation sheet, Repertoire book, Opening clash, Deep dossier) are now collapsible accordions: each shows a header with a triangle you click to expand, so the page fits on a screen and you open only what you want. The prep sheet is open by default (the at-the-board summary); the rest start collapsed. Native `<details>`, so it works with no JavaScript state and on the hosted mirror.
+- Charts, the clash tree, and the clash board now render the first time their section is opened, not on page load: a chart drawn inside a hidden section would size to zero width, and the opening clash no longer even fetches until you expand it. Frontend only (`public/views/scout.js`, a `.acc` block in `style.css`).
 
 - The "Build opening clash" button is gone: the card loads the clash itself on open. Every opponent's index is pre-built at startup (`prebuildClashes` enqueues a `clash` job per book; `ensureClashIndex` skips the parse when the stored index already matches the book, so the pass is near-instant when nothing changed), so opening a Scouting page normally shows the clash immediately.
 - The opening clash now works on the read-only web mirror. The pre-built index (`data/clash.json`) and any narration (`data/clashnotes.json`) are bundled into the Netlify function (`included_files`), and `scripts/prebuild-clashes.js` runs in `publish-web.sh` before deploy so the bundle is current. The web request assembles the tree from the bundled index and the player's bundled games (pure JS, no engine, no `claude` CLI, no PGN parsing at request time); on the mirror it never tries to build, returning `unavailable` if an index is missing rather than queuing a job. Engine extension and narration stay home-machine only, but their results, once generated and published, display on the mirror.

@@ -96,17 +96,37 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
   const refresh = () => renderDossier(el, entry, readonly, boardRef);
   // The prep sheet sits high: it must be generated here on the home machine, so
   // it should be the first thing you reach for on the page.
+  // Each big section is a collapsible accordion so the page shows just the
+  // headers. The prep sheet (the at-the-board summary) is open by default; the
+  // rest start collapsed and render their charts/tree the first time they open
+  // (a chart drawn inside a hidden section would size to zero width).
+  const dossierAcc = data
+    ? `<details class="acc" id="dossier-acc"><summary><span class="acc-title">Deep dossier</span> <span class="muted" style="font-size:13px">${data.report.games} analysed game${data.report.games === 1 ? '' : 's'}</span></summary><div class="acc-body" id="engine-dossier"></div></details>`
+    : `<div id="engine-dossier">${book ? engineHint(book, readonly) : ''}</div>`;
   el.innerHTML = subjectHeader(entry)
     + (data ? prepSheetCard(subject, data.report, data.prepSheet, pending, readonly, data.prepSheetVersion) : '')
     + (linkable ? fideLinkCard(subject) : '')
     + (book ? bookSection(book.dossier, readonly, book.promote) : '')
     + (book ? clashCard() : '')
-    + `<div id="engine-dossier">${data ? '' : engineHint(book, readonly)}</div>`;
+    + dossierAcc;
 
   if (data) wirePrep(el, subject, data.report, pending, refresh);
   if (linkable) wireFideLink(el, subject);
-  if (book) { wirePromote(el, book.dossier, subject, book.promote, refresh); renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend); wireClash(el, entry.fideId, boardRef, readonly); }
-  if (data) renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly);
+  if (book) {
+    wirePromote(el, book.dossier, subject, book.promote, refresh);
+    onFirstOpen(el.querySelector('#book-acc'), () => renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend));
+    onFirstOpen(el.querySelector('#clash-card'), () => wireClash(el, entry.fideId, boardRef, readonly));
+  }
+  if (data) onFirstOpen(el.querySelector('#dossier-acc'), () => renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly));
+}
+
+/** Run `fn` the first time a <details> is opened (or now, if already open). Lets
+ * a collapsed section defer rendering charts, the board, or the clash fetch. */
+function onFirstOpen(details, fn) {
+  if (!details) return;
+  if (details.open) return void fn();
+  const handler = () => { if (details.open) { details.removeEventListener('toggle', handler); fn(); } };
+  details.addEventListener('toggle', handler);
 }
 
 /** Rating over time as a simple line graph. The y-range is padded around the
@@ -202,12 +222,10 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
   const button = readonly
     ? (prepSheet ? '' : '<p class="muted"><small>Prep sheets are generated on the home machine and published here.</small></p>')
     : `<button class="primary" id="gen-prep"${upToDate ? ' disabled title="No games analysed and no format change since this sheet was generated"' : ''}>${prepSheet ? regenLabel : 'Generate prep sheet (about a minute)'}</button>${upToDate && pendingTotal === 0 ? ' <small class="muted">Up to date with all analysed games.</small>' : ''}`;
-  return `<div class="card" style="margin-bottom:16px${flag ? '; border-color: var(--warning)' : ''}">
-    <div class="row" style="justify-content:space-between; align-items:baseline; gap:8px; flex-wrap:wrap">
-      <h2 style="margin:0">Preparation sheet</h2>${badge}
-    </div>
-    ${body}${pendingNote}${button}
-  </div>`;
+  return `<details class="acc" open${flag ? ' style="border-color: var(--warning)"' : ''}>
+    <summary><span class="acc-title">Preparation sheet</span>${badge}</summary>
+    <div class="acc-body">${body}${pendingNote}${button}</div>
+  </details>`;
 }
 
 function wirePrep(el, subject, report, pending, refresh) {
@@ -306,7 +324,8 @@ function bookSection(d, readonly, promote) {
       </tr>`).join('')}</tbody></table>`;
   };
   return `
-    <h3 style="margin-bottom:4px">Repertoire book</h3>
+    <details class="acc" id="book-acc"><summary><span class="acc-title">Repertoire book</span> <span class="muted" style="font-size:13px">${d.total} games</span></summary>
+    <div class="acc-body">
     <p class="muted">Repertoire book from ${d.total} games${d.dateRange ? ` (${esc(d.dateRange.from)} to ${esc(d.dateRange.to)})` : ''}. Weighted toward recent, on-strength games: ${cov.droppedOld} game${cov.droppedOld === 1 ? '' : 's'} older than ${cov.maxAgeYears} years and ${cov.droppedElo} more than ${cov.eloBand} Elo off their current strength are set aside, because they no longer describe the player you will face.</p>
     <div class="tiles">
       <div class="tile"><div class="v">${d.currentElo ?? '–'}</div><div class="l">Current strength</div></div>
@@ -324,7 +343,8 @@ function bookSection(d, readonly, promote) {
       <h3 style="margin-top:0">Deep preparation</h3>
       <p class="muted">Run Stockfish and the coach model on their ${cov.analysing} most recent, on-strength games to find where they go wrong: error types, clock behaviour, recurring weaknesses, and "punish" drills from the positions after their mistakes.</p>
       ${deepPrepAction(cov, readonly, promote)}
-    </div>`;
+    </div>
+    </div></details>`;
 }
 
 /** The promote control: a button only when there is something new to queue.
@@ -370,10 +390,10 @@ function wirePromote(el, dossier, subject, promote, refresh) {
 /** The card shell. The tree loads itself on open (indexes are pre-built at
  * startup, so this is normally instant); no button. */
 function clashCard() {
-  return `<div class="card" id="clash-card" style="margin-top:16px">
-    <h3 style="margin-top:0">Opening clash: what they play against you</h3>
-    <div id="clash-body"><p class="muted">Loading opening clash…</p></div>
-  </div>`;
+  return `<details class="acc" id="clash-card">
+    <summary><span class="acc-title">Opening clash: what they play against you</span></summary>
+    <div class="acc-body" id="clash-body"><p class="muted">Loading opening clash…</p></div>
+  </details>`;
 }
 
 function wireClash(el, fideId, boardRef, readonly) {
@@ -577,8 +597,7 @@ async function renderEngineDossier(el, data, subject, readonly) {
   const j = r.totalJudged;
   const catLabel = c => CATEGORY_LABEL[c] || c;
   el.innerHTML = `
-    <h2 style="margin-top: 24px">Deep dossier <span class="muted" style="font-size:14px">${r.games} analysed game${r.games === 1 ? '' : 's'}</span></h2>
-    <p class="muted">Their mistakes, phrased for your preparation: aim for the phases and structures where they go wrong. Error categories and patterns come from explained scout imports; your own games against them contribute engine data.</p>
+    <p class="muted" style="margin-top:0">Their mistakes, phrased for your preparation: aim for the phases and structures where they go wrong. Error categories and patterns come from explained scout imports; your own games against them contribute engine data.</p>
     <div class="tiles">
       <div class="tile"><div class="v">${r.overallAccuracy ?? '–'}%</div><div class="l">Their average accuracy</div></div>
       <div class="tile"><div class="v">${(r.totalMoments / r.games).toFixed(1)}</div><div class="l">Their mistakes per game</div></div>
