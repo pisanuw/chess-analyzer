@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Improvement report: frontend, backend, opponent-preparation pedagogy)
+
+- Added `IMPROVEMENT-REPORT.md`, a full read of the codebase with ranked recommendations: a verified stale-session fallthrough (a signed cookie for a user id no longer on the roster is served the default member's data), the single-user seams left in import, prompts, and the opening clash, per-call full-file reads behind the report and puzzles, missing CI and frontend tests, and a pedagogy section proposing a colour- and student-aware "Prepare for a game" flow (grounded prep sheet with evidence citations, deterministic tendency profile from stored eval curves and the book, a prep deck of line flashcards and filtered punish drills, and a post-game check of whether the predicted line held). No code change; 200 tests pass.
+
 ## 2026-09-11 (Report: pre-tournament card shown inline)
 
 - The pre-tournament card is rendered inline as an open section at the top of the Report page instead of a markdown download. `public/views/report.js` fetches `/api/report/card` and renders its small, fixed-format markdown (headings, numbered and bulleted lists, bold) with a minimal converter; the download button and its handler are gone.
