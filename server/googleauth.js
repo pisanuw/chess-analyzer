@@ -9,6 +9,7 @@
 import crypto from 'node:crypto';
 import { createSessionToken, sessionCookie } from './auth.js';
 import { findUserByEmail } from './users.js';
+import { saveProfile } from './profiles.js';
 
 export function googleConfigured() {
   return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
@@ -77,7 +78,10 @@ export async function googleLoginToken(idToken) {
   if (process.env.GOOGLE_CLIENT_ID && p.aud !== process.env.GOOGLE_CLIENT_ID) return null;
   if (p.email_verified === false) return null;
   const user = await findUserByEmail(p.email);
-  return user ? createSessionToken(user.id) : null;
+  if (!user) return null;
+  // Remember the Google display name and picture for the top bar (best effort).
+  if (p.name || p.picture) await saveProfile(user.id, { name: p.name, picture: p.picture }).catch(() => {});
+  return createSessionToken(user.id);
 }
 
 async function exchangeCodeForIdToken(code) {

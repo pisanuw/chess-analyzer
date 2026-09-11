@@ -16,6 +16,7 @@ delete process.env.APP_PASSWORD;
 delete process.env.READONLY_DATA;
 
 const G = await import('../server/googleauth.js');
+const { getProfile } = await import('../server/profiles.js');
 const { verifySessionToken } = await import('../server/auth.js');
 const { app } = await import('../server/index.js');
 const server = app.listen(0, '127.0.0.1');
@@ -83,4 +84,16 @@ test('callback with a bad state is rejected', async () => {
 test('/api/auth/me advertises the google provider', async () => {
   const me = await (await fetch(base + '/api/auth/me')).json();
   assert.equal(me.providers.google, true);
+});
+
+test('google login captures the display name and picture for the top bar', async () => {
+  const aud = process.env.GOOGLE_CLIENT_ID;
+  const tok = await G.googleLoginToken(idToken({ email: 'kai@example.com', email_verified: true, aud, name: 'Kai Pisan', picture: 'https://pic.example/p.png' }));
+  assert.ok(tok);
+  const prof = await getProfile('kai');
+  assert.equal(prof.name, 'Kai Pisan');
+  assert.equal(prof.picture, 'https://pic.example/p.png');
+  const me = await (await fetch(base + '/api/auth/me', { headers: { cookie: `sess=${tok}` } })).json();
+  assert.equal(me.user.name, 'Kai Pisan');
+  assert.equal(me.user.picture, 'https://pic.example/p.png');
 });

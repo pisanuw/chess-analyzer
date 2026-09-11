@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Top-bar account menu: avatar, name, theme, sign out)
+
+- The top right now shows the signed-in person's Google name and picture (captured from the id_token at login and stored per user, in Supabase on the mirror or a local file). Clicking it opens a menu to set the page theme (Auto, Light, or Dark, remembered in the browser and applied before first paint) and to sign out. `server/profiles.js` stores the profile, `server/googleauth.js` captures it at login, `/api/auth/me` returns it; the menu and a `[data-theme="dark"]` palette (force dark regardless of the OS) are in app.js and style.css. Anyone who signs in by magic link (no Google picture) gets their initial. 191 tests pass.
+
 ## 2026-09-11 (Prep sheets: gate on game count, and let members request one)
 
 - A player's preparation-sheet card now gates on how many of their games are analysed: under 5, it says "Not enough games for a preparation sheet yet" instead of offering to build a thin one. With enough games and no sheet yet, the operator still sees the Generate button, but members and visitors get a "Request prep sheet" button that emails the admin (`POST /api/scout/:subject/prepsheet/request`, rate-limited, not admin-gated) instead of running the model. New `server/email.js` (Resend with a console fallback) and `adminEmail()` (from `ADMIN_EMAIL`, else `AUTH_EMAIL_YUSUF`). `test/visitor.test.js` covers the request. 190 tests pass.

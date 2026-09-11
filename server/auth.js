@@ -4,6 +4,7 @@
 import crypto from 'node:crypto';
 import { kvEnabled, kvGet, kvPut } from './store.js';
 import { getUser, publicUser } from './users.js';
+import { getProfile } from './profiles.js';
 
 const DAY_S = 86400;
 const COOKIE_DAYS = 90;
@@ -151,8 +152,10 @@ export async function currentUser(req) {
  * right buttons (env read inline to avoid importing the provider modules). */
 export async function meRoute(req, res) {
   const u = await currentUser(req);
+  const pub = publicUser(u);
+  const profile = u ? await getProfile(u.id).catch(() => null) : null;
   res.json({
-    user: publicUser(u),
+    user: pub ? { ...pub, name: profile?.name || null, picture: profile?.picture || null } : null,
     authActive: authActive(),
     providers: {
       google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),

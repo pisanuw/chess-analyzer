@@ -120,7 +120,33 @@ function renderWhoami(me) {
   if (!el) return;
   if (!me.authActive || !me.user) { el.hidden = true; return; } // no login configured: nothing to show
   el.hidden = false;
-  el.innerHTML = `<span class="who">${esc(me.user.displayName || me.user.id)}</span>${me.user.role === 'admin' ? ' <span class="chip">admin</span>' : ''} <button class="link" id="logout-btn">Sign out</button>`;
+  const u = me.user;
+  const name = u.name || u.displayName || u.id;
+  const roleTag = u.role === 'admin' ? 'admin' : u.role === 'visitor' ? 'visitor' : '';
+  const avatar = u.picture
+    ? `<img class="avatar" src="${esc(u.picture)}" alt="" referrerpolicy="no-referrer">`
+    : `<span class="avatar avatar-initials">${esc((name[0] || '?').toUpperCase())}</span>`;
+  let theme = 'auto'; try { theme = localStorage.getItem('theme') || 'auto'; } catch {}
+  const opt = (val, label) => `<button class="small theme-opt${theme === val ? ' primary' : ''}" data-theme-set="${val}">${label}</button>`;
+  el.innerHTML = `<div class="whoami-wrap">
+    <button id="whoami-btn" title="${esc(name)}${roleTag ? ` (${roleTag})` : ''}">${avatar}<span class="who">${esc(name)}</span></button>
+    <div id="whoami-menu" class="hidden">
+      <div class="menu-head">${esc(name)}${roleTag ? ` <span class="chip">${roleTag}</span>` : ''}</div>
+      <div class="menu-label">Page theme</div>
+      <div class="menu-row">${opt('auto', 'Auto')}${opt('light', 'Light')}${opt('dark', 'Dark')}</div>
+      <button class="link" id="logout-btn">Sign out</button>
+    </div>
+  </div>`;
+  const menu = el.querySelector('#whoami-menu');
+  el.querySelector('#whoami-btn').onclick = e => { e.stopPropagation(); menu.classList.toggle('hidden'); };
+  document.addEventListener('click', e => { if (!el.contains(e.target)) menu.classList.add('hidden'); });
+  el.querySelectorAll('[data-theme-set]').forEach(b => b.onclick = () => {
+    const val = b.dataset.themeSet;
+    try { localStorage.setItem('theme', val); } catch {}
+    if (val === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', val);
+    el.querySelectorAll('[data-theme-set]').forEach(x => x.classList.toggle('primary', x === b));
+  });
   el.querySelector('#logout-btn').onclick = async () => { try { await api.logout(); } catch {} location.reload(); };
 }
 
