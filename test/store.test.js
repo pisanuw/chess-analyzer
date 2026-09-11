@@ -109,6 +109,36 @@ test('persistent conflicts surface as DrillConflict after retries', async t => {
   await assert.rejects(reviewDrill('g:1', 'good', true), DrillConflict);
 });
 
+test('a stalled Supabase connection times out and is retried once', async t => {
+  hosted(t);
+  process.env.SUPABASE_TIMEOUT_MS = '50';
+  t.after(() => delete process.env.SUPABASE_TIMEOUT_MS);
+  let calls = 0;
+  global.fetch = (url, opts = {}) => new Promise((resolve, reject) => {
+    calls++;
+    if (calls === 1) { // never answers: only the abort signal ends it
+      opts.signal.addEventListener('abort', () => reject(opts.signal.reason));
+      return;
+    }
+    resolve({ ok: true, json: async () => [{ value: { drills: [structuredClone(storedDrill)], guesses: {}, rev: 1 } }] });
+  });
+  const { getDrills } = await import('../server/store.js');
+  const t0 = Date.now();
+  const store = await getDrills('kai');
+  assert.equal(calls, 2, 'the stalled call was abandoned and retried');
+  assert.ok(Date.now() - t0 < 2000, 'the stall ended at the timeout, not the heat death of the publish');
+  assert.equal(store.rev, 1);
+});
+
+test('two stalls in a row surface as an error naming the timeout', async t => {
+  hosted(t);
+  process.env.SUPABASE_TIMEOUT_MS = '30';
+  t.after(() => delete process.env.SUPABASE_TIMEOUT_MS);
+  global.fetch = (url, opts = {}) => new Promise((_, reject) => opts.signal.addEventListener('abort', () => reject(opts.signal.reason)));
+  const { kvGet } = await import('../server/store.js');
+  await assert.rejects(kvGet('audit'), /timed out after 30ms/);
+});
+
 test('sweepTmpFiles removes crash leftovers; ensureDataIgnores guards the data repo', async () => {
   const dir = process.env.DATA_DIR;
   writeFileSync(path.join(dir, 'drills.json.123.4.tmp'), '{');

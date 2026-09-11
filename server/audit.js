@@ -15,18 +15,27 @@ async function read() {
   catch (err) { if (err.code === 'ENOENT') return []; throw err; }
 }
 
+// Appends are a read-modify-write of the whole log, so they run one at a time:
+// two admin mutations landing together would otherwise drop one event.
+let chain = Promise.resolve();
+
 /** Append one event: { action, userId, name, role, ip, detail }. Fire and
  * forget from request handlers; failures are logged, never thrown. */
-export async function logEvent(event) {
-  try {
-    const log = await read();
-    log.push({ at: new Date().toISOString(), ...event });
-    const capped = log.slice(-CAP);
-    if (kvEnabled()) { try { await kvPut('audit', capped); return; } catch { /* fall through to file */ } }
-    await writeJson(FILE(), capped);
-  } catch (err) {
-    console.error(`audit log write failed: ${err.message}`);
-  }
+export function logEvent(event) {
+  const run = async () => {
+    try {
+      const log = await read();
+      log.push({ at: new Date().toISOString(), ...event });
+      const capped = log.slice(-CAP);
+      if (kvEnabled()) { try { await kvPut('audit', capped); return; } catch { /* fall through to file */ } }
+      await writeJson(FILE(), capped);
+    } catch (err) {
+      console.error(`audit log write failed: ${err.message}`);
+    }
+  };
+  const p = chain.then(run, run);
+  chain = p;
+  return p;
 }
 
 /** Most recent events first, capped at `limit`. */

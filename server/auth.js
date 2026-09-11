@@ -139,11 +139,32 @@ export function authMiddleware(req, res, next) {
   res.status(401).json({ error: 'auth required' });
 }
 
+/** A validly signed session whose user id is no longer on the roster (a removed
+ * member, a renamed id) must not pass as anyone: without this it fell through
+ * the admin branch of the route helpers and was served the default member's
+ * data. Runs after authMiddleware, resolves the roster once per request (cached
+ * on req.user for currentUser), and clears the dead cookie with the 401. */
+export function knownSessionMiddleware(req, res, next) {
+  if (!authActive() || !req.session?.userId || !req.path.startsWith('/api/') || isExempt(req.path)) return next();
+  getUser(req.session.userId).then(u => {
+    if (u) { req.user = u; return next(); }
+    req.session = null;
+    res.setHeader('Set-Cookie', clearSessionCookie());
+    res.status(401).json({ error: 'session is no longer valid, sign in again' });
+  }).catch(next);
+}
+
 /** The acting user for a request: the session's allowlisted member, an admin for
  * a legacy password login or a bare local run, or null when auth is on and the
- * caller is unauthenticated. Reads the roster, so it is async. */
+ * caller is unauthenticated (or holds a session for an unknown id). Reads the
+ * roster, so it is async. */
 export async function currentUser(req) {
-  if (req.session?.userId) return await getUser(req.session.userId);
+  if (req.user) return req.user;
+  if (req.session?.userId) {
+    const u = await getUser(req.session.userId);
+    if (u) req.user = u;
+    return u;
+  }
   if (req.legacyAuthed || !authActive()) return { id: 'admin', displayName: 'Admin', role: 'admin' };
   return null;
 }

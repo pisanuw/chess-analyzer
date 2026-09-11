@@ -2,6 +2,14 @@
 
 Newest first.
 
+## 2026-09-11 (Fixes: stale sessions, Supabase timeouts, audit log, CI)
+
+- A validly signed session cookie for a user id no longer on the roster used to fall through the admin branch of `effectiveUser` and be served the default member's games, report, and drills. A new `knownSessionMiddleware` (`server/auth.js`) resolves the roster once per request, rejects unknown ids with a 401 and clears the dead cookie; `currentUser` caches the resolved user on the request and `effectiveUser` refuses to fall back when auth is on. `test/session.test.js` covers it.
+- Every Supabase call in `server/store.js` now goes through `sbFetch`, which aborts after `SUPABASE_TIMEOUT_MS` (default 15 s) and retries a stalled connection once, so a hung socket fails a publish or a function call instead of hanging it forever. Each write is safe to replay (upsert, ignore-duplicates insert, or the revision-filtered CAS PATCH). Uses a ref'd timer, not `AbortSignal.timeout`, so a publish script cannot exit before the deadline. Tests in `test/store.test.js`.
+- `logEvent` in `server/audit.js` serialises appends (they were an unguarded read-modify-write, so two admin actions landing together could drop an event); `test/audit.test.js` bursts 12 concurrent events.
+- The quick-eval route (`POST /api/games/:id/moments/:ply/eval`) now checks game ownership like every other member-scoped route. Dropped a redundant dynamic import in the player-colour route.
+- Added `.github/workflows/test.yml`: `npm ci && npm test` on Node 22 for every push and pull request (the suite is engine-free).
+
 ## 2026-09-11 (syncAllDrills: one store read/write, not one per game)
 
 - `syncAllDrills` now reads the drill store once, syncs every game against it in memory, and writes once (`syncGameUnlocked` takes an optional shared store). Locally this was just extra file I/O, but on the hosted store each per-game read+write was two full-row Supabase transfers, so publish-web's "Syncing hosted drill store" step crawled for 15+ minutes without finishing a single member and never reached the Netlify deploy. Behavior is unchanged; the prune now shares the same single write.

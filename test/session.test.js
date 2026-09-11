@@ -81,6 +81,21 @@ test('a member cannot view another member\'s game', async () => {
   assert.equal((await req('GET', '/api/games/ababababab01', { headers: sessCookie('nikash') })).status, 200);
 });
 
+test('a signed session for a user no longer on the roster is rejected, not served the default member', async () => {
+  const ghost = sessCookie('ghost_user_not_on_roster');
+  for (const path of ['/api/games', '/api/report', '/api/drills', '/api/scout', '/api/jobs']) {
+    const r = await req('GET', path, { headers: ghost });
+    assert.equal(r.status, 401, `${path} must reject the ghost session`);
+  }
+  const r = await req('GET', '/api/games', { headers: ghost });
+  assert.match(r.headers.get('set-cookie') || '', /sess=;/, 'the dead cookie is cleared');
+  // The identity endpoint stays reachable and reports nobody signed in.
+  const me = await (await req('GET', '/api/auth/me', { headers: ghost })).json();
+  assert.equal(me.user, null);
+  // Training writes are rejected too (they used to record against the default member).
+  assert.equal((await req('POST', '/api/games/abcdefabcdef/moments/1/guess', { headers: ghost })).status, 401);
+});
+
 test('management routes are admin only', async () => {
   assert.equal((await req('POST', '/api/games/import', { headers: sessCookie('kai') })).status, 403);
   assert.equal((await req('PUT', '/api/settings', { headers: sessCookie('kai') })).status, 403);

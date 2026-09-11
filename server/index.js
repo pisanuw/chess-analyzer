@@ -20,7 +20,7 @@ import { dueDrills, visitorDrills, reviewDrill, undoReview, suspendDrill, restor
 import { buildPuzzles } from './puzzles.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, clashLinePrompt, clashNarrationVersion, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, CLASH_NARRATION_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { knownPatterns } from './jobs.js';
-import { authMiddleware, loginRoute, meRoute, logoutRoute, currentUser, rateLimit } from './auth.js';
+import { authMiddleware, knownSessionMiddleware, authActive, loginRoute, meRoute, logoutRoute, currentUser, rateLimit } from './auth.js';
 import { sendEmail, adminEmail } from './email.js';
 import { logEvent, readAudit, eventIp } from './audit.js';
 import { getUser, getUsers, listMembers, isVisitor, publicUser, addVisitor, addMember, managedUsers, removeRosterEntry } from './users.js';
@@ -38,6 +38,7 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.text({ limit: '20mb', type: ['application/x-chess-pgn', 'text/plain'] }));
 
 app.use(authMiddleware);
+app.use(knownSessionMiddleware);
 app.post('/api/login', (req, res) => loginRoute(req, res).catch(err => {
   console.error(err);
   res.status(500).json({ error: err.message });
@@ -123,6 +124,7 @@ const wrap = fn => (req, res) => fn(req, res).catch(err => {
 // defaulting to the primary member. Scout data is shared, so it ignores this.
 async function effectiveUser(req) {
   const u = await currentUser(req);
+  if (!u && authActive()) { const err = new Error('auth required'); err.status = 401; throw err; }
   if (u && u.role !== 'admin') return u.id;
   const q = typeof req.query.user === 'string' ? req.query.user : '';
   return q && (await getUser(q)) ? q : DEFAULT_USER;
@@ -293,7 +295,6 @@ app.post('/api/games/:id/player', wrap(async (req, res) => {
   game.playerColor = color;
   if (game.analysis) {
     // Player flags and moments depend on colour; recompute cheaply from stored moves.
-    const { summarize } = await import('./analyze.js');
     const settings = await getSettings();
     game.analysis.moves.forEach(m => { m.isPlayer = m.color === color; });
     game.analysis.summary = { ...game.analysis.summary, ...summarize(game.analysis.moves, color, settings.momentThreshold) };
@@ -413,7 +414,7 @@ app.post('/api/games/:id/moments/:ply/guess', wrap(async (req, res) => {
 // job behind the answer). LimitStrength is forced off because a play-out may
 // have left the sparring process capped.
 app.post('/api/games/:id/moments/:ply/eval', wrap(async (req, res) => {
-  const game = await getGame(req.params.id);
+  const game = await getGame(req.params.id, await effectiveUser(req)); // own games stay private; scout games are shared
   const ply = Number(req.params.ply);
   const m = game?.analysis?.moves[ply - 1];
   if (!m) return res.status(404).json({ error: 'not found' });
