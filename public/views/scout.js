@@ -4,10 +4,9 @@
 import { api, esc, toast, movePrefix, busy, formatEval, session } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 import { Board, walkSans } from '../board.js';
-import { CATEGORY_LABEL } from './report.js';
+import { CATEGORY_LABEL } from '../labels.js';
+import { fmtLine, lichessUrl as lichess } from '../shared.js';
 
-const fmtLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
-const lichess = sans => `https://lichess.org/analysis/pgn/${encodeURIComponent(fmtLine(sans))}`;
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 export async function scoutView(root) {

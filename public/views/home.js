@@ -3,7 +3,7 @@
 // the import/admin surface.
 import { api, esc } from '../api.js';
 import { lineChart } from '../charts.js';
-import { CATEGORY_LABEL } from './report.js';
+import { CATEGORY_LABEL } from '../labels.js';
 
 const iso = d => d.toISOString().slice(0, 10);
 

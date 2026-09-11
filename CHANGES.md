@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-11 (Route split and shared helpers)
+
+- `server/index.js` (1000+ lines, 45 routes) is now the app shell only: middleware, the read-only gate, static serving, and the SPA catch-all. Routes live in `server/routes/{auth,games,training,scout,admin}.js`, each exporting a `register*Routes(app)`; the request helpers they share (`READONLY`, `wrap`, `effectiveUser`, `requireAdmin`, `blockVisitor`, `visitorNoop`, `studentRating`, `dossierOpts`) moved to `server/http.js`. No route changed.
+- The pure helpers that had two or three private copies (`resultScore`, `normalizeKey`, the 3-field `posKeyOf`, `fmtLine`, `lichessUrl`) now live once in `public/shared.js`; `recencyWeight` is exported from `server/scoutbook.js` and reused by the clash index so the two can no longer drift. `public/labels.js` holds `CATEGORY_LABEL` and `KIND_LABEL` so views stop importing each other for a lookup table.
+
 ## 2026-09-11 (Multi-user seams: import owner, per-game rating, clash per viewer)
 
 - `POST /api/games/import` takes an `owner` (a member id, default the primary member): the game is filed under that member and their roster `playerNames` decide the colour, so Nikash's PGNs no longer need the operator's names to match (the primary member keeps the global setting's names too). The Games page shows a "For member" select to the admin when there is more than one member, and its own-versus-scout detection uses the selected member's names. Members on the local server see a read-only list instead of an Import card that would 403. New `GET /api/members` (public fields plus PGN names, never emails).

@@ -17,11 +17,10 @@
 // lines, or the opponent having no or too few games in the position).
 import { Chess } from 'chess.js';
 import { parseGame } from './pgn.js';
-import { ageDays } from './scoutbook.js';
-import { resultScore } from './report.js';
+import { ageDays, recencyWeight } from './scoutbook.js';
 import { getGame, listGames, getScoutBook, getClashStore, saveClashStore, getSettings, DEFAULT_USER } from './store.js';
 import { scoreToCp, stmSign } from './analyze.js';
-import { winProb, WP_ACCEPT } from '../public/shared.js';
+import { winProb, WP_ACCEPT, resultScore, posKeyOf, fmtLine } from '../public/shared.js';
 import { getCachedEval, putCachedEval, evalCacheKey, flushCache } from './evalcache.js';
 import { poolAnalyse } from './enginepool.js';
 
@@ -42,19 +41,13 @@ export const CLASH_DEFAULTS = {
   maxParse: 1200,    // backstop on how many book games one build parses
 };
 
-const posKeyOf = fen => fen.split(' ').slice(0, 3).join(' ');
 const sideOf = fen => (fen.split(' ')[1] === 'w' ? 'white' : 'black');
 const keyOf = fen => `${sideOf(fen)}|${posKeyOf(fen)}`;
 
-/** scoutDossier's recency weight, replicated so the clash numbers reconcile with
- * the repertoire book: halves every halfLifeDays, zero past the age cutoff, a
- * small flat weight for undated games. No Elo-band filter here (scoutDossier does
- * not apply one in its repertoire loop either). */
-function weightOf(dateStr, now, maxDays, halfLifeDays) {
-  const age = ageDays(dateStr, now);
-  if (age != null && age > maxDays) return 0;
-  return age == null ? 0.25 : Math.pow(0.5, age / halfLifeDays);
-}
+/** scoutDossier's own recency weight, so the clash numbers reconcile with the
+ * repertoire book. No Elo-band filter here (scoutDossier does not apply one in
+ * its repertoire loop either). */
+const weightOf = (dateStr, now, maxDays, halfLifeDays) => recencyWeight(ageDays(dateStr, now), maxDays, halfLifeDays);
 
 /** The student's analysed own games (one full read each), the only source deep
  * enough for their side of the tree. Scoped to the member whose openings the
@@ -266,8 +259,6 @@ function countNodes(node) {
 
 // --- principal lines (for the optional LLM narration) ---------------------------
 
-const fmtSanLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
-
 function endReasonOf(node) {
   if (node.studentPrepEnds) return 'you have no games continuing here';
   if (node.oppPrepEnds) return node.oppPrepEndsReason === 'nodata' ? 'the opponent has never faced this position' : 'the opponent has too few games here to trust';
@@ -279,7 +270,7 @@ function endReasonOf(node) {
 function walkPaths(node, sans, likelihood, color, out) {
   if (node.transposesTo) return; // merges into a line collected elsewhere
   if (!node.edges.length) {
-    if (sans.length) out.push({ color, sans: [...sans], sanLine: fmtSanLine(sans), endReason: endReasonOf(node), endEval: node.engineBest?.cp ?? null, likelihood });
+    if (sans.length) out.push({ color, sans: [...sans], sanLine: fmtLine(sans), endReason: endReasonOf(node), endEval: node.engineBest?.cp ?? null, likelihood });
     return;
   }
   for (const e of node.edges) {

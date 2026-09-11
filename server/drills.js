@@ -1,6 +1,6 @@
 // Drills: positions from the player's own mistakes, scheduled with a small spaced-repetition ladder.
 import { getDrills, saveDrills, getSettings, listGames, listAllGames, getGame, DrillConflict, DEFAULT_USER } from './store.js';
-import { winProb, WP_ACCEPT } from '../public/shared.js';
+import { winProb, WP_ACCEPT, normalizeKey } from '../public/shared.js';
 
 const LADDER_DAYS = [1, 3, 7, 14, 30, 60];
 const DAY = 86400000;
@@ -536,10 +536,6 @@ export async function dueDrills(limit = 20, { pattern = null, category = null, s
     });
   }
   return { due: list, total: store.drills.length, dueCount: due.length, suspendedCount, feedback: store.feedback };
-}
-
-function normalizeKey(s) {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 /** An ephemeral practice set for visitors: punish drills drawn from the shared

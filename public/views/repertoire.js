@@ -1,5 +1,6 @@
 // Opening repertoire: games grouped by colour and first moves, with score and where prep ends.
 import { api, esc } from '../api.js';
+import { fmtLine, lichessUrl } from '../shared.js';
 
 export async function repertoireView(root) {
   const { repertoire } = await api.repertoire();
@@ -7,9 +8,8 @@ export async function repertoireView(root) {
     root.innerHTML = '<h1>Repertoire</h1><div class="empty">Appears once games are analysed.</div>';
     return;
   }
-  const fmtLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
   const prepText = l => l.prepEndsPly ? `move ${Math.ceil(l.prepEndsPly / 2)}` : '–';
-  const explorer = l => `https://lichess.org/analysis/pgn/${encodeURIComponent(fmtLine(l.line))}`;
+  const explorer = l => lichessUrl(l.line);
   const section = color => {
     const lines = repertoire.filter(l => l.color === color);
     if (!lines.length) return '';

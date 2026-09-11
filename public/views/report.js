@@ -3,20 +3,7 @@
 // a visible width to size themselves).
 import { api, esc, toast, movePrefix } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
-
-export const CATEGORY_LABEL = {
-  'tactics-allowed': 'Overlooked opponent tactic',
-  'tactics-missed': 'Missed own tactic',
-  'calculation': 'Miscalculated a line',
-  'positional': 'Positional / plan',
-  'opening': 'Opening knowledge',
-  'endgame-technique': 'Endgame technique',
-  'conversion': 'Converting a win',
-  'defence': 'Defensive resource',
-  'unexplained': 'Not yet explained',
-};
-
-const KIND_LABEL = { 'find-best': 'Find the best move', threat: 'See the threat', punish: 'Punish (scout)', opening: 'Opening prep' };
+import { CATEGORY_LABEL, KIND_LABEL } from '../labels.js';
 
 const catLabel = c => CATEGORY_LABEL[c] || c;
 const fmtSecs = s => s == null ? '–' : s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;

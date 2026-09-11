@@ -5,7 +5,7 @@
 // headers, and derived stats in data/scouts/<fideId>.json. From it we derive a
 // recency- and rating-weighted repertoire and pick the handful of recent games
 // worth the expensive engine/LLM dossier (see promote in index.js).
-import { resultScore } from './report.js';
+import { resultScore, posKeyOf } from '../public/shared.js';
 
 const OPENING_PLIES = 8; // position after these plies identifies a line (matches repertoire.js)
 const LINE_SAN = 10;     // SAN prefix stored per game, enough to name the variant
@@ -81,7 +81,7 @@ export function buildScoutBook(parsed, { fideId, name, aliases = [] }, now = new
       // Position after the opening plies (placement, turn, castling) so
       // transpositions merge; null for games that did not start from the
       // initial position (odds, setups), which are not opening prep.
-      posKey: fromStart && opening.length ? opening[opening.length - 1].fenAfter.split(' ').slice(0, 3).join(' ') : null,
+      posKey: fromStart && opening.length ? posKeyOf(opening[opening.length - 1].fenAfter) : null,
       plies: g.moves.length,
     });
   }
@@ -89,6 +89,15 @@ export function buildScoutBook(parsed, { fideId, name, aliases = [] }, now = new
 }
 
 const DEFAULTS = { maxAgeYears: 3, eloBand: 200, halfLifeDays: 540, analyseCount: 30 };
+
+/** Recency weight of a game by its age in days: halves every halfLifeDays, zero
+ * past maxDays, a small flat weight for undated games so they still count a
+ * little. The one definition the dossier and the opening clash both use, so
+ * their shares reconcile. */
+export function recencyWeight(age, maxDays, halfLifeDays) {
+  if (age != null && age > maxDays) return 0;
+  return age == null ? 0.25 : Math.pow(0.5, age / halfLifeDays);
+}
 
 /** Derive the preparation dossier from a book: the opponent's current strength,
  * a recency/rating-weighted repertoire by colour, their rating trend, and the
@@ -111,12 +120,7 @@ export function scoutDossier(book, opts = {}) {
   const recentRated = games.filter(g => g.subjectElo && (g.age == null || g.age <= maxDays)).slice(0, 12).map(g => g.subjectElo);
   const currentElo = recentRated.length ? median(recentRated) : (games.find(g => g.subjectElo)?.subjectElo || null);
 
-  // Recency weight: halves every halfLifeDays, zero past the age cutoff. Undated
-  // games get a small flat weight so they still count a little.
-  const weightOf = g => {
-    if (g.age != null && g.age > maxDays) return 0;
-    return g.age == null ? 0.25 : Math.pow(0.5, g.age / halfLifeDays);
-  };
+  const weightOf = g => recencyWeight(g.age, maxDays, halfLifeDays);
   const withinElo = g => !currentElo || !g.subjectElo || Math.abs(g.subjectElo - currentElo) <= eloBand;
 
   // Repertoire by colour, weighted, transposition-merged by posKey.

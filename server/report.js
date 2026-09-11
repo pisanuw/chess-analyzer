@@ -1,10 +1,10 @@
 // Aggregate weakness report across all analysed games.
 import { getGame, listGames, getDrills, getForeignDrillStores, DEFAULT_USER } from './store.js';
 import { gamesForSubject } from './subjects.js';
-import { parseTimeControl, spentPerMove } from '../public/shared.js';
+import { parseTimeControl, spentPerMove, resultScore, normalizeKey } from '../public/shared.js';
 import { CATEGORIES } from './prompts.js';
 
-export { parseTimeControl };
+export { parseTimeControl, resultScore };
 
 const WEIGHT = { inaccuracy: 1, mistake: 2, blunder: 3 };
 
@@ -323,13 +323,3 @@ export function materialSignature(fen, moverColor) {
   return moverColor === 'white' ? `${white} vs ${black}` : `${black} vs ${white}`;
 }
 
-export function resultScore(result, color) {
-  if (result === '1-0') return color === 'white' ? 1 : 0;
-  if (result === '0-1') return color === 'black' ? 1 : 0;
-  if (result === '1/2-1/2') return 0.5;
-  return null;
-}
-
-function normalizeKey(s) {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-}

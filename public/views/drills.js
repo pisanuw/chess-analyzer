@@ -1,7 +1,7 @@
 // Drills: replay your own critical moments, spaced repetition.
 import { api, esc, toast, formatEval, fmtClock, winProb, WP_ACCEPT, session } from '../api.js';
 import { Board, applyMove, gameStatus, walkSans, lineShapes } from '../board.js';
-import { CATEGORY_LABEL } from './report.js';
+import { CATEGORY_LABEL } from '../labels.js';
 
 const MAX_FOLLOWUPS = 2;      // player moves asked beyond the first, along the engine's PV
 const CALC_FOLLOWUPS = 4;     // calculation errors demand the full line

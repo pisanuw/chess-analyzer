@@ -21,6 +21,35 @@ export function formatEval(cp) {
   return (cp >= 0 ? '+' : '') + (cp / 100).toFixed(2);
 }
 
+/** The score of a PGN result for `color` (1, 0.5, 0), or null for an unknown result. */
+export function resultScore(result, color) {
+  if (result === '1-0') return color === 'white' ? 1 : 0;
+  if (result === '0-1') return color === 'black' ? 1 : 0;
+  if (result === '1/2-1/2') return 0.5;
+  return null;
+}
+
+/** Lowercase alphanumeric key for aggregating free-text names (patterns, concepts). */
+export function normalizeKey(s) {
+  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/** Placement, side to move, and castling: the position identity used wherever
+ * transpositions merge (repertoire lines, scout books, the opening clash). */
+export function posKeyOf(fen) {
+  return fen.split(' ').slice(0, 3).join(' ');
+}
+
+/** "1.e4 c5 2.Nf3" from a SAN list that starts with White's first move. */
+export function fmtLine(sans) {
+  return sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
+}
+
+/** The lichess analysis board for a SAN line from the start position. */
+export function lichessUrl(sans) {
+  return `https://lichess.org/analysis/pgn/${encodeURIComponent(fmtLine(sans))}`;
+}
+
 /** Parse a PGN TimeControl header like "5400+30" or "600" into { base, inc } seconds. */
 export function parseTimeControl(tc) {
   const m = (tc || '').match(/^(\d+)(?:\+(\d+))?$/);
