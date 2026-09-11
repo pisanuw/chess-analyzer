@@ -19,7 +19,7 @@ const routes = [
   { re: /^#\/report$/, name: 'report', view: reviewView },
   { re: /^#\/repertoire$/, name: 'report', view: reviewView }, // repertoire now lives in the Report page accordion
   { re: /^#\/scout(?:\/(.*))?$/, name: 'scout', view: scoutView },
-  { re: /^#\/drills(?:\?(.*))?$/, name: 'drills', view: drillsView }, // optional query: ?pattern=... starts a lightning round
+  { re: /^#\/drills(?:\?(.*))?$/, name: 'puzzles', view: drillsView }, // drills live under Puzzles now; highlight that tab
   { re: /^#\/puzzles(?:\?(.*))?$/, name: 'puzzles', view: puzzlesView }, // optional query: ?source=tactics|moments|missed
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
 ];

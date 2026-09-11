@@ -26,6 +26,7 @@ export async function puzzlesView(root, query) {
       <span class="muted" id="score"></span></div>
     <div class="row" id="sources" style="gap:6px; margin: 4px 0 2px">
       ${SOURCES.map(s => `<button class="small${s.key === source ? ' primary' : ''}" data-src="${s.key}">${esc(s.label)}</button>`).join('')}
+      <button class="small" id="to-drills" title="Spaced-repetition drills built from your own mistakes, scheduled and tracked">Drills based on your games</button>
     </div>
     <p class="muted">${esc(spec.blurb)} Free solve: nothing is scheduled. For tracked, spaced review of your own mistakes, use <a href="#/drills">Drills</a>.</p>
     <div id="puzzle"></div>`;
@@ -34,6 +35,7 @@ export async function puzzlesView(root, query) {
   root.querySelectorAll('button[data-src]').forEach(b => b.onclick = () => {
     if (b.dataset.src !== source) location.hash = `#/puzzles?source=${b.dataset.src}`;
   });
+  root.querySelector('#to-drills').onclick = () => { location.hash = '#/drills'; };
 
   function renderScore() {
     scoreEl.textContent = session.attempts

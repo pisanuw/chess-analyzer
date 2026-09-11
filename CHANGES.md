@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Drills moved under Puzzles)
+
+- The Drills tab now lives under Puzzles. The Puzzles page gains a "Drills based on your games" button next to the puzzle sources (decisive tactics, critical moments, missed tactics) that opens the spaced-repetition drills; the separate Drills nav item is gone and the due-count badge sits on the Puzzles tab. `#/drills` still works and highlights Puzzles. Frontend only.
+
 ## 2026-09-11 (UI: Players tab, and Report + Repertoire on one page)
 
 - Renamed the Scouting tab to "Players" (the `#/scout` route and internals are unchanged).
