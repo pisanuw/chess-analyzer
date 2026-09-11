@@ -144,6 +144,9 @@ label.check { display: flex; gap: 8px; align-items: center; margin-bottom: 12px;
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
 th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
 th { color: var(--text-2); font-weight: 500; font-size: 13px; }
+.nowrap { white-space: nowrap; }
+.log-table { font-size: 13px; }
+.log-table td { vertical-align: top; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--surface-2); }

@@ -8,6 +8,7 @@ import { scoutView } from './views/scout.js';
 import { drillsView } from './views/drills.js';
 import { puzzlesView } from './views/puzzles.js';
 import { settingsView } from './views/settings.js';
+import { logView } from './views/log.js';
 
 const app = document.getElementById('app');
 let current = null; // { name, destroy }
@@ -22,6 +23,7 @@ const routes = [
   { re: /^#\/drills(?:\?(.*))?$/, name: 'puzzles', view: drillsView }, // drills live under Puzzles now; highlight that tab
   { re: /^#\/puzzles(?:\?(.*))?$/, name: 'puzzles', view: puzzlesView }, // optional query: ?source=tactics|moments|missed
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
+  { re: /^#\/log$/, name: 'log', view: logView }, // admin-only activity log
 ];
 
 // Pages a visitor cannot see (no report/repertoire, no games management). They
@@ -36,6 +38,7 @@ async function route() {
   const r = routes.find(x => x.re.test(hash));
   if (!r) { location.hash = '#/home'; return; }
   if (session.user?.role === 'visitor' && VISITOR_BLOCKED.has(r.name)) { location.hash = '#/scout'; return; }
+  if (r.name === 'log' && session.user?.role !== 'admin') { location.hash = session.user?.role === 'visitor' ? '#/scout' : '#/home'; return; }
   const params = hash.match(r.re).slice(1);
   if (current?.destroy) current.destroy();
   current = null;
@@ -166,6 +169,9 @@ Promise.all([api.me().catch(() => ({})), api.status().catch(() => ({}))]).then((
   if (me.user?.role === 'visitor') { const r = routes.find(x => x.re.test(location.hash || '#/home')); if (!r || VISITOR_BLOCKED.has(r.name)) location.hash = '#/scout'; }
   renderWhoami(me);
   updateDrillBadge();
+  // The activity log is admin-only; reveal its nav link for an admin. It works on
+  // the hosted mirror too, where /api/audit reads the shared Supabase-backed log.
+  if (me.user?.role === 'admin') document.querySelector('[data-nav="log"]')?.removeAttribute('hidden');
   if (status.readonly) {
     window.addEventListener('hashchange', updateDrillBadge);
   } else {

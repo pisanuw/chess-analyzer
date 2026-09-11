@@ -7,9 +7,10 @@
 // per Google's guidance its signature does not need re-verification here; we
 // decode the payload and sanity-check aud and email_verified.
 import crypto from 'node:crypto';
-import { createSessionToken, sessionCookie } from './auth.js';
+import { createSessionToken, sessionCookie, verifySessionToken } from './auth.js';
 import { findUserByEmail } from './users.js';
 import { saveProfile } from './profiles.js';
+import { logEvent, eventIp } from './audit.js';
 
 export function googleConfigured() {
   return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
@@ -118,6 +119,7 @@ export async function googleCallbackRoute(req, res) {
   try { idToken = await exchangeCodeForIdToken(String(req.query.code || '')); }
   catch { res.setHeader('Set-Cookie', clearStateCookie()); return res.status(502).send('Google token exchange failed'); }
   const token = await googleLoginToken(idToken);
+  if (token) logEvent({ action: 'login', detail: 'google', userId: verifySessionToken(token)?.userId, ip: eventIp(req) });
   res.setHeader('Set-Cookie', token ? [clearStateCookie(), sessionCookie(token)] : [clearStateCookie()]);
   res.redirect(token ? '/' : '/?login=denied'); // denied = signed in with Google but not on the allowlist
 }

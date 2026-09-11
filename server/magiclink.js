@@ -9,6 +9,7 @@
 import crypto from 'node:crypto';
 import { createSessionToken, sessionCookie, rateLimit } from './auth.js';
 import { findUserByEmail, getUser } from './users.js';
+import { logEvent, eventIp } from './audit.js';
 
 /** True when email can actually be delivered (drives the login screen's UI). The
  * routes still work without it via the console fallback, for local testing. */
@@ -74,6 +75,7 @@ export async function magicVerifyRoute(req, res) {
   if (!v) return res.status(400).send('This sign-in link is invalid or has expired. Request a new one.');
   const user = await getUser(v.userId); // re-check the member still exists on the allowlist
   if (!user) return res.redirect('/?login=denied');
+  logEvent({ action: 'login', detail: 'magic-link', userId: user.id, name: user.displayName, ip: eventIp(req) });
   res.setHeader('Set-Cookie', sessionCookie(createSessionToken(user.id)));
   res.redirect('/');
 }

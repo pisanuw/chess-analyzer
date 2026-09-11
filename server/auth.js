@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { kvEnabled, kvGet, kvPut } from './store.js';
 import { getUser, publicUser } from './users.js';
 import { getProfile } from './profiles.js';
+import { logEvent, eventIp } from './audit.js';
 
 const DAY_S = 86400;
 const COOKIE_DAYS = 90;
@@ -166,6 +167,7 @@ export async function meRoute(req, res) {
 
 /** Clear both the session cookie and the legacy password cookie. */
 export function logoutRoute(req, res) {
+  if (req.session?.userId) logEvent({ action: 'logout', userId: req.session.userId, ip: eventIp(req) });
   res.setHeader('Set-Cookie', [clearSessionCookie(), `auth=; ${cookieFlags}; Max-Age=0`]);
   res.json({ ok: true });
 }
@@ -175,6 +177,7 @@ export async function loginRoute(req, res) {
   if (!(await allowAttempt(ip, Date.now()))) return res.status(429).json({ error: 'too many attempts, try again in an hour' });
   if (!passwordOk(req.body?.password)) return res.status(401).json({ error: 'wrong password' });
   await clearAttempts(ip);
+  logEvent({ action: 'login', detail: 'password', userId: 'admin', ip });
   const exp = Date.now() + COOKIE_DAYS * DAY_S * 1000;
   res.setHeader('Set-Cookie', `auth=${sign(exp)}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${COOKIE_DAYS * DAY_S}`);
   res.json({ ok: true });

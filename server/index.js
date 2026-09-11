@@ -22,6 +22,7 @@ import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepS
 import { knownPatterns } from './jobs.js';
 import { authMiddleware, loginRoute, meRoute, logoutRoute, currentUser, rateLimit } from './auth.js';
 import { sendEmail, adminEmail } from './email.js';
+import { logEvent, readAudit, eventIp } from './audit.js';
 import { getUser, listMembers, isVisitor } from './users.js';
 import { googleStartRoute, googleCallbackRoute } from './googleauth.js';
 import { magicRequestRoute, magicVerifyRoute } from './magiclink.js';
@@ -116,7 +117,11 @@ async function effectiveUser(req) {
 // imports): only an admin or the local operator may pass.
 async function requireAdmin(req, res) {
   const u = await currentUser(req);
-  if (u && u.role === 'admin') return true;
+  if (u && u.role === 'admin') {
+    // Record every admin mutation for the activity log (reads like GET are skipped).
+    if (req.method !== 'GET') logEvent({ action: `${req.method} ${req.path}`, userId: u.id, name: u.displayName, role: u.role, ip: eventIp(req) });
+    return true;
+  }
   res.status(403).json({ error: 'admin only' });
   return false;
 }
@@ -504,6 +509,12 @@ app.post('/api/playout/assess', wrap(async (req, res) => {
 
 // --- jobs, report, drills ----------------------------------------------------
 app.get('/api/jobs', (req, res) => res.json({ jobs: listJobs() }));
+
+// Admin activity log: who signed in from where, and the material actions taken.
+app.get('/api/audit', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return; // GET, so requireAdmin does not self-log
+  res.json({ events: await readAudit(Math.min(500, Number(req.query.limit) || 200)) });
+}));
 app.get('/api/report', wrap(async (req, res) => {
   if (await blockVisitor(req, res)) return;
   res.json({ report: await buildReport({ userId: await effectiveUser(req) }) });
@@ -862,10 +873,12 @@ app.post('/api/scout/:subject/prepsheet/request', wrap(async (req, res) => {
   const to = adminEmail();
   if (!to) return res.status(503).json({ error: 'prep-sheet requests are not configured (no admin email)' });
   const subject = req.params.subject;
-  const who = (await currentUser(req))?.displayName || 'a user';
+  const u = await currentUser(req);
+  const who = u?.displayName || 'a user';
   try {
     await sendEmail(to, `Prep sheet requested: ${subject}`,
       `${who} requested a preparation sheet for ${subject}.\n\nGenerate it in the app: Players, pick ${subject}, Generate prep sheet, then publish.`);
+    logEvent({ action: 'prep sheet requested', detail: subject, userId: u?.id, name: u?.displayName, role: u?.role, ip: eventIp(req) });
     res.json({ ok: true });
   } catch (err) {
     console.error(`prep-sheet request email failed: ${err.message}`);
