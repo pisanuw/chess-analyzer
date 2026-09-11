@@ -14,7 +14,8 @@ import { complete } from '../llm.js';
 import { buildReport } from '../report.js';
 import { buildRepertoire } from '../repertoire.js';
 import { subjectFideId, headToHead } from '../subjects.js';
-import { scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, clashLinePrompt, clashNarrationVersion, PREP_SHEET_SCHEMA, CLASH_NARRATION_SCHEMA } from '../prompts.js';
+import { scoutSystemPrompt, prepSheetPrompt, prepSheetEvidence, prepSheetVersion, clashLinePrompt, clashNarrationVersion, PREP_SHEET_SCHEMA, CLASH_NARRATION_SCHEMA } from '../prompts.js';
+import { sheetKey, readSheet, validateSheet, buildScoutCard } from '../prepsheet.js';
 import { currentUser, rateLimit } from '../auth.js';
 import { sendEmail, adminEmail } from '../email.js';
 import { logEvent, eventIp } from '../audit.js';
@@ -30,6 +31,26 @@ const seededOwnGameId = (memberId, gameId) => crypto.createHash('sha1').update(`
 // Narration is about the student's own lines, so it is keyed per member; a bare
 // fideId key is a note from before multi-user and belongs to the primary member.
 const clashNoteKey = (fideId, uid) => (uid === DEFAULT_USER ? fideId : `${uid}:${fideId}`);
+
+// Everything beyond the analysed subset that grounds a prep sheet: the
+// whole-history book and its habits, the predicted clash lines for this
+// student, their head-to-head record, and who the student is.
+async function prepExtra(req, uid, subject, fideId, settings) {
+  const extra = { headToHead: await headToHead(uid, subject, fideId) };
+  const user = await getUser(uid).catch(() => null);
+  extra.student = { name: user?.displayName || uid, rating: await studentRating(req, settings), repertoire: await buildRepertoire({ userId: uid }) };
+  const book = fideId ? await getScoutBook(fideId) : null;
+  if (book) {
+    extra.book = scoutDossier(book, dossierOpts(settings));
+    const entry = (await getClashStore())[fideId];
+    if (entry && entry.bookImportedAt === book.importedAt) {
+      extra.features = entry.features || null;
+      const student = buildStudentIndex(await loadStudentGames(uid));
+      extra.clashLines = clashPrincipalLines(assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, student, book }), 8);
+    }
+  }
+  return extra;
+}
 
 // How much of the recent, on-strength analysis subset is already in the pipeline,
 // so the UI can hide a promote that would queue nothing. A game is "queueable"
@@ -55,7 +76,8 @@ export function registerScoutRoutes(app) {
     // describes merge into one entry even when the engine data came in by name.
     const players = await getPlayers();
     const books = await listScoutBooks();
-    const sheets = await getPrepSheets(); // keyed by subject name: lets the UI colour prep readiness
+    const sheets = await getPrepSheets(); // per student and subject: lets the UI colour prep readiness
+    const uid = await effectiveUser(req);
     const norm = s => (s || '').trim().toLowerCase();
     const bookIdByName = new Map(books.map(b => [norm(b.name), b.fideId]));
     const resolve = (name, tagId) => tagId || bookIdByName.get(norm(name)) || lookupFideId(players, name);
@@ -105,7 +127,7 @@ export function registerScoutRoutes(app) {
       ...s, names: undefined, aliases: [...s.names].filter(n => n !== s.subject),
       // Prep-sheet readiness for the UI: the sheet plus the analysed-game count it
       // was built from, so the client can tell fresh (green) from missing/stale (yellow).
-      prep: sheets[s.subject] ? { games: sheets[s.subject].games ?? 0, createdAt: sheets[s.subject].createdAt || '' } : null,
+      prep: (sheet => (sheet ? { games: sheet.games ?? 0, createdAt: sheet.createdAt || '' } : null))(readSheet(sheets, uid, s.subject)),
     }));
     res.json({ subjects: subjects.sort((a, b) => (b.bookGames + b.games) - (a.bookGames + a.games) || a.subject.localeCompare(b.subject)) });
   }));
@@ -336,14 +358,29 @@ export function registerScoutRoutes(app) {
     const report = await buildReport({ purpose: 'scout', subject, color });
     if (!report.games && !(color && (await buildReport({ purpose: 'scout', subject })).games)) return res.status(404).json({ error: 'no analysed games for this subject' });
     const repertoire = await buildRepertoire({ purpose: 'scout', subject, color });
-    const prepSheet = (await getPrepSheets())[subject] || null;
+    const uid = await effectiveUser(req);
+    const prepSheet = readSheet(await getPrepSheets(), uid, subject);
     const fideId = await subjectFideId(subject);
-    const h2h = await headToHead(await effectiveUser(req), subject, fideId);
+    const h2h = await headToHead(uid, subject, fideId);
     // The current format fingerprint lets the UI offer a regenerate when the sheet
     // style has changed, not only when new games arrive (null on the hosted mirror).
     res.json({ subject, fideId, color, report, repertoire, headToHead: h2h, prepSheet, prepSheetVersion: prepSheetVersion() });
   }));
 
+  // The prep sheet as one-page markdown, for a coach or a printout.
+  app.get('/api/scout/:subject/card', wrap(async (req, res) => {
+    const subject = req.params.subject;
+    const uid = await effectiveUser(req);
+    const sheet = readSheet(await getPrepSheets(), uid, subject);
+    if (!sheet) return res.status(404).json({ error: 'no prep sheet for this subject yet' });
+    const h2h = await headToHead(uid, subject, await subjectFideId(subject));
+    res.type('text/markdown').send(buildScoutCard(subject, sheet, h2h));
+  }));
+
+  // Generate (or regenerate) the sheet for the student the request acts on: the
+  // analysed dossier plus the whole-history book, its habits, the predicted
+  // clash lines for this student, and their head-to-head record, with every
+  // fact numbered so the model can cite it. Admin only (it runs the model).
   app.post('/api/scout/:subject/prepsheet', wrap(async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
     const subject = req.params.subject;
@@ -351,15 +388,20 @@ export function registerScoutRoutes(app) {
     if (!report.games) return res.status(404).json({ error: 'no analysed games for this subject' });
     const repertoire = await buildRepertoire({ purpose: 'scout', subject });
     const settings = await getSettings();
+    const uid = await effectiveUser(req);
+    const fideId = await subjectFideId(subject);
+    const extra = await prepExtra(req, uid, subject, fideId, settings);
     const { output, costUsd, model } = await complete(settings, {
-      system: scoutSystemPrompt(await studentRating(req, settings)),
-      prompt: prepSheetPrompt(subject, report, repertoire),
+      system: scoutSystemPrompt(extra.student.rating),
+      prompt: prepSheetPrompt(subject, report, repertoire, extra),
       schema: PREP_SHEET_SCHEMA,
     });
+    const evidence = prepSheetEvidence(subject, report, repertoire, extra);
     const sheets = await getPrepSheets();
-    sheets[subject] = { ...output, games: report.games, version: prepSheetVersion(), model, costUsd, createdAt: new Date().toISOString() };
+    const key = sheetKey(uid, subject);
+    sheets[key] = { ...validateSheet(output, evidence), evidence, student: uid, games: report.games, version: prepSheetVersion(), model, costUsd, createdAt: new Date().toISOString() };
     await savePrepSheets(sheets);
-    res.json({ prepSheet: sheets[subject] });
+    res.json({ prepSheet: sheets[key] });
   }));
 
   // A member or visitor can ask the operator to make a prep sheet: this emails the

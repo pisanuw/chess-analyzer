@@ -226,12 +226,24 @@ function prepSheetBody(sheet) {
     ['Main errors', p.main_errors], ['Time trouble', p.time_trouble],
   ].filter(([, v]) => v);
   const plan = asList(sheet.exploit_plan), openings = asList(sheet.openings), watch = asList(sheet.watch_fors);
+  // Evidence chips: each id links back to the games (or lines) behind the claim;
+  // an item that cites nothing is flagged so it reads as opinion, not fact.
+  const ev = sheet.evidence || {};
+  const chips = item => {
+    if (typeof item === 'string') return '';
+    const ids = item.evidence || [];
+    if (!ids.length) return ' <span class="chip warn" title="The coach model cited no evidence for this: treat it as an opinion">unsupported</span>';
+    return ' ' + ids.map(id => ev[id]
+      ? (ev[id].link ? `<a class="chip ev" href="${esc(ev[id].link)}" title="${esc(ev[id].text)}">${esc(id)}</a>` : `<span class="chip ev" title="${esc(ev[id].text)}">${esc(id)}</span>`)
+      : '').join('');
+  };
+  const text = (item, key) => esc(typeof item === 'string' ? item : item[key]);
   return `<div class="prep-sheet">
     ${sheet.headline ? `<p class="prep-headline">${esc(sheet.headline)}</p>` : ''}
     ${rows.length ? `<h3>Profile</h3><table class="prep-table"><tbody>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
-    ${plan.length ? `<h3>Game plan</h3><ol>${plan.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}
-    ${openings.length ? `<h3>Openings</h3><table class="prep-table"><thead><tr><th>When</th><th>You play</th><th>Why</th></tr></thead><tbody>${openings.map(o => `<tr><td>${esc(o.when)}</td><td>${esc(o.play)}</td><td>${esc(o.why)}</td></tr>`).join('')}</tbody></table>` : ''}
-    ${watch.length ? `<h3>Watch for</h3><ul>${watch.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    ${plan.length ? `<h3>Game plan</h3><ol>${plan.map(s => `<li>${text(s, 'step')}${chips(s)}</li>`).join('')}</ol>` : ''}
+    ${openings.length ? `<h3>Openings</h3><table class="prep-table"><thead><tr><th>When</th><th>You play</th><th>Why</th></tr></thead><tbody>${openings.map(o => `<tr><td>${esc(o.when)}</td><td>${esc(o.play)}</td><td>${esc(o.why)}${chips(o)}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${watch.length ? `<h3>Watch for</h3><ul>${watch.map(w => `<li>${text(w, 'cue')}${chips(w)}</li>`).join('')}</ul>` : ''}
   </div>`;
 }
 
@@ -265,7 +277,8 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
   const pendingNote = pendingTotal
     ? `<p class="muted" style="margin:6px 0"><small>⏳ ${pendingTotal} of ${esc(subject)}'s game${pendingTotal === 1 ? ' is' : 's are'} still being processed (${pending.toAnalyse} to analyse, ${pending.toExplain} to explain). ${prepSheet ? 'Regenerate once they finish for the full picture.' : `The sheet will be built from the ${analysedNow} already analysed.`}</small></p>`
     : '';
-  const meta = prepSheet ? `<p class="muted"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}</small></p>` : '';
+  const meta = prepSheet ? `<p class="muted no-print"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}${prepSheet.evidence ? ' Hover an evidence chip for the fact behind a claim; click one to open the game.' : ''}</small>
+    <span class="row" style="gap:6px; margin-top:6px"><button class="small" id="prep-copy" title="Copy the sheet as markdown (for a coach, a note, or a message)">Copy as markdown</button> <button class="small" id="prep-print" title="Print just the sheet">Print</button></span></p>` : '';
   const body = prepSheet
     ? prepSheetBody(prepSheet) + meta
     : `<p class="muted">One page for the board: their weaknesses, the plan against them, and what to watch for. Built here on the home machine (uses the claude CLI), then published to the phone.</p>`;
@@ -289,13 +302,26 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
   } else {
     button = '';
   }
-  return `<details class="acc" open${flag ? ' style="border-color: var(--warning)"' : ''}>
+  return `<details class="acc print-target" id="prep-acc" open${flag ? ' style="border-color: var(--warning)"' : ''}>
     <summary><span class="acc-title">Preparation sheet</span>${badge}</summary>
     <div class="acc-body">${body}${pendingNote}${button}</div>
   </details>`;
 }
 
 function wirePrep(el, subject, report, pending, refresh) {
+  const copyBtn = el.querySelector('#prep-copy');
+  if (copyBtn) copyBtn.onclick = () => busy(copyBtn, async () => {
+    try { await navigator.clipboard.writeText(await api.scoutCard(subject)); toast('Prep sheet copied as markdown'); }
+    catch (err) { toast(err.message, true); }
+  });
+  const printBtn = el.querySelector('#prep-print');
+  if (printBtn) printBtn.onclick = () => {
+    // Print only the sheet: a body class hides the chrome and every other section.
+    document.body.classList.add('print-sheet');
+    const done = () => { document.body.classList.remove('print-sheet'); window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done);
+    window.print();
+  };
   const reqBtn = el.querySelector('#req-prep');
   if (reqBtn) reqBtn.onclick = async () => {
     reqBtn.disabled = true;

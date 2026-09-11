@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-09-11 (Prep sheet v2: grounded, cited, per student, exportable)
+
+- The prep-sheet prompt now sees everything the app knows, not only the analysed subset: the whole-history book (top lines per colour with share, score, opponents' rating, last date; current strength and recent scores), the book habits, the eval-curve tendencies, the predicted clash lines for this student, the student's head-to-head record, and the student themselves (rating, the rating gap, their own repertoire lines). `prepContext` in `server/prompts.js` numbers every fact with an id (E error types, P patterns, R analysed lines, L book lines, C predicted lines, T tendencies, F habits, H head to head, K clock, S student) and keeps a map from id to text and game link.
+- The schema demands citations: every plan step, opening row, and watch-for carries `evidence: [ids]`. `validateSheet` (`server/prepsheet.js`) keeps only ids the prompt issued and flags an item citing nothing as `unsupported`; the sheet stores the evidence map, and the Players page renders each id as a chip (hover for the fact, click to open the game) or an "unsupported" warning. The instructions file explains the layers and the citation rule; `prepSheetVersion` changes, so every existing sheet reads as "new format available".
+- Sheets are keyed per student and subject (`<member>|<subject>`): what "you should play" depends on who you are. A viewer with no sheet of their own reads the primary member's, then a legacy shared one (`readSheet`). The scouting list's readiness dot follows the same rule.
+- `GET /api/scout/:subject/card` returns the sheet as one-page markdown with the evidence as footnotes (BRIEFING item 7); the sheet card has "Copy as markdown" and "Print" (a print stylesheet drops everything but the sheet).
+
 ## 2026-09-11 (Deterministic tendencies; time control in scout books)
 
 - `server/tendencies.js` reads the stored win-probability curves of analysed games and reports what the labels cannot: conversion rate (games that reached 75 percent and were won), hold rate (games that fell to 25 percent and were not lost), collapses and comebacks (40-point swings within 10 plies), the phase in which the evaluation first turned, draw rate, and average length. `buildReport` returns it as `tendencies` for the member's own report and every scout dossier; the Report page and the deep dossier show the tiles, counts beside every rate.

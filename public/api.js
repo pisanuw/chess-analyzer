@@ -135,6 +135,11 @@ export const api = {
   scoutSubjects: () => req('GET', '/api/scout'),
   scout: (subject, color = null) => req('GET', `/api/scout/${encodeURIComponent(subject)}${color ? `?color=${color}` : ''}`),
   prepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet`),
+  scoutCard: async subject => {
+    const res = await fetch(`/api/scout/${encodeURIComponent(subject)}/card`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'no prep sheet to export');
+    return res.text();
+  },
   requestPrepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet/request`, {}),
   requestPrepByFide: fideId => req('POST', '/api/prep-request', { fideId }),
   requestAccess: (email, reason) => req('POST', '/api/auth/request-access', { email, reason }),

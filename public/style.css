@@ -166,6 +166,21 @@ tr.clickable:hover td { background: var(--surface-2); }
 .chip.status-analysing { color: var(--accent); border-color: var(--accent); }
 .chip.status-explained { color: var(--good); border-color: var(--good); }
 .chip.warn { color: #a06a00; border-color: var(--warning); }
+/* Evidence ids on a prep sheet: small, quiet, and clickable when they link to a game. */
+.chip.ev { font-size: 11px; padding: 0 6px; margin-left: 2px; font-family: ui-monospace, Menlo, monospace; color: var(--accent); border-color: var(--accent-soft); background: var(--surface); text-decoration: none; }
+a.chip.ev:hover { background: var(--accent-soft); }
+
+/* Print the preparation sheet alone: the chrome, the subject list, and every
+   other dossier section drop out, the sheet fills the page. */
+@media print {
+  .no-print { display: none !important; }
+  body.print-sheet .topbar, body.print-sheet #subject-list, body.print-sheet #subject-search, body.print-sheet #prep-request,
+  body.print-sheet #dossier > :not(.print-target), body.print-sheet .toast { display: none !important; }
+  body.print-sheet .acc.print-target { border: none; }
+  body.print-sheet .acc.print-target > summary::before { display: none; }
+  body.print-sheet .prep-sheet { max-width: none; background: none; color: #000; padding: 0; }
+  body.print-sheet .chip.ev { color: #000; border-color: #999; }
+}
 
 /* Opening clash: an indented, alternating move tree. */
 .clash-tree { list-style: none; margin: 3px 0; padding-left: 16px; border-left: 1px solid var(--border); }

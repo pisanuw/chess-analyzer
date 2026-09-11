@@ -98,8 +98,12 @@ export function batchExplanationSchema(scout = false) {
 
 // The sheet is read at the board, so it is structured (a headline, a fixed-row
 // profile table, a numbered plan, an openings table, cue bullets) rather than
-// four prose blobs. Full style and field guidance lives in prompts/prep-sheet.md;
-// keep the field names here in sync with that file.
+// four prose blobs. Every plan step, opening row, and cue cites the evidence ids
+// from the prompt it rests on; the server keeps only ids it issued and flags an
+// item with none as unsupported. Full style and field guidance lives in
+// prompts/prep-sheet.md; keep the field names here in sync with that file.
+const EVIDENCE = { type: 'array', items: { type: 'string' }, description: 'The evidence ids from the dossier this rests on (e.g. ["P2", "L1"]); at least one, only ids that appear in the dossier' };
+
 export const PREP_SHEET_SCHEMA = {
   type: 'object',
   properties: {
@@ -116,22 +120,30 @@ export const PREP_SHEET_SCHEMA = {
       },
       required: ['style', 'strongest_phase', 'weakest_phase', 'main_errors', 'time_trouble'],
     },
-    exploit_plan: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 5, description: 'Numbered game-plan steps in order, each one short action sentence in active voice' },
+    exploit_plan: {
+      type: 'array', minItems: 2, maxItems: 5,
+      description: 'Numbered game-plan steps in order, each one short action sentence in active voice',
+      items: { type: 'object', properties: { step: { type: 'string' }, evidence: EVIDENCE }, required: ['step', 'evidence'] },
+    },
     openings: {
-      type: 'array',
-      description: 'Opening advice as one row per line, so it scans quickly. Reference their actual lines only.',
+      type: 'array', minItems: 1, maxItems: 6,
+      description: 'Opening advice as one row per line, so it scans quickly. Reference their actual lines only, and the student\'s own lines where given.',
       items: {
         type: 'object',
         properties: {
           when: { type: 'string', description: 'Their colour and line, e.g. "As Black in the Sveshnikov"' },
-          play: { type: 'string', description: 'What you should play against it, short' },
+          play: { type: 'string', description: 'What the student should play against it, short' },
           why: { type: 'string', description: 'One short reason, from their scores or where their prep ends' },
+          evidence: EVIDENCE,
         },
-        required: ['when', 'play', 'why'],
+        required: ['when', 'play', 'why', 'evidence'],
       },
-      minItems: 1, maxItems: 6,
     },
-    watch_fors: { type: 'array', items: { type: 'string' }, minItems: 3, maxItems: 5, description: 'Three to five short cues to watch for during the game, one per item' },
+    watch_fors: {
+      type: 'array', minItems: 3, maxItems: 5,
+      description: 'Three to five short cues to watch for during the game, one per item',
+      items: { type: 'object', properties: { cue: { type: 'string' }, evidence: EVIDENCE }, required: ['cue', 'evidence'] },
+    },
   },
   required: ['headline', 'profile', 'exploit_plan', 'openings', 'watch_fors'],
 };
@@ -321,37 +333,112 @@ ${moments || '- none'}
 Write: summary (how ${subject} handled this game and where they went wrong), lesson (the one thing the student should exploit when facing them), opening_note (what ${subject} played and whether leaving it early would help; name the opening only if confident).`;
 }
 
-/** One-page preparation sheet for a subject, from their aggregated dossier. */
-export function prepSheetPrompt(subjectName, report, repertoire) {
+const lineText = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
+const pctText = v => (v == null ? '?' : `${v}%`);
+
+/** Everything the prep sheet may rest on, as numbered evidence rows. Each fact
+ * gets an id (E error types, P patterns, R analysed lines, L whole-history
+ * lines, C predicted clash lines, T eval-curve tendencies, F book habits, H head
+ * to head, K clock, S the student); the model cites ids, the server keeps only
+ * ids it issued, and the UI links each id back to the games behind it. `extra`
+ * carries the inputs beyond the analysed subset: { book, features, clashLines,
+ * headToHead, student: { name, rating, repertoire } }. */
+export function prepContext(subjectName, report, repertoire, extra = {}) {
   const subject = field(subjectName);
-  const cats = Object.entries(report.byCategory).filter(([k, v]) => k !== 'unexplained' && v.count).map(([k, v]) => `- ${k}: ${v.count} moments (weight ${v.weight})`).join('\n');
-  const phases = ['opening', 'middlegame', 'endgame'].map(ph => { const p = report.byPhase[ph]; return `- ${ph}: accuracy ${p.accuracy ?? 'n/a'}%, ${p.momentsPer100 ?? 'n/a'} moments per 100 moves`; }).join('\n');
-  const pats = report.patterns.slice(0, 10).map(p => `- "${p.pattern}" (${p.count}x)`).join('\n');
-  const lines = repertoire.map(l => `- as ${l.color}: ${l.line.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ')}${l.eco ? ` (${l.eco})` : ''}, ${l.count} game${l.count === 1 ? '' : 's'}, scored ${l.scorePct ?? '?'}%${l.prepEndsPly ? `, on their own from move ${Math.ceil(l.prepEndsPly / 2)}` : ''}`).join('\n');
-  const time = report.timeManagement ? `Clock behaviour: ${report.timeManagement.comfortBlunders} mistakes with over 5 minutes left, ${report.timeManagement.underTwoMinMoments} mistakes under 2 minutes, ${report.timeManagement.fastMoments} failed snap-moves.` : 'No clock data.';
+  const evidence = {};
+  const counts = {};
+  const cite = (prefix, kind, text, link = null) => {
+    const id = `${prefix}${(counts[prefix] = (counts[prefix] || 0) + 1)}`;
+    evidence[id] = { kind, text, ...(link ? { link } : {}) };
+    return `[${id}] ${text}`;
+  };
+  const section = (title, rows, empty = '- none recorded') => `${title}:\n${rows.length ? rows.map(r => `- ${r}`).join('\n') : empty}`;
+  const momentLink = m => (m ? `#/game/${m.gameId}/${m.ply}` : null);
+
+  const cats = Object.entries(report.byCategory || {}).filter(([k, v]) => k !== 'unexplained' && v.count)
+    .map(([k, v]) => cite('E', 'error type', `${k}: ${v.count} moment${v.count === 1 ? '' : 's'} (weight ${v.weight})`, momentLink(v.moments?.[0])));
+  const phases = ['opening', 'middlegame', 'endgame'].filter(ph => report.byPhase?.[ph])
+    .map(ph => { const p = report.byPhase[ph]; return cite('E', 'phase', `${ph}: accuracy ${pctText(p.accuracy)}, ${p.momentsPer100 ?? 'n/a'} moments per 100 moves`); });
+  const pats = (report.patterns || []).slice(0, 10)
+    .map(p => cite('P', 'pattern', `"${p.pattern}" (${p.count}x)`, momentLink(p.moments?.[0])));
+  const rep = (repertoire || []).map(l => cite('R', 'analysed line',
+    `as ${l.color}: ${lineText(l.line)}${l.eco ? ` (${l.eco})` : ''}, ${l.count} game${l.count === 1 ? '' : 's'}, scored ${pctText(l.scorePct)}${l.prepEndsPly ? `, on their own from move ${Math.ceil(l.prepEndsPly / 2)}` : ''}`));
+
+  const book = extra.book;
+  const bookLines = book ? ['white', 'black'].flatMap(c => book.repertoire.filter(l => l.color === c).slice(0, 5))
+    .map(l => cite('L', 'book line', `as ${l.color}: ${lineText(l.line)}${l.eco ? ` (${l.eco})` : ''}, ${l.share}% of their ${l.color} games (${l.count} games), scores ${pctText(l.scorePct)}${l.avgOppElo ? ` vs ~${l.avgOppElo}` : ''}${l.lastDate ? `, last ${l.lastDate}` : ''}`)) : [];
+  const strength = book ? [cite('F', 'strength', `current strength about ${book.currentElo ?? '?'}${book.peakElo ? ` (peak ${book.peakElo})` : ''}; recent score ${pctText(book.results?.white?.recentScorePct)} as White, ${pctText(book.results?.black?.recentScorePct)} as Black`)] : [];
+
+  const t = report.tendencies;
+  const tend = t?.games ? [
+    cite('T', 'tendency', `converted ${t.conversion.won} of ${t.conversion.reached} clearly winning positions (${pctText(t.conversion.rate)})`),
+    cite('T', 'tendency', `saved ${t.hold.saved} of ${t.hold.reached} clearly lost positions (${pctText(t.hold.rate)})`),
+    cite('T', 'tendency', `${t.collapses} collapse${t.collapses === 1 ? '' : 's'} and ${t.comebacks} comeback${t.comebacks === 1 ? '' : 's'} in ${t.games} games; the evaluation usually turns in the ${Object.entries(t.turnPhase).filter(([k]) => k !== 'none').sort((a, b) => b[1] - a[1])[0]?.[0] || 'middlegame'}`),
+    cite('T', 'tendency', `draw rate ${pctText(t.drawRate)}, average length ${t.avgMoves ?? '?'} moves`),
+  ] : [];
+
+  const f = extra.features;
+  const castle = c => { const n = c.short + c.long + c.none; return n ? `${Math.round((c.short / n) * 100)}% short, ${Math.round((c.long / n) * 100)}% long` : '?'; };
+  const habits = f?.games ? [
+    cite('F', 'habit', `form: ${pctText(f.form.scorePct)} over the last ${f.form.games} games, ${f.form.recentGames} games in the last ${f.form.days} days`),
+    cite('F', 'habit', `scores ${pctText(f.vsHigher.scorePct)} against higher-rated opponents (${f.vsHigher.games} games) and ${pctText(f.vsLower.scorePct)} against lower-rated (${f.vsLower.games} games)`),
+    cite('F', 'habit', `scores ${pctText(f.inBook.scorePct)} inside their main lines (${f.inBook.games} games) and ${pctText(f.outOfBook.scorePct)} outside them (${f.outOfBook.games} games)`),
+    cite('F', 'habit', `castling as White ${castle(f.castling.white)}, as Black ${castle(f.castling.black)}; opposite-side castling in ${pctText(f.oppositeCastlingPct)} of games`),
+    cite('F', 'habit', `queens traded in ${pctText(f.queenTrade.pct)} of games${f.queenTrade.medianMove ? `, typically by move ${f.queenTrade.medianMove}` : ''}; draw rate ${pctText(f.drawRate.white)} as White, ${pctText(f.drawRate.black)} as Black`),
+  ] : [];
+
+  const clash = (extra.clashLines || []).map(l => cite('C', 'predicted line',
+    `student as ${l.color}: ${l.sanLine}; the prediction ends because ${l.endReason}${l.endEval != null ? ` (engine eval after the suggested move ${formatEval(l.endEval)})` : ''}`));
+
+  const h2h = (extra.headToHead?.games || []).slice(0, 6).map(g => cite('H', 'head to head',
+    `${g.date || 'undated'}, student as ${g.color}, ${g.result}${g.line?.length ? `, ${lineText(g.line)}` : ''}${g.accuracy != null ? `, accuracy ${g.accuracy}%` : ''}${g.moments != null ? `, ${g.moments} critical moment${g.moments === 1 ? '' : 's'}` : ''}`, `#/game/${g.gameId}`));
+
+  const tm = report.timeManagement;
+  const clock = tm ? [cite('K', 'clock', `${tm.comfortBlunders} mistakes with over 5 minutes left, ${tm.underTwoMinMoments} mistakes under 2 minutes, ${tm.fastMoments} failed snap-moves (${tm.movesWithClock} moves with clocks)`)] : [];
+
+  const s = extra.student;
+  const gap = s?.rating && book?.currentElo ? book.currentElo - s.rating : null;
+  const student = s ? [
+    cite('S', 'student', `rated about ${s.rating || '?'}${gap != null ? `; ${subject} is ${Math.abs(gap)} ${gap >= 0 ? 'above' : 'below'}` : ''}`),
+    ...['white', 'black'].flatMap(c => (s.repertoire || []).filter(l => l.color === c).slice(0, 4)
+      .map(l => cite('S', 'student line', `plays as ${c}: ${lineText(l.line)}${l.eco ? ` (${l.eco})` : ''}, ${l.count} game${l.count === 1 ? '' : 's'}, scores ${pctText(l.scorePct)}`))),
+  ] : [];
+
+  const body = [
+    `Preparation dossier for the opponent ${subject}, from ${report.games} engine-analysed game${report.games === 1 ? '' : 's'}. Every fact carries an id in brackets; cite the ids each claim rests on.`,
+    section('Their errors by type', cats),
+    section('Their errors by phase', phases),
+    section('Their recurring weaknesses (named from explained moments)', pats, '- none yet'),
+    section('Their repertoire in the analysed games', rep, '- unknown'),
+    ...(book ? [section('Their strength', strength), section('Their repertoire over their whole history (recent, on-strength games weighted)', bookLines)] : []),
+    ...(tend.length ? [section('How the evaluation goes in their games', tend)] : []),
+    ...(habits.length ? [section('Habits over their whole history', habits)] : []),
+    ...(clash.length ? [section(`Predicted opening lines between the student and ${subject} (from real games; each note says why the prediction ends)`, clash)] : []),
+    ...(h2h.length ? [section(`The student's own games against ${subject}`, h2h)] : []),
+    ...(student.length ? [section('The student', student)] : []),
+    clock.length ? clock[0] : 'No clock data.',
+  ].join('\n\n');
+  return { body, evidence };
+}
+
+/** One-page preparation sheet for a subject, from their aggregated dossier. */
+export function prepSheetPrompt(subjectName, report, repertoire, extra = {}) {
+  const subject = field(subjectName);
+  const { body } = prepContext(subjectName, report, repertoire, extra);
   return `${prepSheetInstructions()}
 
 ---
 
-Preparation dossier for the opponent ${subject}, from ${report.games} engine-analysed game${report.games === 1 ? '' : 's'}.
-
-Their errors by type:
-${cats || '- none recorded'}
-
-Their errors by phase:
-${phases}
-
-Their recurring weaknesses (named from explained moments):
-${pats || '- none yet'}
-
-Their repertoire:
-${lines || '- unknown'}
-
-${time}
+${body}
 
 ---
 
-Write ${subject}'s preparation sheet now, filling every field. Use only the data above; do not invent openings, lines, or tendencies that are not supported by it.`;
+Write ${subject}'s preparation sheet now, filling every field. Use only the data above; do not invent openings, lines, or tendencies that are not supported by it. Every plan step, opening row, and cue lists the evidence ids it rests on.`;
+}
+
+/** The evidence map a generated sheet is validated against and displayed with. */
+export function prepSheetEvidence(subjectName, report, repertoire, extra = {}) {
+  return prepContext(subjectName, report, repertoire, extra).evidence;
 }
 
 // Optional coach narration of the predicted opening-clash lines. The schema
