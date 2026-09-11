@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Fix: clean games no longer stick at "analysed")
+
+- A game with no critical moments has nothing to explain, but it was left at status `analysed`, so it showed as pending in the Games list and the explain action correctly found nothing to queue ("0 queued for explanation"), which read like a bug. Such a game is now marked `explained` when analysis finishes (no moments means it is already done); a one-time pass corrected the games already stuck (18 in the live data). Games with genuinely unexplained moments are unaffected and still explain normally. `server/jobs.js`.
+
 ## 2026-09-11 (Multi-user phase 11: visitor role)
 
 - Added a third role, `visitor` (allowlisted via `AUTH_VISITOR_EMAILS`): guests who can browse the shared scouting library and all prep sheets and practice drills and puzzles, but see no report or repertoire and record nothing. Visitor drills are an ephemeral set of punish drills drawn from the scout library (`visitorDrills`, built fresh per request, never stored); puzzles are the usual stateless scout-sourced set. Every recording route (drill review/suspend/undo/restore/decoy, guess, feedback) no-ops for visitors on both the server and the client, and `report`/`repertoire`/`report-card`/`patterns` return 403. The frontend hides the Home/Games/Report/Repertoire/Settings nav for visitors, lands them on Scouting, and labels the Drills page as practice-only.

@@ -130,7 +130,9 @@ async function runAnalyse(job) {
     g.analysis = { moves, summary, analysedAt: new Date().toISOString() };
     g.playerRating = settings.playerRating;
     g.explanations = g.explanations || {};
-    g.status = 'analysed';
+    // A game with no critical moments has nothing to explain, so it is already
+    // done: mark it 'explained' rather than leaving it stuck looking pending.
+    g.status = summary.moments.length ? 'analysed' : 'explained';
   });
   await syncDrillsForGame(saved, settings, saved.owner || DEFAULT_USER); // drills belong to the game's owner
   await flushCache(); // persist opening evals gathered this job (debounced otherwise)
