@@ -6,9 +6,10 @@ import assert from 'node:assert/strict';
 import { tempData, makeGame, writeGame } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
-const { listGames, listAllGames, getGame, saveGame, deleteGame, ownsGame, DEFAULT_USER } = await import('../server/store.js');
+const { listGames, listAllGames, getGame, saveGame, deleteGame, ownsGame, DEFAULT_USER, getDrills, getPatternNotes, savePatternNotes } = await import('../server/store.js');
 const { buildReport } = await import('../server/report.js');
 const { buildRepertoire } = await import('../server/repertoire.js');
+const { syncDrillsForGame, reviewDrill } = await import('../server/drills.js');
 
 const dir = process.env.DATA_DIR;
 const ids = list => new Set(list.map(g => g.id));
@@ -86,4 +87,27 @@ test('buildReport and buildRepertoire are scoped per user', async () => {
   const total = rep => rep.reduce((n, l) => n + l.count, 0);
   assert.equal(total(await buildRepertoire({ userId: 'kai' })), 1);
   assert.equal(total(await buildRepertoire({ userId: 'nikash' })), 1);
+});
+
+test('drills and pattern notes are per-user', async () => {
+  const kg = makeGame({ id: 'f1f1f1f1f101', owner: 'kai', moments: [{ ply: 1, loss: 40 }] });
+  const ng = makeGame({ id: 'f2f2f2f2f201', owner: 'nikash', moments: [{ ply: 1, loss: 40 }] });
+  writeGame(dir, kg);
+  writeGame(dir, ng);
+  await syncDrillsForGame(kg, { drillThreshold: 20 }, 'kai');
+  await syncDrillsForGame(ng, { drillThreshold: 20 }, 'nikash');
+
+  const kaiDrills = (await getDrills('kai')).drills.map(d => d.id);
+  const nikDrills = (await getDrills('nikash')).drills.map(d => d.id);
+  assert.ok(kaiDrills.includes('f1f1f1f1f101:1') && !kaiDrills.includes('f2f2f2f2f201:1'), 'kai has only kai drills');
+  assert.ok(nikDrills.includes('f2f2f2f2f201:1') && !nikDrills.includes('f1f1f1f1f101:1'), 'nikash has only nikash drills');
+
+  // reviewing one member's drill leaves the other member's store untouched
+  await reviewDrill('f1f1f1f1f101:1', 'good', true, false, null, 'kai');
+  assert.equal((await getDrills('kai')).drills.find(d => d.id === 'f1f1f1f1f101:1').reviews.length, 1);
+  assert.equal((await getDrills('nikash')).drills.find(d => d.id === 'f2f2f2f2f201:1').reviews.length, 0);
+
+  await savePatternNotes({ 'back rank': 'watch the back rank' }, 'kai');
+  assert.deepEqual(await getPatternNotes('kai'), { 'back rank': 'watch the back rank' });
+  assert.deepEqual(await getPatternNotes('nikash'), {});
 });

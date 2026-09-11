@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Multi-user phase 2b: per-user drills and pattern notes)
+
+- Drills and pattern notes are now per member. Each member's drill ladder, review history, guesses, feedback, and decoy tally live in `data/users/<id>/drills.json` (mirrored per machine to `data/users/<id>/drills-<host>.json`, and on the hosted store in the Supabase key `drills:<id>`); pattern study notes live in `data/users/<id>/patterns.json`. Every drills.js entry point (`syncDrillsForGame`, `syncAllDrills`, `dueDrills`, `reviewDrill`, `undoReview`, `suspendDrill`, `restoreSuspended`, `recordGuess`, `recordFeedback`, `recordDecoy`, `clearFeedback`, `buildDecoys`, `removeDrillsForGame`) and the store helpers (`getDrills`, `saveDrills`, `getForeignDrillStores`, `getPatternNotes`, `savePatternNotes`) take a `userId` that defaults to `DEFAULT_USER`, so existing callers are unchanged.
+- `syncAllDrills(userId)` builds a member's ladder from the games they can see (their own plus the shared scout library), so scout punish-drills exist per member with independent review state. `buildReport` reads the report user's drill store and mirrors. Startup migration (`migrateLegacyUserData`, run from serve.js, idempotent) moves the original single user's `drills.json`, its `drills-<host>.json` mirrors, and `patterns.json` into `data/users/<default>/`, then rebuilds every member's ladder. `writeJson` now ensures the destination directory for any path. 157 tests pass (multi-user drills and pattern-note isolation added).
+
 ## 2026-09-10 (Multi-user phase 2: per-user ownership of games)
 
 - Own-purpose games now carry an `owner` (a member id); scout-purpose games stay unowned and shared (the scouting library every member sees). `listGames(userId)` returns that member's own games plus all scout games; `listGames('*')` / `listAllGames()` returns everything for admin and global work. `getGame(id, userId)` and `deleteGame(id, userId)` enforce ownership only when a userId is passed (the default is unscoped, so existing by-id callers are unchanged), and `saveGame(game, userId)` stamps the owner on an own game that has none without overwriting an existing one. Ownership is a record field, not a directory, so `data/games/`, the Netlify bundle, and existing tooling are untouched, and a game two members both played never collides on its content-hash id across dirs.

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
+import path from 'node:path';
 import { tempData, makeGame, writeGame } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
@@ -256,8 +257,8 @@ test('recordDecoy keeps a per-machine seen/right tally', async () => {
 });
 
 test('drill saves mirror to a per-machine file for the data repo', async () => {
-  const files = readdirSync(process.env.DATA_DIR);
-  assert.ok(files.some(f => /^drills-.+\.json$/.test(f)), 'mirror file exists next to drills.json');
+  const files = readdirSync(path.join(process.env.DATA_DIR, 'users', 'kai'));
+  assert.ok(files.some(f => /^drills-.+\.json$/.test(f)), 'mirror file exists in the member data dir');
 });
 
 test('explanation feedback is stored per moment', async () => {

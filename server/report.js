@@ -141,8 +141,8 @@ export async function buildReport({ purpose = 'own', subject = null, userId = DE
   // Drill performance from review history: this machine's live store plus the
   // read-only mirrors other machines sync through the data repo (the same
   // player reviews on both, so the histories merge).
-  const dstore = purpose === 'own' ? await getDrills() : { drills: [] };
-  const foreign = purpose === 'own' ? await getForeignDrillStores() : [];
+  const dstore = purpose === 'own' ? await getDrills(userId) : { drills: [] };
+  const foreign = purpose === 'own' ? await getForeignDrillStores(userId) : [];
   const drillByPhase = {}, drillByCategory = {}, drillByKind = {}, patternSpeed = new Map();
   const activityDates = new Set(); // YYYY-MM-DD the player practised, for the home-screen streak
   let drillAttempts = 0, drillCorrect = 0;

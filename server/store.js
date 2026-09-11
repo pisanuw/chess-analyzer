@@ -36,6 +36,17 @@ export function ownsGame(game, userId = DEFAULT_USER) {
   return (game.owner || DEFAULT_USER) === userId;
 }
 
+// A member's private per-machine data (drill ladder + review history, pattern
+// study notes) lives under data/users/<id>/. Own games themselves stay in
+// GAMES_DIR keyed by owner (see ownsGame); only the derived per-user state is
+// namespaced by directory. The id is validated so it can never escape the dir.
+const USERS_DIR = path.join(DATA_DIR, 'users');
+const isUserId = id => /^[a-z0-9][a-z0-9_-]{0,39}$/i.test(String(id || ''));
+export function userDir(userId = DEFAULT_USER) {
+  if (!isUserId(userId)) throw new Error(`bad user id: ${userId}`);
+  return path.join(USERS_DIR, userId);
+}
+
 export const DEFAULT_SETTINGS = {
   playerNames: [],          // substrings matched against White/Black headers, case-insensitive
   playerRating: 2000,
@@ -108,7 +119,7 @@ const writeQueues = new Map();
 export function writeJson(file, value) {
   const prev = writeQueues.get(file) || Promise.resolve();
   const next = prev.catch(() => {}).then(async () => {
-    await ensureDirs();
+    await fs.mkdir(path.dirname(file), { recursive: true }); // works for GAMES_DIR, per-user dirs, and the root alike
     const tmp = `${file}.${process.pid}.${++tmpSeq}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(value, null, 2));
     await fs.rename(tmp, file);
@@ -309,15 +320,16 @@ export async function kvPut(key, value) {
   if (!r.ok) throw new Error(`kv write failed (${r.status})`);
 }
 
-export async function getDrills() {
+export async function getDrills(userId = DEFAULT_USER) {
   const s = sb();
   let store;
   if (s) {
-    const r = await fetch(`${s.url}/rest/v1/chess_kv?key=eq.drills&select=value`, { headers: s.headers });
+    const key = `drills:${userId}`;
+    const r = await fetch(`${s.url}/rest/v1/chess_kv?key=eq.${encodeURIComponent(key)}&select=value`, { headers: s.headers });
     if (!r.ok) throw new Error(`drill store read failed (${r.status})`);
     store = (await r.json())[0]?.value || { drills: [] };
   } else {
-    store = await readJson(path.join(DATA_DIR, 'drills.json'), { drills: [] });
+    store = await readJson(path.join(userDir(userId), 'drills.json'), { drills: [] });
   }
   store.guesses = store.guesses || {};   // guess-first attempts, keyed gameId:ply
   store.feedback = store.feedback || {}; // explanation feedback, keyed gameId:ply
@@ -333,19 +345,41 @@ export async function getDrills() {
 // which the data repo DOES sync; other machines read those files as foreign,
 // read-only history for report stats.
 const HOST = os.hostname().split('.')[0].replace(/[^a-zA-Z0-9_-]+/g, '-') || 'machine';
-const mirrorFile = () => path.join(DATA_DIR, `drills-${HOST}.json`);
+const mirrorFile = (userId = DEFAULT_USER) => path.join(userDir(userId), `drills-${HOST}.json`);
 
-/** Drill stores mirrored from OTHER machines: [{ machine, drills }]. */
-export async function getForeignDrillStores() {
-  await ensureDirs();
+/** One member's drill stores mirrored from OTHER machines: [{ machine, drills }]. */
+export async function getForeignDrillStores(userId = DEFAULT_USER) {
+  const dir = userDir(userId);
   const out = [];
-  for (const f of await fs.readdir(DATA_DIR).catch(() => [])) {
+  for (const f of await fs.readdir(dir).catch(() => [])) {
     const m = f.match(/^drills-(.+)\.json$/);
     if (!m || m[1] === HOST) continue;
-    const store = await readJson(path.join(DATA_DIR, f), null).catch(() => null);
+    const store = await readJson(path.join(dir, f), null).catch(() => null);
     if (Array.isArray(store?.drills)) out.push({ machine: m[1], drills: store.drills });
   }
   return out;
+}
+
+/** Move the original single user's per-machine files (drills.json, its
+ * drills-<host>.json mirrors, patterns.json) from the DATA_DIR root into
+ * data/users/<userId>/. Idempotent: skips a file once its destination exists.
+ * Runs at startup so a machine that predates multi-user keeps its drill ladder,
+ * review-history mirrors, and pattern notes. Returns the names moved. */
+export async function migrateLegacyUserData(userId = DEFAULT_USER) {
+  const dir = userDir(userId);
+  await fs.mkdir(dir, { recursive: true });
+  const moved = [];
+  for (const f of await fs.readdir(DATA_DIR).catch(() => [])) {
+    if (f !== 'drills.json' && f !== 'patterns.json' && !/^drills-.+\.json$/.test(f)) continue;
+    const to = path.join(dir, f);
+    try { await fs.stat(to); continue; } catch {}            // already migrated
+    try {
+      if (!(await fs.stat(path.join(DATA_DIR, f))).isFile()) continue;
+      await fs.rename(path.join(DATA_DIR, f), to);
+      moved.push(f);
+    } catch {}
+  }
+  return moved;
 }
 
 export async function getPrepSheets() {
@@ -394,30 +428,32 @@ export async function savePlayers(map) {
   return map;
 }
 
-export async function getPatternNotes() {
-  return readJson(path.join(DATA_DIR, 'patterns.json'), {});
+export async function getPatternNotes(userId = DEFAULT_USER) {
+  return readJson(path.join(userDir(userId), 'patterns.json'), {});
 }
 
-export async function savePatternNotes(notes) {
-  await writeJson(path.join(DATA_DIR, 'patterns.json'), notes);
+export async function savePatternNotes(notes, userId = DEFAULT_USER) {
+  await writeJson(path.join(userDir(userId), 'patterns.json'), notes);
   return notes;
 }
 
-export async function saveDrills(value) {
+export async function saveDrills(value, userId = DEFAULT_USER) {
   const s = sb();
   if (!s) {
-    await writeJson(path.join(DATA_DIR, 'drills.json'), value);
-    await writeJson(mirrorFile(), value).catch(() => {}); // best effort: the mirror is derived history
+    await writeJson(path.join(userDir(userId), 'drills.json'), value);
+    await writeJson(mirrorFile(userId), value).catch(() => {}); // best effort: the mirror is derived history
     return value;
   }
-  // Claim the next revision only if the row still holds the one we read; an
-  // empty result means another instance wrote first (throw DrillConflict so
-  // the drill lock re-reads and reapplies). rev 0 matches a legacy row that
-  // predates the counter, or no row at all.
+  // Each member's ladder is its own KV row (drills:<userId>), so their
+  // compare-and-swap races are independent. Claim the next revision only if the
+  // row still holds the one we read; an empty result means another instance
+  // wrote first (throw DrillConflict so the drill lock re-reads and reapplies).
+  // rev 0 matches a legacy row that predates the counter, or no row at all.
+  const key = `drills:${userId}`;
   const prevRev = value.rev || 0;
   const next = { ...value, rev: prevRev + 1 };
   const filter = prevRev ? `value->>rev=eq.${prevRev}` : 'value->>rev=is.null';
-  const patch = await fetch(`${s.url}/rest/v1/chess_kv?key=eq.drills&${filter}`, {
+  const patch = await fetch(`${s.url}/rest/v1/chess_kv?key=eq.${encodeURIComponent(key)}&${filter}`, {
     method: 'PATCH',
     headers: { ...s.headers, prefer: 'return=representation' },
     body: JSON.stringify({ value: next }),
@@ -430,7 +466,7 @@ export async function saveDrills(value) {
     const post = await fetch(`${s.url}/rest/v1/chess_kv`, {
       method: 'POST',
       headers: { ...s.headers, prefer: 'resolution=ignore-duplicates,return=representation' },
-      body: JSON.stringify([{ key: 'drills', value: next }]),
+      body: JSON.stringify([{ key, value: next }]),
     });
     if (!post.ok) throw new Error(`drill store write failed (${post.status})`);
     if ((await post.json()).length) return next;
