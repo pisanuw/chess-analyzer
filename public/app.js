@@ -64,7 +64,9 @@ async function route() {
 }
 
 window.addEventListener('hashchange', route);
-route();
+// The first route() waits for /api/auth/me (below): routing before the role is
+// known would start rendering Home for a visitor, and the slow Home view would
+// then clobber the Scouting page the visitor redirect had already rendered.
 
 // --- job polling ---------------------------------------------------------------
 const jobsEl = document.getElementById('jobs');
@@ -167,8 +169,9 @@ Promise.all([api.me().catch(() => ({})), api.status().catch(() => ({}))]).then((
   document.body.classList.toggle('is-admin', me.user?.role === 'admin');
   document.body.classList.toggle('is-visitor', me.user?.role === 'visitor');
   if (me.authActive && !me.user) { showLogin(); return; } // not signed in: the overlay covers the app
-  // Visitors land on Scouting; bounce them off any page they cannot see.
-  if (me.user?.role === 'visitor') { const r = routes.find(x => x.re.test(location.hash || '#/home')); if (!r || VISITOR_BLOCKED.has(r.name)) location.hash = '#/scout'; }
+  // First route, now that the role is known. route() itself lands visitors on
+  // Scouting (their landing page) and bounces them off pages they cannot see.
+  route();
   renderWhoami(me);
   updateDrillBadge();
   // The activity log is admin-only; reveal its nav link for an admin. It works on
@@ -184,4 +187,4 @@ Promise.all([api.me().catch(() => ({})), api.status().catch(() => ({}))]).then((
     setInterval(updateDrillBadge, 60000);
     jobEvents.addEventListener('finished', updateDrillBadge);
   }
-}).catch(() => {});
+}).catch(err => { console.error(err); route(); }); // still render something if startup chrome fails

@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-11 (Visitor landing fix; ADMIN_EMAIL is a login address)
+
+- Fixed the visitor landing race: the first route no longer runs before `/api/auth/me` resolves, so a visitor lands on the actual Players (Scouting) page instead of the Home dashboard content with the Players tab highlighted (the slow Home view used to clobber the redirect's render, leaving a page a visitor could never navigate back to). `route()` is now called once identity is known, and its existing visitor redirect does the landing (`public/app.js`).
+- `ADMIN_EMAIL` now doubles as a login address for the built-in admin in `getUsers()` (it always wins over the visitor list), so setting only `ADMIN_EMAIL` is enough to sign in as the admin; previously the address was used just for notifications and the admin could be locked out with "not on the invite list". Documented in `.env.example`; covered in `test/users.test.js`. This was live on the mirror, where `ADMIN_EMAIL` and `AUTH_EMAIL_KAI` were empty and `AUTH_EMAIL_YUSUF` unset (all three now set in the Netlify env); the magic-link "no email arrived" was the same missing allowlisting, since non-allowlisted requests are silently accepted to prevent probing (Resend delivery itself verified fine). 201 tests pass.
+
 ## 2026-09-11 (Improvement report: frontend, backend, opponent-preparation pedagogy)
 
 - Added `IMPROVEMENT-REPORT.md`, a full read of the codebase with ranked recommendations: a verified stale-session fallthrough (a signed cookie for a user id no longer on the roster is served the default member's data), the single-user seams left in import, prompts, and the opening clash, per-call full-file reads behind the report and puzzles, missing CI and frontend tests, and a pedagogy section proposing a colour- and student-aware "Prepare for a game" flow (grounded prep sheet with evidence citations, deterministic tendency profile from stored eval curves and the book, a prep deck of line flashcards and filtered punish drills, and a post-game check of whether the predicted line held). No code change; 200 tests pass.

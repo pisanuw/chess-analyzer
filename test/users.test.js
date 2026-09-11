@@ -66,6 +66,20 @@ test('isAdmin', () => {
   assert.equal(U.isAdmin(null), false);
 });
 
+test('ADMIN_EMAIL doubles as an admin login address, and wins over the visitor list', async () => {
+  process.env.ADMIN_EMAIL = 'Admin@Example.com';
+  process.env.AUTH_VISITOR_EMAILS = 'admin@example.com, other@example.com';
+  try {
+    const admin = await U.findUserByEmail('admin@example.com');
+    assert.equal(admin.id, 'yusuf');
+    assert.equal(U.isAdmin(admin), true); // not demoted to the visitor entry
+    assert.equal((await U.findUserByEmail('other@example.com')).role, 'visitor');
+  } finally {
+    delete process.env.ADMIN_EMAIL;
+    delete process.env.AUTH_VISITOR_EMAILS;
+  }
+});
+
 test('getUsers + findUserByEmail: reads data/users.json and env together', async () => {
   writeFileSync(path.join(dir, 'users.json'), JSON.stringify({
     users: [{ id: 'nikash', emails: ['nikash@example.com'] }],

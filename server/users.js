@@ -116,7 +116,13 @@ const memberId = e => slugId('p_', e);    // admin-added player (member) id from
  * shared scouting library and practice drills/puzzles without anything recorded.
  * A member or admin email always wins over the visitor list. */
 export async function getUsers() {
-  const roster = buildRoster(DEFAULT_USERS, await readUsersFile(), envEmails());
+  const emailsById = envEmails();
+  // ADMIN_EMAIL doubles as a login address for the built-in admin (it is the
+  // same person email.js notifies), so setting only ADMIN_EMAIL is enough to
+  // sign in as the admin without also repeating it in AUTH_EMAIL_YUSUF.
+  const adminExtra = parseEmails(process.env.ADMIN_EMAIL || '');
+  if (adminExtra.length) emailsById.yusuf = uniq([...(emailsById.yusuf || []), ...adminExtra]);
+  const roster = buildRoster(DEFAULT_USERS, await readUsersFile(), emailsById);
   const taken = new Set(roster.flatMap(u => u.emails || []));
   for (const email of parseEmails(process.env.AUTH_VISITOR_EMAILS || '')) {
     if (taken.has(email)) continue;
