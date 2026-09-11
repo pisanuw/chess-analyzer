@@ -56,6 +56,12 @@ async function clearAttempts(ip) {
   if (kvEnabled()) { try { await kvPut(throttleKey(ip), { n: 0, resetAt: Date.now() + WINDOW_MS }); } catch {} }
 }
 
+/** Per-client sign-in rate limit, shared by password login and magic-link
+ * requests: counts this attempt against the hourly window; false when over. */
+export async function rateLimit(req) {
+  return allowAttempt(clientIp(req), Date.now());
+}
+
 const secret = () => crypto.createHash('sha256').update('cookie:' + password()).digest();
 const hash = s => crypto.createHash('sha256').update(String(s)).digest();
 const passwordOk = input => !!password() && crypto.timingSafeEqual(hash(input), hash(password()));

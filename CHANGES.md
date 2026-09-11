@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Multi-user phase 5: magic-link sign-in)
+
+- Passwordless sign-in by email. `POST /api/auth/magic/request` looks the address up in the allowlist and, if found, emails a short-lived (15 minute) HMAC-signed one-time link; the response is identical for allowlisted and unknown addresses so the endpoint cannot enumerate members, and it is rate-limited per client (shared limiter with password login). `GET /api/auth/magic/verify?token=...` checks the signature and expiry, re-confirms the member on the allowlist, and issues a session. Delivery uses Resend's REST API (`RESEND_API_KEY`, `AUTH_FROM_EMAIL`); with no key set the link is logged to the console as a local dev fallback.
+- `server/magiclink.js`; wired in `server/index.js` and exempt from the auth and read-only gates so it works on the hosted mirror. The token is stateless (signed userId + expiry), so no store is needed; the 15-minute window and the private allowlist keep the not-strictly-single-use tradeoff acceptable for this handful of users. `test/magiclink.test.js` (5 tests). 178 tests pass.
+
 ## 2026-09-10 (Multi-user phase 4: Google sign-in)
 
 - Hand-rolled Google OAuth2 (authorization-code flow, no library). `GET /api/auth/google` redirects to Google's consent screen with a signed anti-CSRF state (mirrored in a short-lived `g_state` cookie and double-submit checked); `GET /api/auth/google/callback` exchanges the code for an id_token at Google's token endpoint, decodes it (received over a trusted TLS channel, so no signature re-check), verifies the audience and `email_verified`, matches the email to the allowlist, and issues a session, redirecting to `/` (or `/?login=denied` when the Google account is signed in but not on the allowlist). `server/googleauth.js`; wired in `server/index.js`; `/api/auth/me` now advertises which providers are configured so the login screen can show the right buttons.

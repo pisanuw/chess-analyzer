@@ -22,6 +22,7 @@ import { knownPatterns } from './jobs.js';
 import { authMiddleware, loginRoute, meRoute, logoutRoute, currentUser } from './auth.js';
 import { getUser } from './users.js';
 import { googleStartRoute, googleCallbackRoute } from './googleauth.js';
+import { magicRequestRoute, magicVerifyRoute } from './magiclink.js';
 
 // Repo root = the working directory for every supported entry (npm start via
 // server/serve.js, tests, and the bundled Netlify function). Using cwd keeps
@@ -48,6 +49,15 @@ app.post('/api/auth/logout', (req, res) => logoutRoute(req, res));
 // Google sign-in (OAuth2 code flow). Both are exempt from the auth gate above.
 app.get('/api/auth/google', (req, res) => { try { googleStartRoute(req, res); } catch (err) { console.error(err); res.status(500).send('sign-in failed'); } });
 app.get('/api/auth/google/callback', (req, res) => googleCallbackRoute(req, res).catch(err => {
+  console.error(err);
+  res.status(500).send('sign-in failed');
+}));
+// Magic-link sign-in (request emails a one-time link; verify sets the session).
+app.post('/api/auth/magic/request', (req, res) => magicRequestRoute(req, res).catch(err => {
+  console.error(err);
+  res.status(500).json({ error: 'could not send link' });
+}));
+app.get('/api/auth/magic/verify', (req, res) => magicVerifyRoute(req, res).catch(err => {
   console.error(err);
   res.status(500).send('sign-in failed');
 }));
