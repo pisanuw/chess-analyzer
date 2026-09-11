@@ -147,6 +147,10 @@ th { color: var(--text-2); font-weight: 500; font-size: 13px; }
 .nowrap { white-space: nowrap; }
 .log-table { font-size: 13px; }
 .log-table td { vertical-align: top; }
+.prep-card-md h3 { margin: 12px 0 4px; }
+.prep-card-md p { margin: 4px 0; }
+.prep-card-md ul, .prep-card-md ol { margin: 4px 0 8px; padding-left: 20px; }
+.prep-card-md li { margin: 2px 0; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover td { background: var(--surface-2); }

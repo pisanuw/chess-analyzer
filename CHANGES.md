@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Report: pre-tournament card shown inline)
+
+- The pre-tournament card is rendered inline as an open section at the top of the Report page instead of a markdown download. `public/views/report.js` fetches `/api/report/card` and renders its small, fixed-format markdown (headings, numbered and bulleted lists, bold) with a minimal converter; the download button and its handler are gone.
+
 ## 2026-09-11 (Admin page: manage the roster; visitors can request access)
 
 - New admin-only, producer-only Admin page (`#/admin`) to add visitors and players to the allowlist without editing env vars. Additions are written to `data/users.json` (merged into the roster by `getUsers`, and bundled to the mirror at publish time); built-in members and env-based visitors are listed but marked "built-in" and edited in the environment. New roster helpers in `server/users.js` (`addVisitor`, `addMember`, `managedUsers`, `removeRosterEntry`; player-name substrings are semicolon-separated, since PGN names contain commas) and admin routes `GET/POST/DELETE /api/admin/*`. Unauthorized visitors get a "Request access" form on the sign-in screen (email plus reason) that emails the admin: `POST /api/auth/request-access`, public, allowed on the read-only mirror, rate-limited, and logged. `test/admin.test.js` covers the helpers, route gating, and request-access. 200 tests pass.

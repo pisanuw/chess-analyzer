@@ -24,6 +24,28 @@ const fmtSecs = s => s == null ? '–' : s >= 60 ? `${Math.floor(s / 60)}m${Stri
 // A collapsible section. Chart sections pass open=true so they render sized.
 const acc = (title, body, open = false) => `<details class="acc rsec"${open ? ' open' : ''}><summary><span class="acc-title">${title}</span></summary><div class="acc-body">${body}</div></details>`;
 
+// Render the pre-tournament card's small markdown (headings, numbered/bulleted
+// lists, bold) inline, so the one-page summary lives on the page rather than a
+// download. The card format is fixed (see buildPrepCard), so this stays minimal.
+function renderCardMd(md) {
+  const inline = s => esc(s).replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  let html = '', list = null;
+  const closeList = () => { if (list) { html += `</${list}>`; list = null; } };
+  for (const raw of String(md).split('\n')) {
+    const line = raw.trim();
+    if (!line) { closeList(); continue; }
+    if (/^#\s/.test(line)) { closeList(); continue; }        // drop the title (the section already says it)
+    if (/^##\s/.test(line)) { closeList(); html += `<h3>${inline(line.slice(3))}</h3>`; continue; }
+    const ol = /^(\d+)\.\s+(.*)$/.exec(line);
+    if (ol) { if (list !== 'ol') { closeList(); html += '<ol>'; list = 'ol'; } html += `<li>${inline(ol[2])}</li>`; continue; }
+    const ul = /^[-*]\s+(.*)$/.exec(line);
+    if (ul) { if (list !== 'ul') { closeList(); html += '<ul>'; list = 'ul'; } html += `<li>${inline(ul[1])}</li>`; continue; }
+    closeList(); html += `<p>${inline(line)}</p>`;
+  }
+  closeList();
+  return html;
+}
+
 export async function reportView(root) {
   const { report: r } = await api.report();
   const { notes } = await api.patterns().catch(() => ({ notes: {} }));
@@ -33,13 +55,13 @@ export async function reportView(root) {
     return;
   }
   const j = r.totalJudged;
+  // The one-page pre-tournament card, shown inline (was a markdown download).
+  let cardMd = '';
+  try { cardMd = await api.card(); } catch { /* best-effort: the report still renders without it */ }
 
   // At-a-glance numbers stay visible above the collapsible sections.
   const overview = `
-    <div class="row" style="justify-content: space-between; align-items: baseline">
-      <p class="muted" style="margin:0">${r.games} analysed game${r.games === 1 ? '' : 's'}. Critical moments are the player's moves that lost at least the configured win-probability threshold; the engine flags them, the LLM classifies them.</p>
-      <button class="small" id="prep-card" title="One-page markdown: focus areas, synthesized rules, clock line, study list">Pre-tournament card ↓</button>
-    </div>
+    <p class="muted">${r.games} analysed game${r.games === 1 ? '' : 's'}. Critical moments are the player's moves that lost at least the configured win-probability threshold; the engine flags them, the LLM classifies them.</p>
     <div class="tiles">
       <div class="tile"><div class="v">${r.overallAccuracy ?? '–'}%</div><div class="l">Average accuracy</div></div>
       <div class="tile"><div class="v">${(r.totalMoments / r.games).toFixed(1)}</div><div class="l">Critical moments per game</div></div>
@@ -149,6 +171,7 @@ export async function reportView(root) {
     </div>`;
 
   root.innerHTML = overview
+    + (cardMd ? acc('Pre-tournament card', `<div class="prep-card-md">${renderCardMd(cardMd)}</div>`, true) : '')
     + acc('Focus areas', focusBody, true)
     + acc('Moments by error type, phase &amp; colour', chartsBody, true)
     + acc('Accuracy by game', trendBody, true)
@@ -159,18 +182,6 @@ export async function reportView(root) {
     + (drillBody ? acc('Drill performance', drillBody) : '')
     + acc('Recurring patterns &amp; concepts to study', patternsConceptsBody)
     + acc('Pattern study notes', patternNotesBody);
-
-  root.querySelector('#prep-card').onclick = async () => {
-    try {
-      const text = await api.card();
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }));
-      a.download = `prep-card-${new Date().toISOString().slice(0, 10)}.md`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-      toast('Pre-tournament card downloaded');
-    } catch (err) { toast(err.message, true); }
-  };
 
   root.querySelectorAll('button[data-synth]').forEach(b => b.onclick = async () => {
     b.disabled = true; b.textContent = 'Synthesizing (about a minute)…';
