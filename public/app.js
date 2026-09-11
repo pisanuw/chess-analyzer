@@ -3,8 +3,7 @@ import { api, esc, toast, session, showLogin } from './api.js';
 import { homeView } from './views/home.js';
 import { gamesView } from './views/games.js';
 import { gameView } from './views/game.js';
-import { reportView } from './views/report.js';
-import { repertoireView } from './views/repertoire.js';
+import { reviewView } from './views/review.js';
 import { scoutView } from './views/scout.js';
 import { drillsView } from './views/drills.js';
 import { puzzlesView } from './views/puzzles.js';
@@ -17,8 +16,8 @@ const routes = [
   { re: /^#\/home$/, name: 'home', view: homeView },
   { re: /^#\/games$/, name: 'games', view: gamesView },
   { re: /^#\/game\/([a-f0-9]{12})(?:\/(\d+))?$/, name: 'games', view: gameView },
-  { re: /^#\/report$/, name: 'report', view: reportView },
-  { re: /^#\/repertoire$/, name: 'repertoire', view: repertoireView },
+  { re: /^#\/report$/, name: 'report', view: reviewView },
+  { re: /^#\/repertoire$/, name: 'report', view: reviewView }, // repertoire now lives in the Report page accordion
   { re: /^#\/scout(?:\/(.*))?$/, name: 'scout', view: scoutView },
   { re: /^#\/drills(?:\?(.*))?$/, name: 'drills', view: drillsView }, // optional query: ?pattern=... starts a lightning round
   { re: /^#\/puzzles(?:\?(.*))?$/, name: 'puzzles', view: puzzlesView }, // optional query: ?source=tactics|moments|missed

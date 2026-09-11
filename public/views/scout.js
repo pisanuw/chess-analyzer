@@ -19,13 +19,13 @@ export async function scoutView(root) {
   const fedById = new Map(players.map(p => [p.fideId, p.federation]));
   subjects.forEach(s => { if (s.fideId) s.fed = fedById.get(s.fideId) || null; });
   if (!subjects.length) {
-    root.innerHTML = `<h1>Scouting</h1><div class="empty">No opponents yet. Everyone you play appears here once your games are analysed. Import an opponent's games with "Scout an opponent"; a FIDE export (filename like <code>Name_FIDE12345_…​.pgn</code>) builds a full repertoire book from hundreds of their games at once.</div>`;
+    root.innerHTML = `<h1>Players</h1><div class="empty">No opponents yet. Everyone you play appears here once your games are analysed. Import an opponent's games with "Scout an opponent"; a FIDE export (filename like <code>Name_FIDE12345_…​.pgn</code>) builds a full repertoire book from hundreds of their games at once.</div>`;
     return;
   }
   const current = decodeURIComponent(location.hash.split('/')[2] || '') || subjects[0].subject;
   root.innerHTML = `
     <div class="row" style="justify-content: space-between; align-items: baseline">
-      <h1>Scouting</h1>
+      <h1>Players</h1>
       <input type="search" id="subject-search" placeholder="Find opponent…" style="padding: 6px 10px; font-size: 14px">
     </div>
     <div class="row" id="subject-list" style="gap: 6px; flex-wrap: wrap; margin-bottom: 14px"></div>

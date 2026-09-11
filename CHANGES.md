@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-11 (UI: Players tab, and Report + Repertoire on one page)
+
+- Renamed the Scouting tab to "Players" (the `#/scout` route and internals are unchanged).
+- Report and Repertoire are now a single page (the Report tab): the weakness report and the repertoire are collapsible accordion sections, the report open by default and the repertoire rendered the first time it is expanded. The separate Repertoire nav item is gone and `#/repertoire` opens the combined page. New `public/views/review.js` wraps the two existing views unchanged; frontend only.
+
 ## 2026-09-11 (Fix: clean games no longer stick at "analysed")
 
 - A game with no critical moments has nothing to explain, but it was left at status `analysed`, so it showed as pending in the Games list and the explain action correctly found nothing to queue ("0 queued for explanation"), which read like a bug. Such a game is now marked `explained` when analysis finishes (no moments means it is already done); a one-time pass corrected the games already stuck (18 in the live data). Games with genuinely unexplained moments are unaffected and still explain normally. `server/jobs.js`.
