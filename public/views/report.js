@@ -1,4 +1,6 @@
-// Weakness report across all analysed games.
+// Weakness report across all analysed games. Long, so it is split into
+// collapsible sections; the chart-bearing sections open by default (charts need
+// a visible width to size themselves).
 import { api, esc, toast, movePrefix } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 
@@ -19,46 +21,50 @@ const KIND_LABEL = { 'find-best': 'Find the best move', threat: 'See the threat'
 const catLabel = c => CATEGORY_LABEL[c] || c;
 const fmtSecs = s => s == null ? '–' : s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
 
+// A collapsible section. Chart sections pass open=true so they render sized.
+const acc = (title, body, open = false) => `<details class="acc rsec"${open ? ' open' : ''}><summary><span class="acc-title">${title}</span></summary><div class="acc-body">${body}</div></details>`;
+
 export async function reportView(root) {
   const { report: r } = await api.report();
   const { notes } = await api.patterns().catch(() => ({ notes: {} }));
   const { readonly } = await api.status().catch(() => ({}));
   if (!r.games) {
-    root.innerHTML = '<h1>Weakness report</h1><div class="empty">No analysed games yet. Import and analyse games first.</div>';
+    root.innerHTML = '<div class="empty">No analysed games yet. Import and analyse games first.</div>';
     return;
   }
   const j = r.totalJudged;
-  root.innerHTML = `
+
+  // At-a-glance numbers stay visible above the collapsible sections.
+  const overview = `
     <div class="row" style="justify-content: space-between; align-items: baseline">
-      <h1>Weakness report</h1>
+      <p class="muted" style="margin:0">${r.games} analysed game${r.games === 1 ? '' : 's'}. Critical moments are the player's moves that lost at least the configured win-probability threshold; the engine flags them, the LLM classifies them.</p>
       <button class="small" id="prep-card" title="One-page markdown: focus areas, synthesized rules, clock line, study list">Pre-tournament card ↓</button>
     </div>
-    <p class="muted">${r.games} analysed game${r.games === 1 ? '' : 's'}. Critical moments are the player's moves that lost at least the configured win-probability threshold; the engine flags them, the LLM classifies them.</p>
     <div class="tiles">
       <div class="tile"><div class="v">${r.overallAccuracy ?? '–'}%</div><div class="l">Average accuracy</div></div>
       <div class="tile"><div class="v">${(r.totalMoments / r.games).toFixed(1)}</div><div class="l">Critical moments per game</div></div>
       <div class="tile"><div class="v">${j.blunder} / ${j.mistake} / ${j.inaccuracy}</div><div class="l">Blunders / mistakes / inaccuracies</div></div>
       <div class="tile"><div class="v">${r.timePressure}</div><div class="l">Flagged as time pressure</div></div>
-    </div>
+    </div>`;
 
-    ${r.focus.length ? `<h2>Focus areas</h2><div class="grid grid-3">${r.focus.map((f, i) => `
+  // What is going well: the report is otherwise all deficits. Surface the
+  // longitudinal wins the player rarely scrolls to.
+  const whatsGoingWell = (() => {
+    const best = [...(r.timeline || [])].filter(t => t.accuracy != null).sort((a, b) => b.accuracy - a.accuracy)[0];
+    const improving = (r.categoryTrend || []).filter(t => t.delta <= -0.2);
+    const wins = [];
+    if (best) wins.push(`Best game: <b>${best.accuracy}%</b> accuracy vs ${esc(best.opponent || '?')}${best.date ? ` (${esc(best.date)})` : ''}`);
+    if (improving.length) wins.push(`Improving: ${improving.map(t => esc(catLabel(t.category))).join(', ')}`);
+    if (r.decoys && r.decoys.seen >= 3) wins.push(`Quiet positions read correctly: <b>${100 - r.decoys.falsePositiveRate}%</b>`);
+    if (r.drillStats && r.drillStats.rate >= 55) wins.push(`Drill accuracy: <b>${r.drillStats.rate}%</b> over ${r.drillStats.attempts} attempts`);
+    return wins.length ? `<div class="card" style="margin-top: 4px; border-left: 3px solid var(--good, green)"><h3 style="margin-top:0">What's going well</h3><ul style="margin:0; padding-left: 18px">${wins.map(w => `<li>${w}</li>`).join('')}</ul></div>` : '';
+  })();
+
+  const focusBody = (r.focus.length ? `<div class="grid grid-3">${r.focus.map((f, i) => `
       <div class="card"><div class="muted">#${i + 1}</div><b>${esc(CATEGORY_LABEL[f.category] || f.category)}</b><div class="muted">${f.count} moment${f.count === 1 ? '' : 's'}, weighted ${f.weight}${f.trend > 0.1 ? ' · <span style="color: var(--critical)">getting worse</span>' : f.trend < -0.1 ? ' · <span style="color: var(--good, green)">improving</span>' : ''}</div>
-      <div style="margin-top:6px"><a href="#/drills?category=${encodeURIComponent(f.category)}" title="Every drill of this error type, back to back (does not touch the review schedule)">Drill this ▸</a></div></div>`).join('')}</div>` : ''}
+      <div style="margin-top:6px"><a href="#/drills?category=${encodeURIComponent(f.category)}" title="Every drill of this error type, back to back (does not touch the review schedule)">Drill this ▸</a></div></div>`).join('')}</div>` : '<div class="empty">No focus areas yet.</div>') + whatsGoingWell;
 
-    ${(() => {
-      // What is going well: the report is otherwise all deficits. Surface the
-      // longitudinal wins the player rarely scrolls to.
-      const best = [...(r.timeline || [])].filter(t => t.accuracy != null).sort((a, b) => b.accuracy - a.accuracy)[0];
-      const improving = (r.categoryTrend || []).filter(t => t.delta <= -0.2);
-      const wins = [];
-      if (best) wins.push(`Best game: <b>${best.accuracy}%</b> accuracy vs ${esc(best.opponent || '?')}${best.date ? ` (${esc(best.date)})` : ''}`);
-      if (improving.length) wins.push(`Improving: ${improving.map(t => esc(catLabel(t.category))).join(', ')}`);
-      if (r.decoys && r.decoys.seen >= 3) wins.push(`Quiet positions read correctly: <b>${100 - r.decoys.falsePositiveRate}%</b>`);
-      if (r.drillStats && r.drillStats.rate >= 55) wins.push(`Drill accuracy: <b>${r.drillStats.rate}%</b> over ${r.drillStats.attempts} attempts`);
-      return wins.length ? `<div class="card" style="margin-top: 16px; border-left: 3px solid var(--good, green)"><h3 style="margin-top:0">What's going well</h3><ul style="margin:0; padding-left: 18px">${wins.map(w => `<li>${w}</li>`).join('')}</ul></div>` : '';
-    })()}
-
-    <div class="grid grid-2" style="margin-top: 20px">
+  const chartsBody = `<div class="grid grid-2">
       <div class="card">
         <h3 style="margin-top:0">Moments by error type</h3>
         <div id="cat-chart"></div>
@@ -73,52 +79,34 @@ export async function reportView(root) {
         <table><thead><tr><th>Colour</th><th class="num">Games</th><th class="num">Score</th><th class="num">Accuracy</th><th class="num">Moments / game</th></tr></thead>
         <tbody>${['white', 'black'].map(c => { const p = r.byColor[c]; return `<tr><td><span class="chip ${c}">${c}</span></td><td class="num">${p.games}</td><td class="num">${p.scorePct != null ? p.scorePct + '%' : '–'}</td><td class="num">${p.accuracy ?? '–'}${p.accuracy != null ? '%' : ''}</td><td class="num">${p.games ? (p.moments / p.games).toFixed(1) : '–'}</td></tr>`; }).join('')}</tbody></table>
       </div>
-    </div>
+    </div>`;
 
-    <div class="card" style="margin-top: 20px">
-      <h3 style="margin-top:0">Accuracy by game</h3>
-      <div id="trend"></div>
-      <small>Chronological by PGN date. Click a point to open the game.</small>
-    </div>
+  const trendBody = '<div id="trend"></div><small>Chronological by PGN date. Click a point to open the game.</small>';
 
-    ${r.categoryTrend ? `<div class="card" style="margin-top: 20px">
-      <h3 style="margin-top:0">Are the weaknesses shrinking?</h3>
-      <table><thead><tr><th>Error type</th><th class="num">Earlier (per game)</th><th class="num">Recent (per game)</th><th>Trend</th></tr></thead>
+  const catTrendBody = r.categoryTrend ? `<table><thead><tr><th>Error type</th><th class="num">Earlier (per game)</th><th class="num">Recent (per game)</th><th>Trend</th></tr></thead>
       <tbody>${r.categoryTrend.sort((a, b) => b.recentPerGame - a.recentPerGame).map(t => `
         <tr><td>${esc(catLabel(t.category))}</td><td class="num">${t.priorPerGame}</td><td class="num">${t.recentPerGame}</td>
         <td>${t.delta <= -0.2 ? '<span style="color: var(--good, green)">▼ improving</span>' : t.delta >= 0.2 ? '<span style="color: var(--critical)">▲ worse</span>' : '≈ flat'}</td></tr>`).join('')}
       </tbody></table>
-      <small>Weighted moments per game, last ${r.categoryTrend[0].recentGames} games vs the ${r.categoryTrend[0].priorGames} before. Only error types with 3+ moments.</small>
-    </div>` : ''}
+      <small>Weighted moments per game, last ${r.categoryTrend[0].recentGames} games vs the ${r.categoryTrend[0].priorGames} before. Only error types with 3+ moments.</small>` : '';
 
-    ${r.timeManagement ? `<div class="card" style="margin-top: 20px">
-      <h3 style="margin-top:0">Time management</h3>
-      <div class="tiles">
+  const timeBody = r.timeManagement ? `<div class="tiles">
         <div class="tile"><div class="v">${r.timeManagement.comfortBlunders}</div><div class="l">Mistakes with over 5 min left</div></div>
         <div class="tile"><div class="v">${r.timeManagement.underTwoMinMoments}</div><div class="l">Moments under 2 min</div></div>
         <div class="tile"><div class="v">${r.timeManagement.fastMoments}</div><div class="l">Moments after ≤10s thought</div></div>
         <div class="tile"><div class="v">${fmtSecs(r.timeManagement.momentAvgSpent)} vs ${fmtSecs(r.timeManagement.otherAvgSpent)}</div><div class="l">Avg think: error moves vs others</div></div>
       </div>
-      <small>From PGN clock comments (${r.timeManagement.movesWithClock} player moves with clocks). Mistakes with plenty of time are understanding gaps, not clock problems.</small>
-    </div>` : ''}
+      <small>From PGN clock comments (${r.timeManagement.movesWithClock} player moves with clocks). Mistakes with plenty of time are understanding gaps, not clock problems.</small>` : '';
 
-    ${r.endgames?.length ? `<div class="card" style="margin-top: 20px">
-      <h3 style="margin-top:0">Recurring endgame trouble</h3>
-      <table><thead><tr><th>Material</th><th class="num">Moments</th><th>Where</th></tr></thead>
+  const endgamesBody = r.endgames?.length ? `<table><thead><tr><th>Material</th><th class="num">Moments</th><th>Where</th></tr></thead>
       <tbody>${r.endgames.map(eg => `<tr><td>${esc(eg.signature)}</td><td class="num">${eg.count}</td>
         <td>${eg.moments.map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${movePrefix(m)}${esc(m.san)}</a>`).join(' ')}</td></tr>`).join('')}</tbody></table>
-      <small>Endgame moments bucketed by material (your pieces vs theirs). A repeating signature is a study target.</small>
-    </div>` : ''}
+      <small>Endgame moments bucketed by material (your pieces vs theirs). A repeating signature is a study target.</small>` : '';
 
-    ${r.feedback ? `<div class="card" style="margin-top: 20px">
-      <h3 style="margin-top:0">Explanation feedback</h3>
-      <p class="muted" style="margin-top:0">${r.feedback.helpful} rated helpful, ${r.feedback.unhelpful} not.</p>
-      ${r.feedback.unhelpfulMoments.length ? `<p>Worth re-explaining or a better prompt: ${r.feedback.unhelpfulMoments.map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${movePrefix(m)}${esc(m.san)}</a>`).join(' ')}</p>` : ''}
-    </div>` : ''}
+  const feedbackBody = r.feedback ? `<p class="muted" style="margin-top:0">${r.feedback.helpful} rated helpful, ${r.feedback.unhelpful} not.</p>
+      ${r.feedback.unhelpfulMoments.length ? `<p>Worth re-explaining or a better prompt: ${r.feedback.unhelpfulMoments.map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}">${movePrefix(m)}${esc(m.san)}</a>`).join(' ')}</p>` : ''}` : '';
 
-    ${r.drillStats ? `<div class="card" style="margin-top: 20px">
-      <h3 style="margin-top:0">Drill performance</h3>
-      <p class="muted" style="margin-top:0">${r.drillStats.attempts} attempts (reviews and first-try guesses)${r.drillStats.machines > 1 ? ` across ${r.drillStats.machines} machines` : ' on this machine'}, ${r.drillStats.rate}% correct.</p>
+  const drillBody = r.drillStats ? `<p class="muted" style="margin-top:0">${r.drillStats.attempts} attempts (reviews and first-try guesses)${r.drillStats.machines > 1 ? ` across ${r.drillStats.machines} machines` : ' on this machine'}, ${r.drillStats.rate}% correct.</p>
       <div class="grid grid-2">
         <table><thead><tr><th>Phase</th><th class="num">Attempts</th><th class="num">Correct</th></tr></thead>
         <tbody>${Object.entries(r.drillStats.byPhase).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v.attempts}</td><td class="num">${Math.round((v.correct / v.attempts) * 100)}%</td></tr>`).join('')}</tbody></table>
@@ -133,10 +121,9 @@ export async function reportView(root) {
       ${r.drillStats.speed ? `<h3>Recognition speed</h3>
       <table><thead><tr><th>Pattern</th><th class="num">Timed reviews</th><th class="num">Median answer</th></tr></thead>
       <tbody>${r.drillStats.speed.map(s => `<tr><td>${esc(s.pattern)}</td><td class="num">${s.attempts}</td><td class="num">${(s.medianMs / 1000).toFixed(1)}s</td></tr>`).join('')}</tbody></table>
-      <small>Instant recognition, not laborious re-derivation, is what pattern training is after; watch the medians fall.</small>` : ''}
-    </div>` : ''}
+      <small>Instant recognition, not laborious re-derivation, is what pattern training is after; watch the medians fall.</small>` : ''}` : '';
 
-    <div class="grid grid-2" style="margin-top: 20px">
+  const patternsConceptsBody = `<div class="grid grid-2">
       <div class="card">
         <h3 style="margin-top:0">Recurring patterns</h3>
         ${r.patterns.length ? `<table><thead><tr><th>Pattern</th><th class="num">Count</th><th>Type</th><th>Where</th></tr></thead><tbody>
@@ -148,10 +135,9 @@ export async function reportView(root) {
         <h3 style="margin-top:0">Concepts to study</h3>
         ${r.concepts.length ? `<table><tbody>${r.concepts.map(c => `<tr><td>${esc(c.concept)}</td><td class="num">${c.count}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Appears after explanations.</div>'}
       </div>
-    </div>
+    </div>`;
 
-    <div class="card" style="margin-top: 20px" id="pattern-notes">
-      <h3 style="margin-top:0">Pattern study notes</h3>
+  const patternNotesBody = `<div id="pattern-notes">
       <p class="muted" style="margin-top:0">One transferable lesson per recurring pattern, synthesized from all its instances.</p>
       ${Object.values(notes).map(n => `<div class="explanation" style="margin-bottom:10px"><b>${esc(n.pattern)}</b> <span class="muted">(${n.count} instances)</span>
         <p><b>Rule:</b> ${esc(n.rule)}</p><p><b>Watch for:</b> ${esc(n.triggers)}</p><p><b>Habit:</b> ${esc(n.advice)}</p></div>`).join('') || ''}
@@ -161,6 +147,18 @@ export async function reportView(root) {
             `<button class="small" data-synth="${esc(p.pattern)}" style="margin: 2px">Synthesize: ${esc(p.pattern)} (${p.count})</button>`).join('')
           || (Object.keys(notes).length ? '' : '<div class="empty">Appears once a pattern recurs in 2+ explained moments.</div>'))}
     </div>`;
+
+  root.innerHTML = overview
+    + acc('Focus areas', focusBody, true)
+    + acc('Moments by error type, phase &amp; colour', chartsBody, true)
+    + acc('Accuracy by game', trendBody, true)
+    + (catTrendBody ? acc('Are the weaknesses shrinking?', catTrendBody) : '')
+    + (timeBody ? acc('Time management', timeBody) : '')
+    + (endgamesBody ? acc('Recurring endgame trouble', endgamesBody) : '')
+    + (feedbackBody ? acc('Explanation feedback', feedbackBody) : '')
+    + (drillBody ? acc('Drill performance', drillBody) : '')
+    + acc('Recurring patterns &amp; concepts to study', patternsConceptsBody)
+    + acc('Pattern study notes', patternNotesBody);
 
   root.querySelector('#prep-card').onclick = async () => {
     try {

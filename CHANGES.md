@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Report page: collapsible sections)
+
+- The weakness report is split into collapsible sections (Focus areas; Moments by error type, phase and colour; Accuracy by game; weakness trend; Time management; Endgames; Explanation feedback; Drill performance; Patterns and concepts; Pattern study notes) so it is scannable instead of one long scroll. The at-a-glance tiles stay pinned at the top, and the chart-bearing sections open by default so the charts size correctly. Repertoire is one more accordion below. `public/views/report.js` renders the sections via an `acc()` helper; `public/views/review.js` no longer wraps the report in an outer "Weakness report" accordion.
+
 ## 2026-09-11 (Players: request a prep sheet by FIDE id)
 
 - The Players page has a new box to request a preparation sheet for someone not yet listed, by FIDE id. `POST /api/prep-request` validates a numeric id, emails the admin (with the player's FIDE profile link), logs the request to the activity log, is rate-limited, and is open to any signed-in user (members and visitors). The input and button are in `public/views/scout.js`; `test/visitor.test.js` covers the happy path and the non-numeric rejection.
