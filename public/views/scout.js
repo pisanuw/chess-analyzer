@@ -536,8 +536,12 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
     board.orient(orient);
     if (at < 0) board.set(START_FEN); else board.set(seq[at].fen, { lastMove: seq[at].uci });
     lineEl.classList.remove('muted');
-    lineEl.innerHTML = seq.map((m, i) =>
+    const moves = seq.map((m, i) =>
       `${i % 2 === 0 ? `<span class="clash-num">${i / 2 + 1}.</span>` : ''}<span class="clash-ply${i === at ? ' sel' : ''}" data-ply="${i}">${esc(m.san)}</span>`).join(' ');
+    // Open the position currently on the board in lichess: the moves up to the
+    // selected ply, so stepping back links to that earlier position, not the whole line.
+    const href = at < 0 ? 'https://lichess.org/analysis' : lichess(seq.slice(0, at + 1).map(m => m.san));
+    lineEl.innerHTML = `${moves} <a class="clash-lichess" href="${href}" target="_blank" rel="noopener" title="Open this position on lichess">lichess ↗</a>`;
   };
 
   // One delegated listener per region: a tree move sets the whole line; a move in

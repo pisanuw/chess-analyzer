@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-10 (Opening Clash: open the current position on lichess)
+
+- The moves-played list under the Opening Clash board now ends with a "lichess" link that opens the position currently on the board in the lichess analysis board. It follows the selected ply: stepping back through the line links to that earlier position, not the whole line (built from the line up to the selected move via the existing `lichess()`/`fmtLine()` PGN helper). Frontend only (`public/views/scout.js`, a `.clash-lichess` style in `style.css`).
+
 ## 2026-09-10 (Scouting: collapsible sections to cut the scrolling)
 
 - The Scouting page's big sections (Preparation sheet, Repertoire book, Opening clash, Deep dossier) are now collapsible accordions: each shows a header with a triangle you click to expand, so the page fits on a screen and you open only what you want. The prep sheet is open by default (the at-the-board summary); the rest start collapsed. Native `<details>`, so it works with no JavaScript state and on the hosted mirror.
