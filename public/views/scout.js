@@ -1,7 +1,7 @@
 // Scouting: a FIDE-keyed "book" dossier built instantly from an opponent's
 // whole game history (recency/rating weighted), plus the deeper engine/LLM
 // dossier for the recent subset once it has been analysed.
-import { api, esc, toast, movePrefix, busy, formatEval } from '../api.js';
+import { api, esc, toast, movePrefix, busy, formatEval, session } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 import { Board, walkSans } from '../board.js';
 import { CATEGORY_LABEL } from './report.js';
@@ -219,9 +219,22 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
   // AND the same format. New games or a format change re-enable it.
   const upToDate = prepSheet && staleN === 0 && !outdated;
   const regenLabel = staleN ? `Regenerate (${staleN} new)` : outdated ? 'Regenerate (new format)' : 'Regenerate';
-  const button = readonly
-    ? (prepSheet ? '' : '<p class="muted"><small>Prep sheets are generated on the home machine and published here.</small></p>')
-    : `<button class="primary" id="gen-prep"${upToDate ? ' disabled title="No games analysed and no format change since this sheet was generated"' : ''}>${prepSheet ? regenLabel : 'Generate prep sheet (about a minute)'}</button>${upToDate && pendingTotal === 0 ? ' <small class="muted">Up to date with all analysed games.</small>' : ''}`;
+  const PREP_MIN = 5; // fewer analysed games than this is too thin to prep from
+  const isAdmin = session.user?.role === 'admin';
+  let button;
+  if (!prepSheet && analysedNow < PREP_MIN) {
+    button = `<p class="muted"><small>Not enough games for a preparation sheet yet (needs at least ${PREP_MIN} analysed; ${analysedNow} so far).</small></p>`;
+  } else if (isAdmin) {
+    // The operator generates it (home machine only); on the mirror it is published.
+    button = readonly
+      ? (prepSheet ? '' : '<p class="muted"><small>Prep sheets are generated on the home machine and published here.</small></p>')
+      : `<button class="primary" id="gen-prep"${upToDate ? ' disabled title="No games analysed and no format change since this sheet was generated"' : ''}>${prepSheet ? regenLabel : 'Generate prep sheet (about a minute)'}</button>${upToDate && pendingTotal === 0 ? ' <small class="muted">Up to date with all analysed games.</small>' : ''}`;
+  } else if (!prepSheet) {
+    // Members and visitors cannot generate; they ask the operator, who is emailed.
+    button = `<button class="primary" id="req-prep">Request prep sheet</button> <small class="muted">Emails the coach to generate one.</small>`;
+  } else {
+    button = '';
+  }
   return `<details class="acc" open${flag ? ' style="border-color: var(--warning)"' : ''}>
     <summary><span class="acc-title">Preparation sheet</span>${badge}</summary>
     <div class="acc-body">${body}${pendingNote}${button}</div>
@@ -229,6 +242,12 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
 }
 
 function wirePrep(el, subject, report, pending, refresh) {
+  const reqBtn = el.querySelector('#req-prep');
+  if (reqBtn) reqBtn.onclick = async () => {
+    reqBtn.disabled = true;
+    try { await api.requestPrepSheet(subject); toast('Request sent to the coach.'); reqBtn.textContent = 'Requested'; }
+    catch (err) { toast(err.message, true); reqBtn.disabled = false; }
+  };
   const btn = el.querySelector('#gen-prep');
   if (!btn) return;
   const pendingTotal = pending.toAnalyse + pending.toExplain;

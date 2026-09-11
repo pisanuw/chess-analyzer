@@ -10,8 +10,10 @@ process.env.DATA_DIR = tempData();
 process.env.SESSION_SECRET = 'test-secret';
 process.env.AUTH_EMAIL_KAI = 'kai@example.com';
 process.env.AUTH_VISITOR_EMAILS = 'guest@example.com, friend@example.com';
+process.env.ADMIN_EMAIL = 'admin@example.com';
 delete process.env.APP_PASSWORD;
 delete process.env.READONLY_DATA;
+delete process.env.RESEND_API_KEY; // so the prep-request email uses the console fallback (no network)
 
 const dir = process.env.DATA_DIR;
 writeGame(dir, makeGame({ id: 'aaaaaaaaaaa1', moments: [{ ply: 1, loss: 25 }] }));                                   // kai's own game
@@ -23,7 +25,7 @@ const { app } = await import('../server/index.js');
 const server = app.listen(0, '127.0.0.1');
 await new Promise(r => server.on('listening', r));
 const base = `http://127.0.0.1:${server.address().port}`;
-after(() => { server.close(); for (const k of ['SESSION_SECRET', 'AUTH_EMAIL_KAI', 'AUTH_VISITOR_EMAILS']) delete process.env[k]; });
+after(() => { server.close(); for (const k of ['SESSION_SECRET', 'AUTH_EMAIL_KAI', 'AUTH_VISITOR_EMAILS', 'ADMIN_EMAIL']) delete process.env[k]; });
 
 const visitor = await findUserByEmail('guest@example.com');
 const kai = await findUserByEmail('kai@example.com');
@@ -68,4 +70,10 @@ test('visitor puzzles come from the shared library', async () => {
   const pz = await (await req('GET', '/api/puzzles?source=tactics', vCookie)).json();
   assert.equal(pz.source, 'tactics');
   assert.ok(Array.isArray(pz.puzzles));
+});
+
+test('anyone signed in can request a prep sheet (it notifies the admin)', async () => {
+  const r = await req('POST', '/api/scout/Foe%2C%20X/prepsheet/request', vCookie);
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).ok, true);
 });

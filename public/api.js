@@ -119,6 +119,7 @@ export const api = {
   scoutSubjects: () => req('GET', '/api/scout'),
   scout: subject => req('GET', `/api/scout/${encodeURIComponent(subject)}`),
   prepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet`),
+  requestPrepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet/request`, {}),
   scoutImport: ({ pgn, fideId, name, filename }) => req('POST', '/api/scout/import', { pgn, fideId, name, filename }),
   scoutBook: fideId => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}`),
   promoteScout: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/promote`, {}),

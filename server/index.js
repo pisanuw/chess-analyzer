@@ -20,7 +20,8 @@ import { dueDrills, visitorDrills, reviewDrill, undoReview, suspendDrill, restor
 import { buildPuzzles } from './puzzles.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, clashLinePrompt, clashNarrationVersion, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, CLASH_NARRATION_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { knownPatterns } from './jobs.js';
-import { authMiddleware, loginRoute, meRoute, logoutRoute, currentUser } from './auth.js';
+import { authMiddleware, loginRoute, meRoute, logoutRoute, currentUser, rateLimit } from './auth.js';
+import { sendEmail, adminEmail } from './email.js';
 import { getUser, listMembers, isVisitor } from './users.js';
 import { googleStartRoute, googleCallbackRoute } from './googleauth.js';
 import { magicRequestRoute, magicVerifyRoute } from './magiclink.js';
@@ -851,6 +852,25 @@ app.post('/api/scout/:subject/prepsheet', wrap(async (req, res) => {
   sheets[subject] = { ...output, games: report.games, version: prepSheetVersion(), model, costUsd, createdAt: new Date().toISOString() };
   await savePrepSheets(sheets);
   res.json({ prepSheet: sheets[subject] });
+}));
+
+// A member or visitor can ask the operator to make a prep sheet: this emails the
+// admin rather than running the LLM (generation stays on the home machine). Not
+// admin-gated (anyone signed in may request); rate-limited to prevent spam.
+app.post('/api/scout/:subject/prepsheet/request', wrap(async (req, res) => {
+  if (!(await rateLimit(req))) return res.status(429).json({ error: 'too many requests, try again later' });
+  const to = adminEmail();
+  if (!to) return res.status(503).json({ error: 'prep-sheet requests are not configured (no admin email)' });
+  const subject = req.params.subject;
+  const who = (await currentUser(req))?.displayName || 'a user';
+  try {
+    await sendEmail(to, `Prep sheet requested: ${subject}`,
+      `${who} requested a preparation sheet for ${subject}.\n\nGenerate it in the app: Players, pick ${subject}, Generate prep sheet, then publish.`);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`prep-sheet request email failed: ${err.message}`);
+    res.status(502).json({ error: 'could not send the request' });
+  }
 }));
 
 // --- pattern study notes -----------------------------------------------------

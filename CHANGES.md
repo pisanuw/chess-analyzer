@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Prep sheets: gate on game count, and let members request one)
+
+- A player's preparation-sheet card now gates on how many of their games are analysed: under 5, it says "Not enough games for a preparation sheet yet" instead of offering to build a thin one. With enough games and no sheet yet, the operator still sees the Generate button, but members and visitors get a "Request prep sheet" button that emails the admin (`POST /api/scout/:subject/prepsheet/request`, rate-limited, not admin-gated) instead of running the model. New `server/email.js` (Resend with a console fallback) and `adminEmail()` (from `ADMIN_EMAIL`, else `AUTH_EMAIL_YUSUF`). `test/visitor.test.js` covers the request. 190 tests pass.
+
 ## 2026-09-11 (Drills moved under Puzzles)
 
 - The Drills tab now lives under Puzzles. The Puzzles page gains a "Drills based on your games" button next to the puzzle sources (decisive tactics, critical moments, missed tactics) that opens the spaced-repetition drills; the separate Drills nav item is gone and the due-count badge sits on the Puzzles tab. `#/drills` still works and highlights Puzzles. Frontend only.
