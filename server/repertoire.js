@@ -1,5 +1,5 @@
 // Opening repertoire: group analysed games by colour and first plies, find where preparation ends.
-import { getGame, listGames } from './store.js';
+import { getGame, listGames, DEFAULT_USER } from './store.js';
 import { gamesForSubject } from './subjects.js';
 
 const LINE_PLIES = 8;
@@ -7,12 +7,12 @@ const LINE_PLIES = 8;
 /** Most frequent key in a count map (ties: first inserted). */
 const topKey = map => [...map.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 
-export async function buildRepertoire({ purpose = 'own', subject = null } = {}) {
+export async function buildRepertoire({ purpose = 'own', subject = null, userId = DEFAULT_USER } = {}) {
   let games;
   if (purpose === 'scout') {
     games = await gamesForSubject(subject);
   } else {
-    const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
+    const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
     games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
   }
   const lines = new Map();

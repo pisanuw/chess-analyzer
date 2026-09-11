@@ -3,8 +3,9 @@
 // the tests and bundled into the Netlify function, neither of which should start
 // a listener or reference import.meta (the CJS function bundle leaves it empty).
 import { app } from './index.js';
-import { sweepTmpFiles, ensureDataIgnores, DATA_DIR } from './store.js';
+import { sweepTmpFiles, ensureDataIgnores, migrateLegacyUserData, DATA_DIR, DEFAULT_USER } from './store.js';
 import { syncAllDrills } from './drills.js';
+import { listMembers } from './users.js';
 import { syncPlayers } from './players.js';
 import { resumeInterrupted, prebuildClashes } from './jobs.js';
 
@@ -13,7 +14,17 @@ app.listen(PORT, process.env.HOST || '127.0.0.1', () => {
   console.log(`chess-analyzer running at http://localhost:${PORT}  (data: ${DATA_DIR})`);
   sweepTmpFiles().then(n => { if (n) console.log(`removed ${n} leftover .tmp file${n === 1 ? '' : 's'}`); }).catch(() => {});
   ensureDataIgnores().catch(() => {});
-  syncAllDrills().catch(err => console.error(`drill sync failed: ${err.message}`));
+  // Move the original single user's per-machine files into data/users/<default>/
+  // (idempotent), then rebuild every member's drill ladder from the games they
+  // can see (their own + the shared scout library).
+  migrateLegacyUserData()
+    .then(async moved => {
+      if (moved.length) console.log(`migrated ${moved.length} legacy file${moved.length === 1 ? '' : 's'} to data/users/${DEFAULT_USER}/`);
+      for (const u of await listMembers()) {
+        await syncAllDrills(u.id).catch(err => console.error(`drill sync failed for ${u.id}: ${err.message}`));
+      }
+    })
+    .catch(err => console.error(`user data migration/drill sync failed: ${err.message}`));
   syncPlayers().then(n => { if (n) console.log(`players map: learned ${n} name/FIDE-id association${n === 1 ? '' : 's'}`); }).catch(err => console.error(`players sync failed: ${err.message}`));
   resumeInterrupted().catch(err => console.error(`resume failed: ${err.message}`));
   prebuildClashes().then(n => { if (n) console.log(`pre-building opening clashes for ${n} opponent${n === 1 ? '' : 's'}`); }).catch(err => console.error(`clash pre-build failed: ${err.message}`));

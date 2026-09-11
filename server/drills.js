@@ -1,5 +1,5 @@
 // Drills: positions from the player's own mistakes, scheduled with a small spaced-repetition ladder.
-import { getDrills, saveDrills, getSettings, listGames, getGame, DrillConflict } from './store.js';
+import { getDrills, saveDrills, getSettings, listGames, listAllGames, getGame, DrillConflict, DEFAULT_USER } from './store.js';
 import { winProb, WP_ACCEPT } from '../public/shared.js';
 
 const LADDER_DAYS = [1, 3, 7, 14, 30, 60];
@@ -202,12 +202,12 @@ function makeThreatDrill(game, ply, tier, existing) {
  * drill, tiered 'core' at or above the drill threshold, 'sharpen' below it.
  * Own games drill the player's mistakes (plus a see-the-threat drill for
  * tactics-allowed moments); scout games drill their punishment. */
-export function syncDrillsForGame(game, settings) {
-  return locked(() => syncGameUnlocked(game, settings));
+export function syncDrillsForGame(game, settings, userId = DEFAULT_USER) {
+  return locked(() => syncGameUnlocked(game, settings, userId));
 }
 
-async function syncGameUnlocked(game, settings) {
-  const store = await getDrills();
+async function syncGameUnlocked(game, settings, userId = DEFAULT_USER) {
+  const store = await getDrills(userId);
   const byId = new Map(store.drills.map(d => [d.id, d]));
   const threshold = settings.drillThreshold ?? 20;
   const scout = (game.purpose || 'own') === 'scout';
@@ -240,19 +240,19 @@ async function syncGameUnlocked(game, settings) {
     }
   }
   store.drills = [...byId.values()];
-  await saveDrills(store);
+  await saveDrills(store, userId);
   return store;
 }
 
 /** Record a guess-first attempt from the game view (per-machine, like reviews).
  * A correct first-try guess starts the drill higher up the ladder: the player
  * already knows this one, so it should not come back tomorrow. */
-export function recordGuess(game, ply, uci, correct, settings) {
-  return locked(() => recordGuessUnlocked(game, ply, uci, correct, settings));
+export function recordGuess(game, ply, uci, correct, settings, userId = DEFAULT_USER) {
+  return locked(() => recordGuessUnlocked(game, ply, uci, correct, settings, userId));
 }
 
-async function recordGuessUnlocked(game, ply, uci, correct, settings) {
-  const store = await getDrills();
+async function recordGuessUnlocked(game, ply, uci, correct, settings, userId = DEFAULT_USER) {
+  const store = await getDrills(userId);
   const key = drillId(game.id, ply);
   const prior = store.guesses[key] || [];
   const firstTry = prior.length === 0;
@@ -264,7 +264,7 @@ async function recordGuessUnlocked(game, ply, uci, correct, settings) {
     const m = game.analysis.moves[ply - 1];
     const tier = m.loss >= threshold ? 'core' : 'sharpen';
     drill = (game.purpose || 'own') === 'scout' ? makePunishDrill(game, ply, tier, null) : makeDrill(game, ply, tier, null);
-    if (!drill) { await saveDrills(store); return { seeded: false }; }
+    if (!drill) { await saveDrills(store, userId); return { seeded: false }; }
     store.drills.push(drill);
     seeded = true;
   }
@@ -275,7 +275,7 @@ async function recordGuessUnlocked(game, ply, uci, correct, settings) {
     drill.step = Math.max(drill.step, 1);
     drill.due = new Date(Date.now() + LADDER_DAYS[drill.step] * DAY).toISOString();
   }
-  await saveDrills(store);
+  await saveDrills(store, userId);
   return { seeded, step: drill.step, due: drill.due };
 }
 
@@ -283,16 +283,16 @@ async function recordGuessUnlocked(game, ply, uci, correct, settings) {
  * Runs at startup: drills.json is per-machine (never synced between clones), so
  * each machine derives its own drill ladder from the shared game files while
  * keeping its local review history. */
-export function syncAllDrills() {
+export function syncAllDrills(userId = DEFAULT_USER) {
   return locked(async () => {
     const settings = await getSettings();
     const validIds = new Set();   // drill ids that match a current moment
     const pendingGames = new Set(); // games mid-pipeline: keep their drills as-is
-    for (const entry of await listGames()) {
+    for (const entry of await listGames(userId)) {
       if (entry.status !== 'analysed' && entry.status !== 'explained') { pendingGames.add(entry.id); continue; }
       const game = await getGame(entry.id);
       if (!game?.analysis) { pendingGames.add(entry.id); continue; }
-      await syncGameUnlocked(game, settings);
+      await syncGameUnlocked(game, settings, userId);
       for (const ply of game.analysis.summary.moments) {
         validIds.add(drillId(game.id, ply));
         if (wantsThreatDrill(game, ply)) validIds.add(threatDrillId(game.id, ply));
@@ -300,22 +300,22 @@ export function syncAllDrills() {
       const devPly = openingDrillPly(game);
       if (devPly) validIds.add(openingDrillId(game.id, devPly));
     }
-    const store = await getDrills();
+    const store = await getDrills(userId);
     // Prune drills for deleted games AND for plies that are no longer moments
     // (e.g. after a colour fix or re-analysis changed which side is tracked).
     const kept = store.drills.filter(d => validIds.has(d.id) || pendingGames.has(d.gameId));
     if (kept.length !== store.drills.length) {
       store.drills = kept;
-      await saveDrills(store);
+      await saveDrills(store, userId);
     }
   });
 }
 
-export function removeDrillsForGame(gameId) {
+export function removeDrillsForGame(gameId, userId = DEFAULT_USER) {
   return locked(async () => {
-    const store = await getDrills();
+    const store = await getDrills(userId);
     store.drills = store.drills.filter(d => d.gameId !== gameId);
-    await saveDrills(store);
+    await saveDrills(store, userId);
   });
 }
 
@@ -326,12 +326,12 @@ export function removeDrillsForGame(gameId) {
  * evidence), but a pass does not advance the ladder. `ms` is the time from
  * seeing the position to answering: recognition speed is the real signal of
  * pattern acquisition, and the raw material for fitting per-drill ease later. */
-export function reviewDrill(id, grade, correct, practice = false, ms = null) {
-  return locked(() => reviewUnlocked(id, grade, correct, practice, ms));
+export function reviewDrill(id, grade, correct, practice = false, ms = null, userId = DEFAULT_USER) {
+  return locked(() => reviewUnlocked(id, grade, correct, practice, ms, userId));
 }
 
-async function reviewUnlocked(id, grade, correct, practice, ms) {
-  const store = await getDrills();
+async function reviewUnlocked(id, grade, correct, practice, ms, userId = DEFAULT_USER) {
+  const store = await getDrills(userId);
   const d = store.drills.find(x => x.id === id);
   if (!d) throw new Error('drill not found');
   const prev = { prevStep: d.step, prevDue: d.due }; // lets undoReview restore the ladder
@@ -352,42 +352,42 @@ async function reviewUnlocked(id, grade, correct, practice, ms) {
     ...(practice ? { practice: true } : {}),
     ...(Number.isFinite(ms) && ms >= 0 ? { ms: Math.round(ms) } : {}),
   });
-  await saveDrills(store);
+  await saveDrills(store, userId);
   return d;
 }
 
 /** Undo the last review of a drill (a fat-fingered grade): pop it and restore
  * the ladder position it recorded. Session stats are the caller's business. */
-export function undoReview(id) {
+export function undoReview(id, userId = DEFAULT_USER) {
   return locked(async () => {
-    const store = await getDrills();
+    const store = await getDrills(userId);
     const d = store.drills.find(x => x.id === id);
     if (!d) throw new Error('drill not found');
     const r = d.reviews.pop();
     if (!r) throw new Error('no review to undo');
     if (r.prevStep != null) { d.step = r.prevStep; d.due = r.prevDue; }
-    await saveDrills(store);
+    await saveDrills(store, userId);
     return d;
   });
 }
 
 /** Park a drill (mis-tagged, trivial, or just resented): it leaves every queue
  * but keeps its history. Restoring makes it due now. */
-export function suspendDrill(id, suspended = true) {
+export function suspendDrill(id, suspended = true, userId = DEFAULT_USER) {
   return locked(async () => {
-    const store = await getDrills();
+    const store = await getDrills(userId);
     const d = store.drills.find(x => x.id === id);
     if (!d) throw new Error('drill not found');
     if (suspended) d.suspended = true;
     else { delete d.suspended; d.due = new Date().toISOString(); }
-    await saveDrills(store);
+    await saveDrills(store, userId);
     return d;
   });
 }
 
-export function restoreSuspended() {
+export function restoreSuspended(userId = DEFAULT_USER) {
   return locked(async () => {
-    const store = await getDrills();
+    const store = await getDrills(userId);
     let n = 0;
     for (const d of store.drills) {
       if (!d.suspended) continue;
@@ -395,18 +395,18 @@ export function restoreSuspended() {
       d.due = new Date().toISOString();
       n++;
     }
-    if (n) await saveDrills(store);
+    if (n) await saveDrills(store, userId);
     return n;
   });
 }
 
 /** Was this explanation useful? Stored per machine like reviews; the report
  * aggregates it so prompts can be tuned from real use. */
-export function recordFeedback(gameId, ply, helpful) {
+export function recordFeedback(gameId, ply, helpful, userId = DEFAULT_USER) {
   return locked(async () => {
-    const store = await getDrills();
+    const store = await getDrills(userId);
     store.feedback[drillId(gameId, ply)] = { helpful: !!helpful, at: new Date().toISOString() };
-    await saveDrills(store);
+    await saveDrills(store, userId);
     return store.feedback;
   });
 }
@@ -415,23 +415,23 @@ export function recordFeedback(gameId, ply, helpful) {
  * graded into the ladder, but whether the player correctly recognises "nothing
  * is wrong here" is the discrimination half of the skill; keep a per-machine
  * tally so the report can show the false-positive rate. */
-export function recordDecoy(correct) {
+export function recordDecoy(correct, userId = DEFAULT_USER) {
   return locked(async () => {
-    const store = await getDrills();
+    const store = await getDrills(userId);
     store.decoys = store.decoys || { seen: 0, right: 0 };
     store.decoys.seen++;
     if (correct) store.decoys.right++;
-    await saveDrills(store);
+    await saveDrills(store, userId);
     return store.decoys;
   });
 }
 
 /** Drop the vote on a moment (it was re-explained: the new text starts unrated). */
-export function clearFeedback(gameId, ply) {
+export function clearFeedback(gameId, ply, userId = DEFAULT_USER) {
   return locked(async () => {
-    const store = await getDrills();
+    const store = await getDrills(userId);
     delete store.feedback[drillId(gameId, ply)];
-    await saveDrills(store);
+    await saveDrills(store, userId);
   });
 }
 
@@ -483,9 +483,9 @@ function makeDecoy(game, m) {
  * real-game skill (spotting that this is a critical moment) for the player.
  * Decoys are quiet positions he handled correctly, asked exactly the same
  * way; the accepted answers include the fine move he actually played. */
-export async function buildDecoys(count, rand = Math.random) {
+export async function buildDecoys(count, rand = Math.random, userId = DEFAULT_USER) {
   if (count <= 0) return [];
-  const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose !== 'scout' && g.playerColor);
+  const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose !== 'scout' && g.playerColor);
   const order = [...index].sort(() => rand() - 0.5);
   const out = [];
   for (const entry of order) {
@@ -507,8 +507,8 @@ export async function buildDecoys(count, rand = Math.random) {
  * due or not, back to back (blocked practice). Suspended drills never serve.
  * With `session` (a real sitting, not the badge poll), quiet-position decoys
  * are mixed into the queue, never first. */
-export async function dueDrills(limit = 20, { pattern = null, category = null, session = false, rand = Math.random } = {}) {
-  const store = await getDrills();
+export async function dueDrills(limit = 20, { pattern = null, category = null, session = false, rand = Math.random, userId = DEFAULT_USER } = {}) {
+  const store = await getDrills(userId);
   const now = Date.now();
   const pool = store.drills.filter(d => !d.suspended);
   const suspendedCount = store.drills.length - pool.length;
@@ -529,7 +529,7 @@ export async function dueDrills(limit = 20, { pattern = null, category = null, s
   }
   const list = due.slice(0, limit);
   if (session && list.length >= 3) {
-    const built = await buildDecoys(Math.max(1, Math.floor(list.length / DECOY_RATIO)), rand);
+    const built = await buildDecoys(Math.max(1, Math.floor(list.length / DECOY_RATIO)), rand, userId);
     built.forEach((d, i) => {
       const pos = Math.min(list.length, 1 + Math.floor((i + 1) * list.length / (built.length + 1)));
       list.splice(pos, 0, d);
@@ -540,4 +540,26 @@ export async function dueDrills(limit = 20, { pattern = null, category = null, s
 
 function normalizeKey(s) {
   return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/** An ephemeral practice set for visitors: punish drills drawn from the shared
+ * scout library, built fresh on every request and never stored. Visitors have no
+ * games and nothing they do is recorded, so there is no ladder, no due dates, and
+ * no store read or write here. */
+export async function visitorDrills(limit = 20, rand = Math.random) {
+  const index = (await listAllGames())
+    .filter(g => (g.purpose || 'own') === 'scout' && (g.status === 'analysed' || g.status === 'explained'))
+    .sort(() => rand() - 0.5);
+  const out = [];
+  for (const entry of index) {
+    if (out.length >= limit) break;
+    const game = await getGame(entry.id);
+    if (!game?.analysis) continue;
+    for (const ply of game.analysis.summary.moments) {
+      const d = makePunishDrill(game, ply, 'core', null);
+      if (d) out.push(d);
+      if (out.length >= limit) break;
+    }
+  }
+  return { due: out, total: out.length, dueCount: out.length, suspendedCount: 0, feedback: {}, visitor: true };
 }

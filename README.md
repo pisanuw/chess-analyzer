@@ -34,6 +34,12 @@ npm start          # http://localhost:3210
 
 First run: open Settings, set the player's name as it appears in tournament PGNs (surname is enough), check the engine path, save. Then import a PGN on the Games page. Analysis runs in the background; the header shows progress.
 
+## Users and login
+
+The app serves a small allowlist of members plus an admin. Each member sees only their own games, report, repertoire, drills, and puzzles; everyone shares the scouting library and can prep against each other, but a member's deep report and repertoire stay private to them. The admin (the operator) imports games, runs analysis, and manages settings.
+
+Login is off until configured, so a plain `npm start` runs open locally with you as admin (the original single-user behavior). To turn it on, set `SESSION_SECRET` and each member's `AUTH_EMAIL_<ID>`, then enable **Google sign-in** (`GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`) and/or **magic-link email** (`RESEND_API_KEY`, `AUTH_FROM_EMAIL`). All of these are documented in `.env.example`. A member's own games are built from their scouting book with `curl -X POST http://localhost:3210/api/users/<id>/seed` (needs Stockfish).
+
 ## Cost and speed
 
 Engine analysis at depth 18 with MultiPV 3 takes roughly 1 to 3 minutes per game on an Apple Silicon Mac; repeated opening positions come from a local eval cache. A game's critical moments are explained in one batched `claude` call when possible (falling back to about a minute per moment individually), so a five-moment game usually explains in a fraction of the old five-plus minutes, all in the background. Set the model to `haiku` in Settings for faster, shallower explanations. Explanations rated "not really" can be re-explained with one click.
@@ -71,8 +77,8 @@ Keep imports and analysis on the analysing machine; other clones view games, rea
 
 ## Hosted version (read-only mirror)
 
-The app deploys to Netlify as a password-protected, read-only mirror for the player: static frontend plus the same Express app as one serverless function, game data bundled into each deploy, drill/guess state in a Supabase table (`chess_kv`) since functions have no disk. Analysis never runs on the web; games are imported and analysed locally, then:
+The app deploys to Netlify as a read-only mirror: static frontend plus the same Express app as one serverless function, game data bundled into each deploy, per-member drill/guess state in a Supabase table (`chess_kv`, key `drills:<id>`) since functions have no disk. Analysis never runs on the web; games are imported and analysed locally, then:
 
-    npm run publish-web   # push data repo, sync hosted drills, deploy to Netlify
+    npm run publish-web   # push data repo, sync each member's hosted drills, deploy to Netlify
 
-Secrets live in `.env.web` (gitignored): `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `APP_PASSWORD`. On the server, `APP_PASSWORD` enables the login wall (90-day cookie), `READONLY_DATA=1` blocks all game mutations while keeping drills and guessing writable, and `DATA_DIR=data` points at the bundled files. Locally none of these are set, so nothing changes.
+Deploy secrets live in `.env.web` (gitignored): `NETLIFY_AUTH_TOKEN`, `NETLIFY_SITE_ID`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`. The function's runtime auth/config (`SESSION_SECRET`, `PUBLIC_URL`, `AUTH_EMAIL_<member>`, and the Google/Resend keys, or the legacy `APP_PASSWORD`) is set in the Netlify dashboard, not in this file; `READONLY_DATA=1` blocks game mutations while keeping drills and guessing writable, and `DATA_DIR=data` points at the bundled files. Locally none of these are set, so nothing changes. See `.env.example` for the full list.

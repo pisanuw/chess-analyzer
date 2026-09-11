@@ -1,5 +1,5 @@
 // Drills: replay your own critical moments, spaced repetition.
-import { api, esc, toast, formatEval, fmtClock, winProb, WP_ACCEPT } from '../api.js';
+import { api, esc, toast, formatEval, fmtClock, winProb, WP_ACCEPT, session } from '../api.js';
 import { Board, applyMove, gameStatus, walkSans, lineShapes } from '../board.js';
 import { CATEGORY_LABEL } from './report.js';
 
@@ -35,7 +35,9 @@ export async function drillsView(root, query) {
   const session = { attempts: 0, correct: 0, missed: [], times: [], decoys: { seen: 0, right: 0 } };
 
   const title = lightning ? 'Lightning round' : categoryRound ? 'Category round' : 'Drills';
-  const intro = lightning
+  const intro = session.user?.role === 'visitor'
+    ? '<p class="muted">Practice mode: a rotating set of drills from the scouting library (find the refutation the opponent missed). Nothing you do here is saved.</p>'
+    : lightning
     ? `<p class="muted">Every drill of the pattern "${esc(lightning)}", back to back. Blocked practice: passes here do not advance the spaced-repetition ladder, but a miss still resets its drill. <a href="#/drills">Back to normal drills</a>.</p>`
     : categoryRound
       ? `<p class="muted">Every drill in the category "${esc(CATEGORY_LABEL[categoryRound] || categoryRound)}", back to back. Blocked practice: the ladder is untouched, but a miss still resets its drill. <a href="#/drills">Back to normal drills</a>.</p>`

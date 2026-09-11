@@ -49,8 +49,8 @@ export async function scoutView(root) {
     const col = st === 'green' ? '70,196,106' : st === 'yellow' ? '224,180,0' : '';
     const style = col ? `border-left:4px solid rgb(${col})${isCur ? '' : `;background:rgba(${col},.14)`}` : '';
     const prepTip = st === 'green' ? '; prep sheet ready' : st === 'yellow' ? (s.prep ? '; prep sheet stale, regenerate' : '; prep sheet not generated') : '';
-    const tip = (s.fideId ? `FIDE ${s.fideId}${s.fed ? ` (${s.fed})` : ''}, ${n} game${n === 1 ? '' : 's'}` : `no FIDE id, ${n} game${n === 1 ? '' : 's'}`) + prepTip;
-    return `<button class="small${isCur ? ' primary' : ''}" data-subject="${esc(s.subject)}" style="${style}" title="${esc(tip)}">${esc(s.subject)}${s.fed ? ` <small class="muted">${esc(s.fed)}</small>` : ''} (${n})${s.bookGames ? ' \u{1F4D6}' : ''}</button>`;
+    const tip = (s.fideId ? `FIDE ${s.fideId}${s.fed ? ` (${s.fed})` : ''}, ${n} game${n === 1 ? '' : 's'}` : `no FIDE id, ${n} game${n === 1 ? '' : 's'}`) + prepTip + (s.member ? '; app member' : '');
+    return `<button class="small${isCur ? ' primary' : ''}" data-subject="${esc(s.subject)}" style="${style}" title="${esc(tip)}">${esc(s.subject)}${s.fed ? ` <small class="muted">${esc(s.fed)}</small>` : ''} (${n})${s.bookGames ? ' \u{1F4D6}' : ''}${s.member ? ' \u{1F464}' : ''}</button>`;
   };
   const renderSubjects = q => {
     const needle = q.trim().toLowerCase();

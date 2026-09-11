@@ -38,32 +38,65 @@ export async function busy(btn, fn) {
   try { return await fn(); } finally { btn.disabled = was; }
 }
 
-/** Password overlay for the hosted copy; shown on any 401. */
-export function showLogin() {
-  if (document.getElementById('login-overlay')) return;
+/** Populated once at startup from /api/auth/me; views read session.user?.role. */
+export const session = { user: null, authActive: false, providers: {} };
+
+let loginShown = false;
+
+/** Sign-in overlay: Google and/or a magic-link email (or the legacy single
+ * password when neither provider is configured). Shown on any 401 and at startup
+ * when auth is on but nobody is signed in. Fetches /api/auth/me (which is exempt
+ * from the auth gate) to learn which methods to offer. */
+export async function showLogin() {
+  if (loginShown || document.getElementById('login-overlay')) return;
+  loginShown = true; // set before the await so two concurrent 401s cannot both build the overlay
+  let providers = {};
+  try { const me = await api.me(); if (me.user) { loginShown = false; return; } providers = me.providers || {}; } catch {}
+  const denied = new URLSearchParams(location.search).get('login');
+  const google = providers.google ? `<a class="btn primary login-google" href="/api/auth/google">Sign in with Google</a>` : '';
+  const magic = providers.magic ? `<form id="magic-form" class="login-magic">
+      <input type="email" id="magic-email" placeholder="you@example.com" autocomplete="email" required>
+      <button class="btn" type="submit">Email me a sign-in link</button>
+    </form>` : '';
+  const pw = (!providers.google && !providers.magic) ? `<form id="pw-form" class="login-magic">
+      <input type="password" id="login-pw" placeholder="Password" autocomplete="current-password">
+      <button class="btn primary" type="submit">Enter</button>
+    </form>` : '';
   const div = document.createElement('div');
   div.id = 'login-overlay';
-  div.style.cssText = 'position:fixed;inset:0;background:rgba(10,10,14,.92);display:flex;align-items:center;justify-content:center;z-index:100';
-  div.innerHTML = `<form style="display:flex;flex-direction:column;gap:10px;align-items:center">
+  div.className = 'login-overlay';
+  div.innerHTML = `<div class="login-box">
     <div style="font-size:42px">♞</div>
-    <input type="password" id="login-pw" placeholder="Password" autocomplete="current-password" style="padding:8px 10px;font-size:16px">
-    <button class="primary" style="padding:8px 18px">Enter</button>
-    <p id="login-err" style="color:#e66;min-height:1em;margin:0"></p>
-  </form>`;
+    <h2 style="margin:0">Chess Analyzer</h2>
+    ${denied === 'denied' ? '<p class="login-err">That account is not on the invite list. Ask the admin to add your email.</p>' : ''}
+    ${denied === 'google_denied' ? '<p class="login-err">Google sign-in was cancelled. Try again.</p>' : ''}
+    ${google}${magic}${pw}
+    <p id="login-msg" class="login-msg"></p>
+  </div>`;
   document.body.appendChild(div);
-  const input = div.querySelector('#login-pw');
-  input.focus();
-  div.querySelector('form').addEventListener('submit', async e => {
+  div.querySelector('#magic-form')?.addEventListener('submit', async e => {
     e.preventDefault();
     try {
-      await req('POST', '/api/login', { password: input.value });
-      location.reload();
-    } catch (err) { div.querySelector('#login-err').textContent = err.message; }
+      await api.magicRequest(div.querySelector('#magic-email').value.trim());
+      div.querySelector('#login-msg').textContent = 'Check your email for a sign-in link (valid for 15 minutes).';
+    } catch (err) { div.querySelector('#login-msg').textContent = err.message; }
+  });
+  div.querySelector('#pw-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    try { await req('POST', '/api/login', { password: div.querySelector('#login-pw').value }); location.reload(); }
+    catch (err) { div.querySelector('#login-msg').textContent = err.message; }
   });
 }
 
+// Visitors record nothing: these writes resolve to a no-op instead of calling
+// the server (the server guards them too). session.user is set at startup.
+const noopForVisitor = fn => (...args) => (session.user?.role === 'visitor' ? Promise.resolve({ ephemeral: true }) : fn(...args));
+
 export const api = {
   status: () => req('GET', '/api/status'),
+  me: () => req('GET', '/api/auth/me'),
+  logout: () => req('POST', '/api/auth/logout', {}),
+  magicRequest: email => req('POST', '/api/auth/magic/request', { email }),
   settings: () => req('GET', '/api/settings'),
   saveSettings: patch => req('PUT', '/api/settings', patch),
   games: () => req('GET', '/api/games'),
@@ -77,7 +110,7 @@ export const api = {
   analyseAll: (opts = {}) => req('POST', '/api/games/analyse-all', opts),
   prompt: (id, ply) => req('GET', `/api/games/${id}/moments/${ply}/prompt`),
   saveExplanation: (id, ply, e) => req('PUT', `/api/games/${id}/moments/${ply}/explanation`, e),
-  guess: (id, ply, uci, correct) => req('POST', `/api/games/${id}/moments/${ply}/guess`, { uci, correct }),
+  guess: noopForVisitor((id, ply, uci, correct) => req('POST', `/api/games/${id}/moments/${ply}/guess`, { uci, correct })),
   evalMove: (id, ply, uci) => req('POST', `/api/games/${id}/moments/${ply}/eval`, { uci }),
   testHosts: () => req('POST', '/api/engine/hosts/test', {}),
   jobs: () => req('GET', '/api/jobs'),
@@ -100,13 +133,13 @@ export const api = {
     req('GET', `/api/puzzles?source=${encodeURIComponent(source)}&limit=${limit}`),
   drills: ({ pattern = null, category = null, limit = null, session = false } = {}) =>
     req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}${category ? `&category=${encodeURIComponent(category)}` : ''}${session ? '&session=1' : ''}`),
-  reviewDrill: (id, grade, correct, practice = false, ms = null) =>
-    req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}) }),
-  suspendDrill: (id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended }),
-  undoDrill: id => req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {}),
-  restoreSuspended: () => req('POST', '/api/drills/restore-suspended', {}),
-  recordDecoy: correct => req('POST', '/api/drills/decoy', { correct }),
-  feedback: (id, ply, helpful) => req('POST', `/api/games/${id}/moments/${ply}/feedback`, { helpful }),
+  reviewDrill: noopForVisitor((id, grade, correct, practice = false, ms = null) =>
+    req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}) })),
+  suspendDrill: noopForVisitor((id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended })),
+  undoDrill: noopForVisitor(id => req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {})),
+  restoreSuspended: noopForVisitor(() => req('POST', '/api/drills/restore-suspended', {})),
+  recordDecoy: noopForVisitor(correct => req('POST', '/api/drills/decoy', { correct })),
+  feedback: noopForVisitor((id, ply, helpful) => req('POST', `/api/games/${id}/moments/${ply}/feedback`, { helpful })),
   reexplain: (id, ply) => req('POST', `/api/games/${id}/moments/${ply}/reexplain`, {}),
   playoutMove: (fen, elo) => req('POST', '/api/playout/move', { fen, elo }),
   playoutAssess: fen => req('POST', '/api/playout/assess', { fen }),

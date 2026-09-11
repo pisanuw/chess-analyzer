@@ -1,5 +1,5 @@
 // Aggregate weakness report across all analysed games.
-import { getGame, listGames, getDrills, getForeignDrillStores } from './store.js';
+import { getGame, listGames, getDrills, getForeignDrillStores, DEFAULT_USER } from './store.js';
 import { gamesForSubject } from './subjects.js';
 import { parseTimeControl, spentPerMove } from '../public/shared.js';
 import { CATEGORIES } from './prompts.js';
@@ -10,12 +10,12 @@ const WEIGHT = { inaccuracy: 1, mistake: 2, blunder: 3 };
 
 /** Weakness report for the tracked player (default), or for a scouted subject
  * (scout imports plus the player's own games against them, flipped). */
-export async function buildReport({ purpose = 'own', subject = null } = {}) {
+export async function buildReport({ purpose = 'own', subject = null, userId = DEFAULT_USER } = {}) {
   let games;
   if (purpose === 'scout') {
     games = await gamesForSubject(subject);
   } else {
-    const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
+    const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
     games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
   }
 
@@ -141,8 +141,8 @@ export async function buildReport({ purpose = 'own', subject = null } = {}) {
   // Drill performance from review history: this machine's live store plus the
   // read-only mirrors other machines sync through the data repo (the same
   // player reviews on both, so the histories merge).
-  const dstore = purpose === 'own' ? await getDrills() : { drills: [] };
-  const foreign = purpose === 'own' ? await getForeignDrillStores() : [];
+  const dstore = purpose === 'own' ? await getDrills(userId) : { drills: [] };
+  const foreign = purpose === 'own' ? await getForeignDrillStores(userId) : [];
   const drillByPhase = {}, drillByCategory = {}, drillByKind = {}, patternSpeed = new Map();
   const activityDates = new Set(); // YYYY-MM-DD the player practised, for the home-screen streak
   let drillAttempts = 0, drillCorrect = 0;

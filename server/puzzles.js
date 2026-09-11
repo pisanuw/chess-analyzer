@@ -5,7 +5,7 @@
 // engine, no LLM, no writes. That also means the read-only hosted mirror serves
 // puzzles too. Drills are the spaced-repetition twin of this; the two share the
 // acceptedLines band so "correct" means the same thing in both.
-import { listGames, getGame } from './store.js';
+import { listGames, getGame, DEFAULT_USER } from './store.js';
 import { winProb } from '../public/shared.js';
 import { acceptedLines } from './drills.js';
 
@@ -81,11 +81,13 @@ function makePuzzle(game, m, source) {
 /** Every puzzle for a source, shuffled, capped at `limit`. `total` is the full
  * candidate count so the UI can say how many exist. `rand` is injectable for
  * deterministic tests. */
-export async function buildPuzzles(source = 'tactics', limit = 30, rand = Math.random) {
+export async function buildPuzzles(source = 'tactics', limit = 30, rand = Math.random, userId = DEFAULT_USER) {
   const spec = SOURCES[source] || SOURCES.tactics;
   const resolved = SOURCES[source] ? source : 'tactics';
   const out = [];
-  for (const entry of await listGames()) {
+  // A member's puzzles come from the games they can see: their own games plus the
+  // shared scout library (tactics can draw on scout games; moments/missed are own only).
+  for (const entry of await listGames(userId)) {
     if (entry.status !== 'analysed' && entry.status !== 'explained') continue;
     if (spec.ownOnly && (entry.purpose || 'own') === 'scout') continue;
     const game = await getGame(entry.id);

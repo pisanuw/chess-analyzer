@@ -1,5 +1,5 @@
 // Hash router, job polling, and shared chrome.
-import { api, esc, toast } from './api.js';
+import { api, esc, toast, session, showLogin } from './api.js';
 import { homeView } from './views/home.js';
 import { gamesView } from './views/games.js';
 import { gameView } from './views/game.js';
@@ -25,6 +25,10 @@ const routes = [
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
 ];
 
+// Pages a visitor cannot see (no report/repertoire, no games management). They
+// are redirected to Scouting, which is their landing page.
+const VISITOR_BLOCKED = new Set(['home', 'games', 'report', 'repertoire', 'settings']);
+
 let nav = 0; // navigation token: a stale async view must not clobber a newer one
 
 async function route() {
@@ -32,6 +36,7 @@ async function route() {
   const hash = location.hash || '#/home';
   const r = routes.find(x => x.re.test(hash));
   if (!r) { location.hash = '#/home'; return; }
+  if (session.user?.role === 'visitor' && VISITOR_BLOCKED.has(r.name)) { location.hash = '#/scout'; return; }
   const params = hash.match(r.re).slice(1);
   if (current?.destroy) current.destroy();
   current = null;
@@ -111,22 +116,36 @@ export async function updateDrillBadge() {
   } catch {}
 }
 
-// The hosted mirror cannot run jobs (the queue lives in a function instance's
-// memory), so polling /api/jobs every few seconds would spend invocations and
-// battery on a guaranteed-empty answer. Poll only where analysis can actually
-// run; on the mirror, refresh the drill badge per navigation instead of on a
-// timer. If /api/status itself fails (mirror login pending), the login overlay
-// is already up and a reload restarts everything.
-api.status().then(({ readonly }) => {
+function renderWhoami(me) {
+  const el = document.getElementById('whoami');
+  if (!el) return;
+  if (!me.authActive || !me.user) { el.hidden = true; return; } // no login configured: nothing to show
+  el.hidden = false;
+  el.innerHTML = `<span class="who">${esc(me.user.displayName || me.user.id)}</span>${me.user.role === 'admin' ? ' <span class="chip">admin</span>' : ''} <button class="link" id="logout-btn">Sign out</button>`;
+  el.querySelector('#logout-btn').onclick = async () => { try { await api.logout(); } catch {} location.reload(); };
+}
+
+// Identity + chrome. /api/auth/me is exempt from the auth gate, so it answers
+// even when nobody is signed in (user: null). Gate the whole app on it, mark the
+// admin body class (CSS hides .admin-only controls for members), then set up
+// chrome. The hosted mirror cannot run jobs (the queue lives in a function
+// instance's memory), so job polling and the Settings link stay off there.
+Promise.all([api.me().catch(() => ({})), api.status().catch(() => ({}))]).then(([me, status]) => {
+  session.user = me.user || null;
+  session.authActive = !!me.authActive;
+  session.providers = me.providers || {};
+  document.body.classList.toggle('is-admin', me.user?.role === 'admin');
+  document.body.classList.toggle('is-visitor', me.user?.role === 'visitor');
+  if (me.authActive && !me.user) { showLogin(); return; } // not signed in: the overlay covers the app
+  // Visitors land on Scouting; bounce them off any page they cannot see.
+  if (me.user?.role === 'visitor') { const r = routes.find(x => x.re.test(location.hash || '#/home')); if (!r || VISITOR_BLOCKED.has(r.name)) location.hash = '#/scout'; }
+  renderWhoami(me);
   updateDrillBadge();
-  if (readonly) {
-    // The hosted mirror has no engine, no LLM, and blocks settings writes, so
-    // the Settings page is dead weight. The nav link ships hidden and the route
-    // redirects to Home, so it stays gone here no matter how status resolves.
+  if (status.readonly) {
     window.addEventListener('hashchange', updateDrillBadge);
   } else {
-    // Local (full) app: reveal Settings, which ships hidden by default.
-    document.querySelector('[data-nav="settings"]')?.removeAttribute('hidden');
+    // Settings is admin-only; the nav link ships hidden, revealed here for an admin.
+    if (me.user?.role === 'admin') document.querySelector('[data-nav="settings"]')?.removeAttribute('hidden');
     pollJobs();
     setInterval(updateDrillBadge, 60000);
     jobEvents.addEventListener('finished', updateDrillBadge);

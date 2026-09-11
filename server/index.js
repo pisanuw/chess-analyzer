@@ -1,9 +1,10 @@
 // Express server: static frontend + JSON API. Runs locally; nothing leaves the machine except claude CLI calls.
 import express from 'express';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { Chess } from 'chess.js';
 import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from './pgn.js';
-import { getSettings, saveSettings, listGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, getClashNotes, saveClashNotes, DEFAULT_SETTINGS, DATA_DIR } from './store.js';
+import { getSettings, saveSettings, listGames, listAllGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, getClashNotes, saveClashNotes, DEFAULT_SETTINGS, DEFAULT_USER, DATA_DIR } from './store.js';
 import { parseFideFromFilename, buildScoutBook, scoutDossier } from './scoutbook.js';
 import { loadKaiGames, buildKaiIndex, assembleClashForest, extendClashLeaves, clashPrincipalLines } from './clash.js';
 import { assocsFromHeaders, recordAssociations, lookupFideId } from './players.js';
@@ -15,11 +16,14 @@ import { checkClaudeCli, complete } from './llm.js';
 import { buildReport, buildPrepCard } from './report.js';
 import { buildRepertoire } from './repertoire.js';
 import { scoreToCp, winProb, summarize } from './analyze.js';
-import { dueDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback, clearFeedback, recordDecoy } from './drills.js';
+import { dueDrills, visitorDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback, clearFeedback, recordDecoy } from './drills.js';
 import { buildPuzzles } from './puzzles.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, clashLinePrompt, clashNarrationVersion, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, CLASH_NARRATION_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { knownPatterns } from './jobs.js';
-import { authMiddleware, loginRoute } from './auth.js';
+import { authMiddleware, loginRoute, meRoute, logoutRoute, currentUser } from './auth.js';
+import { getUser, listMembers, isVisitor } from './users.js';
+import { googleStartRoute, googleCallbackRoute } from './googleauth.js';
+import { magicRequestRoute, magicVerifyRoute } from './magiclink.js';
 
 // Repo root = the working directory for every supported entry (npm start via
 // server/serve.js, tests, and the bundled Netlify function). Using cwd keeps
@@ -35,6 +39,28 @@ app.use(authMiddleware);
 app.post('/api/login', (req, res) => loginRoute(req, res).catch(err => {
   console.error(err);
   res.status(500).json({ error: err.message });
+}));
+// Identity endpoints (exempt from the auth gate and the read-only gate below, so
+// the frontend can ask who it is and log out even on the mirror).
+app.get('/api/auth/me', (req, res) => meRoute(req, res).catch(err => {
+  console.error(err);
+  res.status(500).json({ error: err.message });
+}));
+app.post('/api/auth/logout', (req, res) => logoutRoute(req, res));
+// Google sign-in (OAuth2 code flow). Both are exempt from the auth gate above.
+app.get('/api/auth/google', (req, res) => { try { googleStartRoute(req, res); } catch (err) { console.error(err); res.status(500).send('sign-in failed'); } });
+app.get('/api/auth/google/callback', (req, res) => googleCallbackRoute(req, res).catch(err => {
+  console.error(err);
+  res.status(500).send('sign-in failed');
+}));
+// Magic-link sign-in (request emails a one-time link; verify sets the session).
+app.post('/api/auth/magic/request', (req, res) => magicRequestRoute(req, res).catch(err => {
+  console.error(err);
+  res.status(500).json({ error: 'could not send link' });
+}));
+app.get('/api/auth/magic/verify', (req, res) => magicVerifyRoute(req, res).catch(err => {
+  console.error(err);
+  res.status(500).send('sign-in failed');
 }));
 
 // Read-only mirror (hosted copy): game data is managed on the analysing machine
@@ -74,6 +100,34 @@ const wrap = fn => (req, res) => fn(req, res).catch(err => {
   res.status(err.status || 500).json({ error: err.message });
 });
 
+// The member whose private data a request acts on (report, repertoire, games,
+// drills, puzzles, pattern notes). A member is locked to themselves; an admin
+// (or the local operator, when auth is off) may target any member via ?user=,
+// defaulting to the primary member. Scout data is shared, so it ignores this.
+async function effectiveUser(req) {
+  const u = await currentUser(req);
+  if (u && u.role !== 'admin') return u.id;
+  const q = typeof req.query.user === 'string' ? req.query.user : '';
+  return q && (await getUser(q)) ? q : DEFAULT_USER;
+}
+
+// Gate for management routes (import, analysis, settings, users, scouting
+// imports): only an admin or the local operator may pass.
+async function requireAdmin(req, res) {
+  const u = await currentUser(req);
+  if (u && u.role === 'admin') return true;
+  res.status(403).json({ error: 'admin only' });
+  return false;
+}
+
+// Visitors (allowlisted guests) can browse the shared scouting library and
+// practice drills/puzzles, but see no report or repertoire and record nothing.
+// Returns true (and sends 403) when the caller is a visitor.
+async function blockVisitor(req, res) {
+  if (isVisitor(await currentUser(req))) { res.status(403).json({ error: 'not available to visitors' }); return true; }
+  return false;
+}
+
 // --- status & settings -------------------------------------------------------
 app.get('/api/status', wrap(async (req, res) => {
   const settings = await getSettings();
@@ -89,6 +143,7 @@ app.get('/api/settings', wrap(async (req, res) => res.json({ settings: await get
 // vpnHint flags the everything-unreachable case, which usually means the VPN
 // is down rather than every machine being off.
 app.post('/api/engine/hosts/test', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const settings = await getSettings();
   if (!remoteHostList(settings).length) return res.status(400).json({ error: 'no remote hosts configured' });
   res.json(await probeHosts(settings));
@@ -101,7 +156,7 @@ app.post('/api/engine/hosts/test', wrap(async (req, res) => {
  * has no explanation yet, so the explain flow picks it up. */
 async function resummarizeGames(settings) {
   let changed = 0;
-  for (const entry of await listGames()) {
+  for (const entry of await listAllGames()) { // admin threshold change re-scores every member's games
     if (entry.status !== 'analysed' && entry.status !== 'explained') continue;
     const g = await getGame(entry.id);
     if (!g?.analysis || !g.playerColor) continue;
@@ -117,6 +172,7 @@ async function resummarizeGames(settings) {
 }
 
 app.put('/api/settings', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const allowed = Object.keys(DEFAULT_SETTINGS);
   const patch = {};
   for (const k of allowed) if (k in req.body) patch[k] = req.body[k];
@@ -146,9 +202,10 @@ app.put('/api/settings', wrap(async (req, res) => {
 }));
 
 // --- games -------------------------------------------------------------------
-app.get('/api/games', wrap(async (req, res) => res.json({ games: await listGames() })));
+app.get('/api/games', wrap(async (req, res) => res.json({ games: await listGames(await effectiveUser(req)) })));
 
 app.post('/api/games/import', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const pgn = typeof req.body === 'string' ? req.body : req.body?.pgn;
   if (!pgn || !pgn.trim()) return res.status(400).json({ error: 'No PGN provided' });
   const purpose = req.body?.purpose === 'scout' ? 'scout' : 'own';
@@ -185,11 +242,12 @@ app.post('/api/games/import', wrap(async (req, res) => {
 }));
 
 app.get('/api/games/:id', wrap(async (req, res) => {
-  const game = await getGame(req.params.id);
+  const uid = await effectiveUser(req);
+  const game = await getGame(req.params.id, uid); // members see only their own games (scout games are shared)
   if (!game) return res.status(404).json({ error: 'not found' });
   // Explanation feedback lives in the per-machine drill store; hand this game's
   // slice to the view so the thumbs reflect earlier votes.
-  const all = (await getDrills()).feedback;
+  const all = (await getDrills(uid)).feedback;
   const feedback = {};
   for (const ply of game.analysis?.summary?.moments || []) {
     if (all[`${game.id}:${ply}`]) feedback[ply] = all[`${game.id}:${ply}`];
@@ -198,6 +256,7 @@ app.get('/api/games/:id', wrap(async (req, res) => {
 }));
 
 app.delete('/api/games/:id', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   cancelJobs(req.params.id);
   await deleteGame(req.params.id);
   await removeDrillsForGame(req.params.id);
@@ -205,6 +264,7 @@ app.delete('/api/games/:id', wrap(async (req, res) => {
 }));
 
 app.post('/api/games/:id/player', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const game = await getGame(req.params.id);
   if (!game) return res.status(404).json({ error: 'not found' });
   const color = req.body?.color;
@@ -229,6 +289,7 @@ app.post('/api/games/:id/player', wrap(async (req, res) => {
 // Fix wrong or inconsistent player names (PGN headers vary in spelling); the
 // game id stays as imported, so re-importing the same PGN is still a no-op.
 app.post('/api/games/:id/names', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const game = await getGame(req.params.id);
   if (!game) return res.status(404).json({ error: 'not found' });
   const white = String(req.body?.white ?? '').trim();
@@ -247,6 +308,7 @@ app.post('/api/games/:id/names', wrap(async (req, res) => {
 }));
 
 app.post('/api/games/:id/analyse', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const game = await getGame(req.params.id);
   if (!game) return res.status(404).json({ error: 'not found' });
   if (!game.playerColor) return res.status(400).json({ error: 'set the player colour first' });
@@ -258,13 +320,15 @@ app.post('/api/games/:id/analyse', wrap(async (req, res) => {
 }));
 
 app.post('/api/games/:id/explain', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const game = await getGame(req.params.id);
   if (!game?.analysis) return res.status(400).json({ error: 'analyse the game first' });
   res.json({ job: enqueue('explain', game.id) });
 }));
 
 app.post('/api/games/analyse-all', wrap(async (req, res) => {
-  const games = await listGames();
+  if (!(await requireAdmin(req, res))) return;
+  const games = await listAllGames(); // admin bulk action across every member's games
   const settings = await getSettings();
   const queued = [];
   for (const g of games) {
@@ -278,6 +342,7 @@ app.post('/api/games/analyse-all', wrap(async (req, res) => {
 
 // Manual LLM flow: get the prompt, post the answer.
 app.get('/api/games/:id/moments/:ply/prompt', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const game = await getGame(req.params.id);
   const ply = Number(req.params.ply);
   if (!game?.analysis || !game.analysis.moves[ply - 1]) return res.status(404).json({ error: 'not found' });
@@ -289,6 +354,7 @@ app.get('/api/games/:id/moments/:ply/prompt', wrap(async (req, res) => {
 }));
 
 app.put('/api/games/:id/moments/:ply/explanation', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const game = await getGame(req.params.id);
   const ply = Number(req.params.ply);
   if (!game?.analysis || !game.analysis.moves[ply - 1]) return res.status(404).json({ error: 'not found' });
@@ -307,11 +373,13 @@ app.put('/api/games/:id/moments/:ply/explanation', wrap(async (req, res) => {
 
 // Guess-first attempts: recorded per machine (drill store), seeds and boosts drills.
 app.post('/api/games/:id/moments/:ply/guess', wrap(async (req, res) => {
-  const game = await getGame(req.params.id);
+  if (isVisitor(await currentUser(req))) return res.json({ ok: true, ephemeral: true }); // visitors record nothing
+  const uid = await effectiveUser(req);
+  const game = await getGame(req.params.id, uid);
   const ply = Number(req.params.ply);
   if (!game?.analysis || !game.analysis.summary.moments.includes(ply)) return res.status(404).json({ error: 'not a moment' });
   const settings = await getSettings();
-  const result = await recordGuess(game, ply, String(req.body?.uci || ''), !!req.body?.correct, settings);
+  const result = await recordGuess(game, ply, String(req.body?.uci || ''), !!req.body?.correct, settings, uid);
   res.json(result);
 }));
 
@@ -360,6 +428,8 @@ app.post('/api/games/:id/moments/:ply/eval', wrap(async (req, res) => {
 // (and with it a threat drill) may change. Synchronous like the prep sheet:
 // the caller shows "about a minute".
 app.post('/api/games/:id/moments/:ply/reexplain', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const uid = await effectiveUser(req);
   const game = await getGame(req.params.id);
   const ply = Number(req.params.ply);
   if (!game?.analysis || !game.analysis.summary.moments.includes(ply)) return res.status(404).json({ error: 'not a moment' });
@@ -380,18 +450,20 @@ app.post('/api/games/:id/moments/:ply/reexplain', wrap(async (req, res) => {
   fresh.explanations = fresh.explanations || {};
   fresh.explanations[ply] = { ...output, model, costUsd, createdAt: new Date().toISOString(), redone: true };
   await saveGame(fresh);
-  await clearFeedback(game.id, ply);
-  await syncDrillsForGame(fresh, settings);
+  await clearFeedback(game.id, ply, uid);
+  await syncDrillsForGame(fresh, settings, uid);
   res.json({ game: fresh });
 }));
 
 // Was the explanation useful? Per-machine, like drill reviews; the report
 // aggregates it so prompt wording can be tuned from real use.
 app.post('/api/games/:id/moments/:ply/feedback', wrap(async (req, res) => {
-  const game = await getGame(req.params.id);
+  if (isVisitor(await currentUser(req))) return res.json({ ok: true, ephemeral: true }); // visitors record nothing
+  const uid = await effectiveUser(req);
+  const game = await getGame(req.params.id, uid);
   const ply = Number(req.params.ply);
   if (!game?.explanations?.[ply]) return res.status(404).json({ error: 'no explanation for this moment' });
-  await recordFeedback(game.id, ply, !!req.body?.helpful);
+  await recordFeedback(game.id, ply, !!req.body?.helpful, uid);
   res.json({ ok: true });
 }));
 
@@ -431,16 +503,24 @@ app.post('/api/playout/assess', wrap(async (req, res) => {
 
 // --- jobs, report, drills ----------------------------------------------------
 app.get('/api/jobs', (req, res) => res.json({ jobs: listJobs() }));
-app.get('/api/report', wrap(async (req, res) => res.json({ report: await buildReport() })));
+app.get('/api/report', wrap(async (req, res) => {
+  if (await blockVisitor(req, res)) return;
+  res.json({ report: await buildReport({ userId: await effectiveUser(req) }) });
+}));
 
 // One-page markdown card: focus areas, synthesized rules, clock line, study list.
 app.get('/api/report/card', wrap(async (req, res) => {
-  const report = await buildReport();
+  if (await blockVisitor(req, res)) return;
+  const uid = await effectiveUser(req);
+  const report = await buildReport({ userId: uid });
   if (!report.games) return res.status(400).json({ error: 'no analysed games yet' });
-  res.type('text/markdown').send(buildPrepCard(report, await getPatternNotes(), await getSettings()));
+  res.type('text/markdown').send(buildPrepCard(report, await getPatternNotes(uid), await getSettings()));
 }));
 
-app.get('/api/repertoire', wrap(async (req, res) => res.json({ repertoire: await buildRepertoire() })));
+app.get('/api/repertoire', wrap(async (req, res) => {
+  if (await blockVisitor(req, res)) return;
+  res.json({ repertoire: await buildRepertoire({ userId: await effectiveUser(req) }) });
+}));
 
 // --- scouting ----------------------------------------------------------------
 const SCOUT_MAX_GAMES = 2000; // book tier: no per-game jobs, but bound the one-shot parse
@@ -479,18 +559,31 @@ app.get('/api/scout', wrap(async (req, res) => {
     if (analysed) s.analysed++;
     s[kind]++;
   };
-  for (const g of await listGames()) {
+  const ownerCount = new Map(); // member id -> own-game counts, for their own prep-subject entry
+  for (const g of await listAllGames()) { // scouting library is shared: draw opponents from every member's games
     const analysed = g.status === 'analysed' || g.status === 'explained';
     if (g.purpose === 'scout' && g.subject) add(g.subject, analysed, 'scoutGames', g.subjectId);
     else if (g.purpose !== 'scout' && g.playerColor) {
       const oppName = g.playerColor === 'white' ? g.black : g.white;
       add(oppName, analysed, 'ownGames', g.playerColor === 'white' ? g.blackFideId : g.whiteFideId);
+      if (g.owner) { const o = ownerCount.get(g.owner) || { games: 0, analysed: 0 }; o.games++; if (analysed) o.analysed++; ownerCount.set(g.owner, o); }
     }
   }
   for (const b of books) {
     const s = ensure(b.name, b.fideId);
     s.subject = b.name; // the book name is the canonical display name
     s.bookGames = b.total || (b.games || []).length;
+  }
+  // Members are prep subjects too (shared library): everyone can prep against
+  // them. Keyed by FIDE id, so a member who also has a book merges into it; a
+  // member with no book (e.g. Kai) is scouted from their own games.
+  for (const m of await listMembers()) {
+    const s = ensure(m.displayName, m.fideId);
+    s.member = true;
+    const o = ownerCount.get(m.id) || { games: 0, analysed: 0 };
+    s.selfGames = o.games;
+    s.games = Math.max(s.games, o.games);
+    s.analysed = Math.max(s.analysed, o.analysed);
   }
   const subjects = [...byKey.values()].map(s => ({
     ...s, names: undefined, aliases: [...s.names].filter(n => n !== s.subject),
@@ -522,6 +615,7 @@ app.get('/api/fide/search', wrap(async (req, res) => {
 // canonical name) so it resolves everywhere afterward. Optionally verify the id
 // against its FIDE profile first.
 app.post('/api/players/link', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const fideId = String(req.body?.fideId || '').trim();
   if (!/^\d{3,}$/.test(fideId)) return res.status(400).json({ error: 'a numeric FIDE id is required' });
   const names = [req.body?.name, req.body?.fideName].filter(n => typeof n === 'string' && n.trim());
@@ -540,6 +634,7 @@ app.post('/api/players/link', wrap(async (req, res) => {
 // derive the recency/rating-weighted dossier, store one compact file. No engine
 // and no LLM here; this is instant and covers the opponent's whole history.
 app.post('/api/scout/import', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const pgn = typeof req.body === 'string' ? req.body : req.body?.pgn;
   if (!pgn || !pgn.trim()) return res.status(400).json({ error: 'No PGN provided' });
   // FIDE id from the body, or parsed from the uploaded filename the client sends.
@@ -582,7 +677,7 @@ app.get('/api/scout/book/:fideId', wrap(async (req, res) => {
 // only if it has PGN and no record yet; games already imported (whatever their
 // status) or lacking PGN cannot be newly queued.
 async function promoteStatus(book, dossier) {
-  const status = new Map((await listGames()).map(g => [g.id, g.status]));
+  const status = new Map((await listAllGames()).map(g => [g.id, g.status]));
   const byId = new Map(book.games.map(g => [g.id, g]));
   let present = 0, analysed = 0, queueable = 0;
   for (const id of dossier.analysisSet) {
@@ -597,6 +692,7 @@ async function promoteStatus(book, dossier) {
 // scout game records (matched to the existing name-keyed scout machinery) and
 // queue analysis. This is the only step that needs Stockfish.
 app.post('/api/scout/book/:fideId/promote', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const book = await getScoutBook(req.params.fideId);
   if (!book) return res.status(404).json({ error: 'no scout book for this FIDE id' });
   const settings = await getSettings();
@@ -619,6 +715,46 @@ app.post('/api/scout/book/:fideId/promote', wrap(async (req, res) => {
     if (game.playerColor) { enqueue('analyse', game.id); queued.push(game.id); }
   }
   res.json({ subject: book.name, fideId: book.fideId, queued: queued.length, already: already.length, analysisSet: dossier.analysisSet.length });
+}));
+
+// Seed a member's OWN games from their scout book: import the recent, on-strength
+// subset (the same set promote uses) as purpose='own' owned by the member, so the
+// member gets a private report, repertoire, drills, and puzzles from their own
+// play. The id is namespaced by member, so a game the shared scouting library
+// already holds as a scout copy is never overwritten (both coexist). Needs
+// Stockfish, like promote; body { analyse: false } seeds the records without
+// queueing analysis (a dry run, and how the tests exercise it).
+const seededOwnGameId = (memberId, gameId) => crypto.createHash('sha1').update(`${memberId}:${gameId}`).digest('hex').slice(0, 12);
+
+app.post('/api/users/:id/seed', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const member = await getUser(req.params.id);
+  if (!member || member.role !== 'member') return res.status(404).json({ error: 'unknown member' });
+  if (!member.fideId) return res.status(400).json({ error: `${member.id} has no FIDE id to seed from` });
+  const book = await getScoutBook(member.fideId);
+  if (!book) return res.status(404).json({ error: `no scout book for ${member.displayName} (FIDE ${member.fideId}); import it first` });
+  const settings = await getSettings();
+  const dossier = scoutDossier(book, dossierOpts(settings));
+  const byId = new Map(book.games.map(g => [g.id, g]));
+  const names = [book.name, ...(book.aliases || []), ...(member.playerNames || [])];
+  const seeded = [], queued = [], already = [];
+  for (const bookId of dossier.analysisSet) {
+    const bg = byId.get(bookId);
+    if (!bg?.pgn) continue;
+    const g = parseGame(bg.pgn);
+    const id = seededOwnGameId(member.id, g.id);
+    if (await getGame(id)) { already.push(id); continue; }
+    const game = {
+      id, headers: g.headers, moves: g.moves, pgn: g.pgn,
+      playerColor: detectPlayerColor(g.headers, names) || bg.color,
+      purpose: 'own', owner: member.id, seededFrom: { fideId: book.fideId, gameId: g.id },
+      status: 'imported', importedAt: new Date().toISOString(),
+    };
+    await saveGame(game, member.id);
+    seeded.push(id);
+    if (game.playerColor && req.body?.analyse !== false) { enqueue('analyse', id); queued.push(id); }
+  }
+  res.json({ member: member.id, fideId: member.fideId, analysisSet: dossier.analysisSet.length, seeded: seeded.length, queued: queued.length, already: already.length });
 }));
 
 // Opening clash: the predicted, branching, alternating tree of how this opponent
@@ -660,6 +796,7 @@ app.get('/api/scout/book/:fideId/clash', wrap(async (req, res) => {
 // the server produced. Engine-grounded (the model never picks or evaluates a
 // move). Home machine only. Requires the clash index to be built first.
 app.post('/api/scout/book/:fideId/clash/narrate', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   if (READONLY) return res.status(403).json({ error: 'narration is generated on the home machine' });
   const book = await getScoutBook(req.params.fideId);
   if (!book) return res.status(404).json({ error: 'no scout book for this FIDE id' });
@@ -699,6 +836,7 @@ app.get('/api/scout/:subject', wrap(async (req, res) => {
 }));
 
 app.post('/api/scout/:subject/prepsheet', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
   const subject = req.params.subject;
   const report = await buildReport({ purpose: 'scout', subject });
   if (!report.games) return res.status(404).json({ error: 'no analysed games for this subject' });
@@ -716,12 +854,17 @@ app.post('/api/scout/:subject/prepsheet', wrap(async (req, res) => {
 }));
 
 // --- pattern study notes -----------------------------------------------------
-app.get('/api/patterns', wrap(async (req, res) => res.json({ notes: await getPatternNotes() })));
+app.get('/api/patterns', wrap(async (req, res) => {
+  if (await blockVisitor(req, res)) return;
+  res.json({ notes: await getPatternNotes(await effectiveUser(req)) });
+}));
 app.post('/api/patterns/synthesize', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const uid = await effectiveUser(req);
   const name = String(req.body?.pattern || '').trim();
   if (!name) return res.status(400).json({ error: 'pattern required' });
   const settings = await getSettings();
-  const report = await buildReport();
+  const report = await buildReport({ userId: uid });
   const key = name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const pat = report.patterns.find(p => p.pattern.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() === key);
   if (!pat) return res.status(404).json({ error: 'pattern not found' });
@@ -738,32 +881,43 @@ app.post('/api/patterns/synthesize', wrap(async (req, res) => {
     prompt: patternSynthesisPrompt(pat.pattern, instances),
     schema: PATTERN_SYNTH_SCHEMA,
   });
-  const notes = await getPatternNotes();
+  const notes = await getPatternNotes(uid);
   notes[key] = { pattern: pat.pattern, ...output, count: pat.count, model, costUsd, createdAt: new Date().toISOString() };
-  await savePatternNotes(notes);
+  await savePatternNotes(notes, uid);
   res.json({ note: notes[key] });
 }));
 // Free-solve puzzles derived from analysed games (no schedule). GET, so it also
 // works on the read-only mirror. source: tactics | moments | missed.
 app.get('/api/puzzles', wrap(async (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
-  res.json(await buildPuzzles(req.query.source || 'tactics', limit));
+  res.json(await buildPuzzles(req.query.source || 'tactics', limit, undefined, await effectiveUser(req)));
 }));
-app.get('/api/drills', wrap(async (req, res) => res.json(await dueDrills(Number(req.query.limit) || 20, {
-  pattern: req.query.pattern || null,
-  category: req.query.category || null,
-  session: req.query.session === '1', // a real training session (not the badge poll): may mix in decoys
-}))));
-app.post('/api/drills/restore-suspended', wrap(async (req, res) => res.json({ restored: await restoreSuspended() })));
-app.post('/api/drills/decoy', wrap(async (req, res) => res.json({ decoys: await recordDecoy(!!req.body?.correct) })));
+app.get('/api/drills', wrap(async (req, res) => {
+  // Visitors get an ephemeral scout-derived set; nothing is read from or written to a store.
+  if (isVisitor(await currentUser(req))) return res.json(await visitorDrills(Number(req.query.limit) || 20));
+  res.json(await dueDrills(Number(req.query.limit) || 20, {
+    pattern: req.query.pattern || null,
+    category: req.query.category || null,
+    session: req.query.session === '1', // a real training session (not the badge poll): may mix in decoys
+    userId: await effectiveUser(req),
+  }));
+}));
+// A visitor records nothing: the drill-write routes no-op for them (their
+// practice is ephemeral). The frontend also skips these calls for visitors.
+const visitorNoop = async (req, res) => { if (isVisitor(await currentUser(req))) { res.json({ ok: true, ephemeral: true }); return true; } return false; };
+app.post('/api/drills/restore-suspended', wrap(async (req, res) => { if (await visitorNoop(req, res)) return; res.json({ restored: await restoreSuspended(await effectiveUser(req)) }); }));
+app.post('/api/drills/decoy', wrap(async (req, res) => { if (await visitorNoop(req, res)) return; res.json({ decoys: await recordDecoy(!!req.body?.correct, await effectiveUser(req)) }); }));
 app.post('/api/drills/:id/review', wrap(async (req, res) => {
-  res.json({ drill: await reviewDrill(req.params.id, req.body?.grade || 'good', req.body?.correct, !!req.body?.practice, Number(req.body?.ms)) });
+  if (await visitorNoop(req, res)) return;
+  res.json({ drill: await reviewDrill(req.params.id, req.body?.grade || 'good', req.body?.correct, !!req.body?.practice, Number(req.body?.ms), await effectiveUser(req)) });
 }));
 app.post('/api/drills/:id/suspend', wrap(async (req, res) => {
-  res.json({ drill: await suspendDrill(req.params.id, req.body?.suspended !== false) });
+  if (await visitorNoop(req, res)) return;
+  res.json({ drill: await suspendDrill(req.params.id, req.body?.suspended !== false, await effectiveUser(req)) });
 }));
 app.post('/api/drills/:id/undo', wrap(async (req, res) => {
-  res.json({ drill: await undoReview(req.params.id) });
+  if (await visitorNoop(req, res)) return;
+  res.json({ drill: await undoReview(req.params.id, await effectiveUser(req)) });
 }));
 
 app.get(/^\/(?!api|vendor).*/, (req, res) => res.sendFile(path.join(ROOT, 'public/index.html')));

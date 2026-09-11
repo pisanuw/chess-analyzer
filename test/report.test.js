@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { Chess } from 'chess.js';
 import { tempData, makeGame, writeGame } from './helpers.js';
@@ -10,6 +10,10 @@ const { buildReport, buildPrepCard, parseTimeControl, materialSignature } = awai
 const { buildRepertoire } = await import('../server/repertoire.js');
 
 const dir = process.env.DATA_DIR;
+// buildReport() defaults to the DEFAULT_USER (kai); foreign drill mirrors are
+// that member's review history from other machines, so they live in the member dir.
+const kaiDir = path.join(dir, 'users', 'kai');
+mkdirSync(kaiDir, { recursive: true });
 // 10 games: the first 5 each have a calculation mistake, the last 5 are clean.
 for (let i = 1; i <= 10; i++) {
   writeGame(dir, makeGame({
@@ -141,7 +145,7 @@ test('foreign drill mirrors merge into drill stats with pattern speed', async ()
       ],
     }],
   };
-  writeFileSync(path.join(dir, 'drills-other-machine.json'), JSON.stringify(foreignStore));
+  writeFileSync(path.join(kaiDir, 'drills-other-machine.json'), JSON.stringify(foreignStore));
   const r = await buildReport();
   assert.ok(r.drillStats, 'foreign reviews alone produce stats');
   assert.equal(r.drillStats.attempts, 3);
@@ -152,7 +156,7 @@ test('foreign drill mirrors merge into drill stats with pattern speed', async ()
 });
 
 test('recognition-speed median averages the two central values on an even sample', async () => {
-  writeFileSync(path.join(dir, 'drills-evenmachine.json'), JSON.stringify({ drills: [{
+  writeFileSync(path.join(kaiDir, 'drills-evenmachine.json'), JSON.stringify({ drills: [{
     id: 'y:1', gameId: 'y', ply: 1, phase: 'endgame', category: 'defence', pattern: 'Even pattern',
     reviews: [10000, 20000, 30000, 50000].map((ms, i) => ({ at: `2026-02-0${i + 1}T00:00:00Z`, grade: 'good', correct: true, ms })),
   }] }));

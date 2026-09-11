@@ -9,7 +9,11 @@
 [functions.api]
   # Pre-built clash index + narration are bundled too, so the mirror serves the
   # opening clash without an engine, the claude CLI, or parsing at request time.
-  included_files = ["data/games/*.json", "data/patterns.json", "data/prepsheets.json", "data/scouts/*.json", "data/players.json", "data/clash.json", "data/clashnotes.json"]
+  # Own and scout games share data/games/ (ownership is a field), so that one glob
+  # covers every member's games. Per-member pattern notes and the roster are
+  # bundled for the per-user Report and the login allowlist; per-member drills are
+  # not files (they live in Supabase, key drills:<id>, populated by publish-web.sh).
+  included_files = ["data/games/*.json", "data/patterns.json", "data/users/*/patterns.json", "data/users.json", "data/prepsheets.json", "data/scouts/*.json", "data/players.json", "data/clash.json", "data/clashnotes.json"]
 
 [[redirects]]
   from = "/api/*"
