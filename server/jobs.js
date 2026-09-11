@@ -7,6 +7,20 @@ import { complete, LlmError } from './llm.js';
 import { flushCache } from './evalcache.js';
 import { systemPrompt, momentPrompt, momentsBatchPrompt, gameSummaryPrompt, gameSummarySystemPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutMomentsBatchPrompt, scoutGameSummaryPrompt, batchExplanationSchema, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA, CATEGORIES } from './prompts.js';
 import { syncDrillsForGame } from './drills.js';
+import { getUser } from './users.js';
+
+/** The rating the coach prompts assume for a game's tracked player: the
+ * player's own Elo header in that game, then the owner's roster rating, then the
+ * global setting. Scout games keep the setting: the student there is whoever
+ * reads the shared dossier, not the game's subject. */
+export async function playerRatingFor(game, settings) {
+  const fallback = settings.playerRating || 2000;
+  if ((game.purpose || 'own') === 'scout') return fallback;
+  const own = Number(game.headers?.[game.playerColor === 'white' ? 'WhiteElo' : 'BlackElo']);
+  if (own >= 400 && own <= 3500) return Math.round(own);
+  const owner = await getUser(game.owner || DEFAULT_USER).catch(() => null);
+  return owner?.rating || fallback;
+}
 
 const jobs = new Map();
 let seq = 0;
@@ -121,6 +135,7 @@ async function runAnalyse(job) {
     if (job.cancelled) throw new Error('cancelled');
   });
   if (job.cancelled) throw new Error('cancelled');
+  const rating = await playerRatingFor(game, settings);
   const saved = await updateGame(job.gameId, g => {
     if (g.playerColor !== game.playerColor) {
       // Colour changed while the engine ran; re-derive the colour-dependent bits.
@@ -128,7 +143,7 @@ async function runAnalyse(job) {
       Object.assign(summary, summarize(moves, g.playerColor, settings.momentThreshold));
     }
     g.analysis = { moves, summary, analysedAt: new Date().toISOString() };
-    g.playerRating = settings.playerRating;
+    g.playerRating = rating;
     g.explanations = g.explanations || {};
     // A game with no critical moments has nothing to explain, so it is already
     // done: mark it 'explained' rather than leaving it stuck looking pending.
@@ -181,7 +196,8 @@ async function runExplain(job) {
   game.explanations = game.explanations || {};
   // Scout games get exploitation-framed prompts; the schema shape is identical.
   const scout = (game.purpose || 'own') === 'scout';
-  const system = scout ? scoutSystemPrompt(settings.playerRating) : systemPrompt(settings.playerRating);
+  const rating = game.playerRating || await playerRatingFor(game, settings);
+  const system = scout ? scoutSystemPrompt(settings.playerRating) : systemPrompt(rating);
   const schema = scout ? SCOUT_EXPLANATION_SCHEMA : EXPLANATION_SCHEMA;
   const known = await knownPatterns(game);
   let remaining = [...todo];
@@ -248,7 +264,7 @@ async function runExplain(job) {
     // The whole-game debrief is a different task from a single-moment
     // explanation, so it gets its own system prompt (own games only; the scout
     // persona already frames the whole-opponent view correctly).
-    const summarySystem = scout ? system : gameSummarySystemPrompt(settings.playerRating);
+    const summarySystem = scout ? system : gameSummarySystemPrompt(rating);
     const { output, costUsd, model } = await completeRetry(settings, { system: summarySystem, prompt: scout ? scoutGameSummaryPrompt(game) : gameSummaryPrompt(game), schema: SUMMARY_SCHEMA });
     const gs = { ...output, model, costUsd, createdAt: new Date().toISOString() };
     job.costUsd += costUsd || 0;

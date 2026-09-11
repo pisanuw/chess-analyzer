@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import { tempData } from './helpers.js';
 
 process.env.DATA_DIR = tempData();
-const { sanitizeExplanation } = await import('../server/jobs.js');
+const { sanitizeExplanation, playerRatingFor } = await import('../server/jobs.js');
+
+test('playerRatingFor: the game Elo header, then the roster rating, then the setting', async () => {
+  const s = { playerRating: 1800 };
+  assert.equal(await playerRatingFor({ purpose: 'own', playerColor: 'white', headers: { WhiteElo: '2143' }, owner: 'kai' }, s), 2143);
+  assert.equal(await playerRatingFor({ purpose: 'own', playerColor: 'black', headers: { WhiteElo: '2143' }, owner: 'kai' }, s), 2000, "kai's roster rating");
+  assert.equal(await playerRatingFor({ purpose: 'own', playerColor: 'white', headers: {}, owner: 'nikash' }, s), 1800, 'no roster rating: the setting');
+  assert.equal(await playerRatingFor({ purpose: 'scout', playerColor: 'white', headers: { WhiteElo: '2400' } }, s), 1800, 'scout games keep the setting');
+});
 
 test('sanitizeExplanation accepts only complete entries with known categories', () => {
   const good = { ply: 3, pattern: 'Wrong rook', category: 'calculation', time_pressure: 'yes', explanation: 'because', key_question: 'what?', concept: 'rook endings' };

@@ -173,7 +173,7 @@ tr.clickable:hover td { background: var(--surface-2); }
 .clash-move { font-variant-numeric: tabular-nums; cursor: pointer; border-radius: 4px; padding: 0 3px; }
 .clash-move:hover { background: var(--surface-2); }
 .clash-move.sel { background: var(--accent-soft); }
-.clash-move.kai { font-weight: 600; }
+.clash-move.student { font-weight: 600; }
 .clash-move.opponent { color: var(--text-2); }
 .clash-move.engine { color: var(--accent); }
 .clash-engine { margin: 2px 0 2px 16px; }

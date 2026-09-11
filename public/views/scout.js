@@ -472,7 +472,7 @@ async function pollClash(fideId, body, boardRef, ctx) {
 /** A per-node marker for where a prediction runs out (coverage, not just depth). */
 function clashFlag(node) {
   if (node.transposesTo) return '<span class="chip" title="Same position reached by a move order already shown">transposes</span>';
-  if (node.kaiPrepEnds) return '<span class="chip warn" title="You have no games continuing here: your prepared line ends">your line ends</span>';
+  if (node.studentPrepEnds) return '<span class="chip warn" title="You have no games continuing here: your prepared line ends">your line ends</span>';
   if (node.oppPrepEnds) return node.oppPrepEndsReason === 'nodata'
     ? '<span class="chip warn" title="This opponent has never reached this position">not faced</span>'
     : '<span class="chip warn" title="The opponent reached this but in too few games to trust a prediction">book thins out</span>';
@@ -502,7 +502,7 @@ function renderClashEdges(node, orient, path = []) {
   if (!node.edges.length) return '';
   return `<ul class="clash-tree">${node.edges.map(e => {
     const label = `${movePrefix({ moveNumber: Math.floor(node.ply / 2) + 1, color: node.side })} ${esc(e.san)}`;
-    const who = node.mover === 'kai' ? 'Your move' : 'Their reply';
+    const who = node.mover === 'student' ? 'Your move' : 'Their reply';
     const line = [...path, e.san];
     return `<li><span class="clash-move ${node.mover}" data-path="${esc(line.join(' '))}" data-orient="${orient}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${clashLeafEngine(e.child, orient, line)}${renderClashEdges(e.child, orient, line)}</li>`;
   }).join('')}</ul>`;
@@ -514,7 +514,7 @@ function renderClashEdges(node, orient, path = []) {
  * opponent scores badly in is flagged. `path` is the line up to the leaf. */
 function clashLeafEngine(node, orient, path = []) {
   if (!node.engineBest) return '';
-  const who = node.mover === 'kai' ? 'engine suggests' : 'likely engine reply';
+  const who = node.mover === 'student' ? 'engine suggests' : 'likely engine reply';
   const lines = node.engineLines?.length ? node.engineLines : [node.engineBest];
   const items = lines.map(l => {
     const steer = l.oppScorePct != null
@@ -592,7 +592,7 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
   const forest = color => {
     const root = clash.forests[color];
     if (!root) return '';
-    const n = clash.kaiColorCounts[color] || 0;
+    const n = clash.studentColorCounts[color] || 0;
     const body = root.edges.length
       ? (clashFormat() === 'lichess' ? renderClashLichess(root, color) : renderClashEdges(root, color))
       : '<div class="muted">Not enough of your games in this colour.</div>';

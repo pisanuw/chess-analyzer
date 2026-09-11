@@ -6,7 +6,7 @@ import { Chess } from 'chess.js';
 import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from './pgn.js';
 import { getSettings, saveSettings, listGames, listAllGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, getClashNotes, saveClashNotes, DEFAULT_SETTINGS, DEFAULT_USER, DATA_DIR } from './store.js';
 import { parseFideFromFilename, buildScoutBook, scoutDossier } from './scoutbook.js';
-import { loadKaiGames, buildKaiIndex, assembleClashForest, extendClashLeaves, clashPrincipalLines } from './clash.js';
+import { loadStudentGames, buildStudentIndex, assembleClashForest, extendClashLeaves, clashPrincipalLines } from './clash.js';
 import { assocsFromHeaders, recordAssociations, lookupFideId } from './players.js';
 import { searchFide, fideProfileName } from './fide.js';
 import { enqueue, listJobs, cancelJobs } from './jobs.js';
@@ -161,6 +161,19 @@ app.get('/api/status', wrap(async (req, res) => {
 
 app.get('/api/settings', wrap(async (req, res) => res.json({ settings: await getSettings(), defaults: DEFAULT_SETTINGS })));
 
+// The member roster for the frontend (filing an import, the admin's member
+// switcher): public fields plus the PGN-name substrings, never emails.
+app.get('/api/members', wrap(async (req, res) => {
+  res.json({ members: (await listMembers()).map(u => ({ ...publicUser(u), playerNames: u.playerNames || [] })) });
+}));
+
+// The rating the coach assumes for the person preparing (prep sheets, clash
+// narration, pattern synthesis): their roster rating, else the global setting.
+async function studentRating(req, settings) {
+  const u = await getUser(await effectiveUser(req)).catch(() => null);
+  return u?.rating || settings.playerRating;
+}
+
 // Probe every configured remote engine host over ssh (parallel, ~5s timeout
 // each) and keep the successful connections warm for the next analysis job.
 // vpnHint flags the everything-unreachable case, which usually means the VPN
@@ -234,6 +247,13 @@ app.post('/api/games/import', wrap(async (req, res) => {
   const purpose = req.body?.purpose === 'scout' ? 'scout' : 'own';
   const subject = String(req.body?.subject || '').trim();
   if (purpose === 'scout' && !subject) return res.status(400).json({ error: 'scouting needs the opponent name (subject)' });
+  // Own games are filed under a member (default: the primary member) and that
+  // member's own PGN-name substrings decide the colour, so another member's
+  // games never need the operator's names to match. The primary member also
+  // keeps the global setting's names (a single-user install configures only those).
+  const ownerId = String(req.body?.owner || '').trim() || DEFAULT_USER;
+  const owner = purpose === 'own' ? await getUser(ownerId) : null;
+  if (purpose === 'own' && (!owner || owner.role !== 'member')) return res.status(400).json({ error: `unknown member: ${ownerId}` });
   // Split first (cheap line scan) and bound the count before the expensive
   // synchronous parse, so an oversized paste is rejected without blocking.
   const chunks = splitPgn(pgn);
@@ -241,6 +261,7 @@ app.post('/api/games/import', wrap(async (req, res) => {
     return res.status(413).json({ error: `too many games in one import (${chunks.length}); split into files of at most ${MAX_IMPORT_GAMES} games` });
   }
   const settings = await getSettings();
+  const ownNames = [...(owner?.playerNames || []), ...(ownerId === DEFAULT_USER ? settings.playerNames : [])];
   const parsed = parsePgnGames(chunks);
   const imported = [], skipped = [], failed = [], assocs = [];
   for (const r of parsed) {
@@ -252,11 +273,11 @@ app.post('/api/games/import', wrap(async (req, res) => {
     const game = {
       id: g.id, headers: g.headers, moves: g.moves, pgn: g.pgn,
       // For scouting, the studied side is the subject, matched the same way as the player.
-      playerColor: detectPlayerColor(g.headers, purpose === 'scout' ? [subject] : settings.playerNames),
+      playerColor: detectPlayerColor(g.headers, purpose === 'scout' ? [subject] : ownNames),
       purpose, subject: purpose === 'scout' ? subject : null,
       status: 'imported', importedAt: new Date().toISOString(),
     };
-    await saveGame(game);
+    await saveGame(game, ownerId);
     imported.push(game.id);
     if (game.playerColor && req.body?.analyse !== false) enqueue('analyse', game.id);
   }
@@ -371,8 +392,8 @@ app.get('/api/games/:id/moments/:ply/prompt', wrap(async (req, res) => {
   const settings = await getSettings();
   const scout = (game.purpose || 'own') === 'scout';
   res.json(scout
-    ? { system: scoutSystemPrompt(settings.playerRating), prompt: scoutMomentPrompt(game, ply), schema: SCOUT_EXPLANATION_SCHEMA }
-    : { system: systemPrompt(settings.playerRating), prompt: momentPrompt(game, ply), schema: EXPLANATION_SCHEMA });
+    ? { system: scoutSystemPrompt(await studentRating(req, settings)), prompt: scoutMomentPrompt(game, ply), schema: SCOUT_EXPLANATION_SCHEMA }
+    : { system: systemPrompt(game.playerRating || settings.playerRating), prompt: momentPrompt(game, ply), schema: EXPLANATION_SCHEMA });
 }));
 
 app.put('/api/games/:id/moments/:ply/explanation', wrap(async (req, res) => {
@@ -463,7 +484,7 @@ app.post('/api/games/:id/moments/:ply/reexplain', wrap(async (req, res) => {
   const known = await knownPatterns(game);
   const args = [game, ply, [...known.patterns], [...known.concepts]];
   const { output, costUsd, model } = await complete(settings, {
-    system: scout ? scoutSystemPrompt(settings.playerRating) : systemPrompt(settings.playerRating),
+    system: scout ? scoutSystemPrompt(await studentRating(req, settings)) : systemPrompt(game.playerRating || settings.playerRating),
     prompt: (scout ? scoutMomentPrompt(...args) : momentPrompt(...args)) + reExplainSuffix(prior.explanation),
     schema: scout ? SCOUT_EXPLANATION_SCHEMA : EXPLANATION_SCHEMA,
   });
@@ -827,9 +848,9 @@ app.get('/api/scout/book/:fideId/clash', wrap(async (req, res) => {
     const job = enqueue('clash', 'clash:' + book.fideId);
     return res.json({ building: true, job: { id: job.id, kind: job.kind, gameId: job.gameId } });
   }
-  const kaiGames = await loadKaiGames();
-  const kai = buildKaiIndex(kaiGames);
-  const clash = assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, kai, book, params: req.query });
+  const uid = await effectiveUser(req); // the clash crosses the viewer's own openings with the book
+  const student = buildStudentIndex(await loadStudentGames(uid));
+  const clash = assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, student, book, params: req.query });
   // Optional, engine-grounded: fill prep-end leaves with Stockfish's best move
   // (candidate moves from the engine, never a model). Cache-first, so the many
   // shared opening positions are near free. Off on the read-only mirror (no engine).
@@ -839,10 +860,14 @@ app.get('/api/scout/book/:fideId/clash', wrap(async (req, res) => {
     if (!pool.engines.length) clash.engineWarning = pool.warning || 'No engine available to extend lines.';
     else { if (pool.warning) clash.engineWarning = pool.warning; await extendClashLeaves(clash, entry.index, settings, pool); }
   }
-  clash.narration = (await getClashNotes())[book.fideId] || null;
+  clash.narration = (await getClashNotes())[clashNoteKey(book.fideId, uid)] || null;
   clash.narrationVersion = clashNarrationVersion();
   res.json({ clash });
 }));
+
+// Narration is about the student's own lines, so it is keyed per member; a bare
+// fideId key is a note from before multi-user and belongs to the primary member.
+const clashNoteKey = (fideId, uid) => (uid === DEFAULT_USER ? fideId : `${uid}:${fideId}`);
 
 // Optional coach narration of the predicted lines: prose only, keyed to line ids
 // the server produced. Engine-grounded (the model never picks or evaluates a
@@ -854,13 +879,14 @@ app.post('/api/scout/book/:fideId/clash/narrate', wrap(async (req, res) => {
   if (!book) return res.status(404).json({ error: 'no scout book for this FIDE id' });
   const entry = (await getClashStore())[book.fideId];
   if (!entry || entry.bookImportedAt !== book.importedAt) return res.status(409).json({ error: 'build the opening clash first' });
-  const kai = buildKaiIndex(await loadKaiGames());
-  const clash = assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, kai, book });
+  const uid = await effectiveUser(req);
+  const student = buildStudentIndex(await loadStudentGames(uid));
+  const clash = assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, student, book });
   const lines = clashPrincipalLines(clash);
   if (!lines.length) return res.status(400).json({ error: 'no predicted lines to narrate yet' });
   const settings = await getSettings();
   const { output, costUsd, model } = await complete(settings, {
-    system: scoutSystemPrompt(settings.playerRating),
+    system: scoutSystemPrompt(await studentRating(req, settings)),
     prompt: clashLinePrompt(book.name, lines),
     schema: CLASH_NARRATION_SCHEMA,
   });
@@ -871,7 +897,7 @@ app.post('/api/scout/book/:fideId/clash/narrate', wrap(async (req, res) => {
     version: clashNarrationVersion(), model, costUsd, createdAt: new Date().toISOString(),
   };
   const store = await getClashNotes();
-  store[book.fideId] = narration;
+  store[clashNoteKey(book.fideId, uid)] = narration;
   await saveClashNotes(store);
   res.json({ narration });
 }));
@@ -895,7 +921,7 @@ app.post('/api/scout/:subject/prepsheet', wrap(async (req, res) => {
   const repertoire = await buildRepertoire({ purpose: 'scout', subject });
   const settings = await getSettings();
   const { output, costUsd, model } = await complete(settings, {
-    system: scoutSystemPrompt(settings.playerRating),
+    system: scoutSystemPrompt(await studentRating(req, settings)),
     prompt: prepSheetPrompt(subject, report, repertoire),
     schema: PREP_SHEET_SCHEMA,
   });
@@ -971,7 +997,7 @@ app.post('/api/patterns/synthesize', wrap(async (req, res) => {
   }
   if (instances.length < 2) return res.status(400).json({ error: 'need at least 2 explained instances' });
   const { output, costUsd, model } = await complete(settings, {
-    system: systemPrompt(settings.playerRating),
+    system: systemPrompt(await studentRating(req, settings)),
     prompt: patternSynthesisPrompt(pat.pattern, instances),
     schema: PATTERN_SYNTH_SCHEMA,
   });

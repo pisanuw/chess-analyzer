@@ -19,7 +19,7 @@ import { Chess } from 'chess.js';
 import { parseGame } from './pgn.js';
 import { ageDays } from './scoutbook.js';
 import { resultScore } from './report.js';
-import { getGame, listGames, getScoutBook, getClashStore, saveClashStore, getSettings } from './store.js';
+import { getGame, listGames, getScoutBook, getClashStore, saveClashStore, getSettings, DEFAULT_USER } from './store.js';
 import { scoreToCp, stmSign } from './analyze.js';
 import { winProb, WP_ACCEPT } from '../public/shared.js';
 import { getCachedEval, putCachedEval, evalCacheKey, flushCache } from './evalcache.js';
@@ -35,8 +35,8 @@ export const CLASH_DEFAULTS = {
   oppBranch: 3,      // top-N opponent replies kept per node
   minCountOpp: 2,    // never branch on a single opponent game (except the only reply)
   minShareOpp: 0.08, // drop replies under this weighted share (except the only reply)
-  kaiBranch: 1,      // the player is single-file (one repertoire) below his first move
-  rootKaiBranch: 6,  // ...but his first move fans out over his whole opening menu
+  studentBranch: 1,      // the player is single-file (one repertoire) below his first move
+  rootStudentBranch: 6,  // ...but his first move fans out over his whole opening menu
   minRootGames: 2,   // ignore one-off opening roots
   maxNodes: 400,     // per-forest hard node cap
   maxParse: 1200,    // backstop on how many book games one build parses
@@ -56,20 +56,21 @@ function weightOf(dateStr, now, maxDays, halfLifeDays) {
   return age == null ? 0.25 : Math.pow(0.5, age / halfLifeDays);
 }
 
-/** The player's analysed own games (one full read each), the only source deep
- * enough for his side of the tree. */
-export async function loadKaiGames() {
-  const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
+/** The student's analysed own games (one full read each), the only source deep
+ * enough for their side of the tree. Scoped to the member whose openings the
+ * clash crosses, so every viewer sees their own lines against the opponent. */
+export async function loadStudentGames(userId = DEFAULT_USER) {
+  const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
   const games = await Promise.all(index.map(g => getGame(g.id)));
   return games.filter(g => g && g.playerColor && g.analysis?.moves);
 }
 
 /** Index of the player's own opening moves, keyed by colour then by the position
  * before each move: { white: { posKey: { uci: agg } }, black: {...} }. */
-export function buildKaiIndex(kaiGames, maxPly = CLASH_DEFAULTS.maxPly) {
+export function buildStudentIndex(studentGames, maxPly = CLASH_DEFAULTS.maxPly) {
   const index = { white: {}, black: {} };
   const counts = { white: 0, black: 0 };
-  for (const g of kaiGames) {
+  for (const g of studentGames) {
     const color = g.playerColor;
     if (color !== 'white' && color !== 'black') continue;
     counts[color]++;
@@ -157,70 +158,70 @@ export function clashParams(params = {}) {
   if (params.maxPly != null) p.maxPly = clampInt(params.maxPly, 4, 24, p.maxPly);
   if (params.oppBranch != null) p.oppBranch = clampInt(params.oppBranch, 1, 5, p.oppBranch);
   if (params.minShareOpp != null) p.minShareOpp = clampInt(params.minShareOpp, 0, 40, 8) / 100;
-  if (params.kaiBranch != null) p.kaiBranch = clampInt(params.kaiBranch, 1, 3, p.kaiBranch);
+  if (params.studentBranch != null) p.studentBranch = clampInt(params.studentBranch, 1, 3, p.studentBranch);
   return p;
 }
 
 /** A display-only leaf: a position we choose not to expand (a thin opponent reply
  * past the point the book supports). Not memoised, carries no edges. */
-function leafOf(fen, ply, kaiColor) {
+function leafOf(fen, ply, studentColor) {
   const side = sideOf(fen);
-  return { key: keyOf(fen), side, mover: side === kaiColor ? 'kai' : 'opponent', ply, fenBefore: fen, edges: [], kaiPrepEnds: false, oppPrepEnds: false, oppPrepEndsReason: null, truncated: false, leaf: true };
+  return { key: keyOf(fen), side, mover: side === studentColor ? 'student' : 'opponent', ply, fenBefore: fen, edges: [], studentPrepEnds: false, oppPrepEnds: false, oppPrepEndsReason: null, truncated: false, leaf: true };
 }
 
 /** Assemble the two forests from the pre-built indexes. Cheap (no parsing), so it
  * runs per request. White forest: root is the player to move (his opening menu).
  * Black forest: root is the opponent to move (they choose the opening), then the
  * player replies. Depth alternates from there. */
-export function assembleClashForest({ oppIndex, coverage, kai, book, params = {} }) {
+export function assembleClashForest({ oppIndex, coverage, student, book, params = {} }) {
   const P = clashParams(params);
   const forests = { white: null, black: null };
-  for (const kaiColor of ['white', 'black']) {
-    if (!kai.counts[kaiColor]) continue; // no games of this colour, no forest
-    const oppColor = kaiColor === 'white' ? 'black' : 'white';
-    const kaiMap = kai.index[kaiColor] || {};
+  for (const studentColor of ['white', 'black']) {
+    if (!student.counts[studentColor]) continue; // no games of this colour, no forest
+    const oppColor = studentColor === 'white' ? 'black' : 'white';
+    const studentMap = student.index[studentColor] || {};
     const oppMap = (oppIndex && oppIndex[oppColor]) || {};
     const memo = new Set();
     const counter = { n: 0 };
-    forests[kaiColor] = expand(START_FEN, 0, false, { kaiColor, kaiMap, oppMap, memo, counter, P });
+    forests[studentColor] = expand(START_FEN, 0, false, { studentColor, studentMap, oppMap, memo, counter, P });
   }
   const nodeCount = countNodes(forests.white) + countNodes(forests.black);
   return {
     fideId: book.fideId, name: book.name,
     builtAt: new Date().toISOString(), bookImportedAt: book.importedAt,
-    params: { maxPly: P.maxPly, oppBranch: P.oppBranch, minCountOpp: P.minCountOpp, minShareOpp: P.minShareOpp, kaiBranch: P.kaiBranch },
-    kaiColorCounts: kai.counts,
+    params: { maxPly: P.maxPly, oppBranch: P.oppBranch, minCountOpp: P.minCountOpp, minShareOpp: P.minShareOpp, studentBranch: P.studentBranch },
+    studentColorCounts: student.counts,
     forests, nodeCount,
     truncated: (forests.white?.truncated || forests.black?.truncated) || nodeCount >= 2 * P.maxNodes,
     coverage,
   };
 }
 
-function expand(fen, ply, kaiMoved, ctx) {
-  const { kaiColor, kaiMap, oppMap, memo, counter, P } = ctx;
+function expand(fen, ply, studentMoved, ctx) {
+  const { studentColor, studentMap, oppMap, memo, counter, P } = ctx;
   const side = sideOf(fen);
   const key = keyOf(fen);
-  const mover = side === kaiColor ? 'kai' : 'opponent';
-  const node = { key, side, mover, ply, fenBefore: fen, edges: [], kaiPrepEnds: false, oppPrepEnds: false, oppPrepEndsReason: null, truncated: false };
+  const mover = side === studentColor ? 'student' : 'opponent';
+  const node = { key, side, mover, ply, fenBefore: fen, edges: [], studentPrepEnds: false, oppPrepEnds: false, oppPrepEndsReason: null, truncated: false };
   const posKey = posKeyOf(fen);
-  const hasData = mover === 'kai' ? !!kaiMap[posKey] : !!oppMap[posKey];
+  const hasData = mover === 'student' ? !!studentMap[posKey] : !!oppMap[posKey];
 
   if (memo.has(key)) { node.transposesTo = key; return node; } // merge move orders; do not re-expand
   memo.add(key);
   counter.n++;
   if (ply >= P.maxPly || counter.n >= P.maxNodes) {
     if (hasData) node.truncated = true;
-    else if (mover === 'kai') node.kaiPrepEnds = true;
+    else if (mover === 'student') node.studentPrepEnds = true;
     else { node.oppPrepEnds = true; node.oppPrepEndsReason = 'nodata'; }
     return node;
   }
 
-  if (mover === 'kai') {
-    const moves = kaiMap[posKey] ? Object.values(kaiMap[posKey]) : [];
+  if (mover === 'student') {
+    const moves = studentMap[posKey] ? Object.values(studentMap[posKey]) : [];
     let kept = moves.sort((a, b) => b.count - a.count);
-    if (!kaiMoved) kept = kept.filter(m => m.count >= P.minRootGames); // ignore one-off roots at his first move
-    kept = kept.slice(0, kaiMoved ? P.kaiBranch : P.rootKaiBranch);
-    if (!kept.length) { node.kaiPrepEnds = true; return node; }
+    if (!studentMoved) kept = kept.filter(m => m.count >= P.minRootGames); // ignore one-off roots at his first move
+    kept = kept.slice(0, studentMoved ? P.studentBranch : P.rootStudentBranch);
+    if (!kept.length) { node.studentPrepEnds = true; return node; }
     for (const m of kept) {
       node.edges.push({
         san: m.san, uci: m.uci, fenAfter: m.childFen, childKey: keyOf(m.childFen),
@@ -251,7 +252,7 @@ function expand(fen, ply, kaiMoved, ctx) {
       lastDate: m.lastDate || '',
       // A thin reply is speculative past this point, so show it but do not mine
       // deeper into single-game noise.
-      child: node.oppPrepEndsReason === 'thin' ? leafOf(m.childFen, ply + 1, kaiColor) : expand(m.childFen, ply + 1, kaiMoved, ctx),
+      child: node.oppPrepEndsReason === 'thin' ? leafOf(m.childFen, ply + 1, studentColor) : expand(m.childFen, ply + 1, studentMoved, ctx),
     });
     if (counter.n >= P.maxNodes) break;
   }
@@ -268,7 +269,7 @@ function countNodes(node) {
 const fmtSanLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
 
 function endReasonOf(node) {
-  if (node.kaiPrepEnds) return 'you have no games continuing here';
+  if (node.studentPrepEnds) return 'you have no games continuing here';
   if (node.oppPrepEnds) return node.oppPrepEndsReason === 'nodata' ? 'the opponent has never faced this position' : 'the opponent has too few games here to trust';
   if (node.leaf) return 'the opponent has too few games here to continue';
   if (node.truncated) return 'the shown depth limit was reached';
@@ -306,7 +307,7 @@ const MAX_EXTEND = 40; // bound the engine work in one synchronous request
  * positions. */
 function collectExtendable(node, byFen) {
   if (!node) return;
-  if (!node.edges.length && !node.transposesTo && (node.kaiPrepEnds || node.oppPrepEnds || node.leaf || node.truncated)) {
+  if (!node.edges.length && !node.transposesTo && (node.studentPrepEnds || node.oppPrepEnds || node.leaf || node.truncated)) {
     let over = false;
     try { const c = new Chess(node.fenBefore); over = c.isGameOver(); } catch { over = true; }
     if (!over) (byFen.get(node.fenBefore) || byFen.set(node.fenBefore, []).get(node.fenBefore)).push(node);
@@ -344,7 +345,7 @@ function annotateLeaf(node, fen, result, oppIndex) {
   // Steering only makes sense when it is your move (you choose). Look up the
   // opponent's historical score in each engine-approved candidate's resulting
   // position; prefer the acceptable move that heads into their worst structure.
-  if (node.mover === 'kai' && oppIndex) {
+  if (node.mover === 'student' && oppIndex) {
     const oppColor = stm === 'white' ? 'black' : 'white';
     const bestStm = lines[0].stmCp;
     let steer = null;

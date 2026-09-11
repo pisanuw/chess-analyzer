@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-11 (Multi-user seams: import owner, per-game rating, clash per viewer)
+
+- `POST /api/games/import` takes an `owner` (a member id, default the primary member): the game is filed under that member and their roster `playerNames` decide the colour, so Nikash's PGNs no longer need the operator's names to match (the primary member keeps the global setting's names too). The Games page shows a "For member" select to the admin when there is more than one member, and its own-versus-scout detection uses the selected member's names. Members on the local server see a read-only list instead of an Import card that would 403. New `GET /api/members` (public fields plus PGN names, never emails).
+- The coach is told the right rating: `playerRatingFor` (`server/jobs.js`) uses the player's own Elo header in that game, then the owner's roster rating, then the global setting, both when the analysis stamps `playerRating` and in every own-game prompt. Prep sheets, clash narration, pattern synthesis, and scout prompts assume the preparing member's roster rating (`studentRating`), not always the operator's.
+- The opening clash is built from the viewer's own games (`loadStudentGames(userId)`), not always the primary member's, and clash narration is keyed per member (a bare FIDE-id key stays the primary member's). Every `kai*` identifier in `server/clash.js`, the routes, the Scouting view, the CSS, and the tests is now `student*` (`buildStudentIndex`, `studentPrepEnds`, `studentColorCounts`, `mover: 'student'`, and so on).
+
 ## 2026-09-11 (Fixes: stale sessions, Supabase timeouts, audit log, CI)
 
 - A validly signed session cookie for a user id no longer on the roster used to fall through the admin branch of `effectiveUser` and be served the default member's games, report, and drills. A new `knownSessionMiddleware` (`server/auth.js`) resolves the roster once per request, rejects unknown ids with a 401 and clears the dead cookie; `currentUser` caches the resolved user on the request and `effectiveUser` refuses to fall back when auth is on. `test/session.test.js` covers it.
