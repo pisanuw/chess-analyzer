@@ -99,7 +99,7 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
   // The games list drives the "still processing" / "stale" prep-sheet flags.
   const [book, data, gamesRes] = await Promise.all([
     entry.fideId ? api.scoutBook(entry.fideId).catch(() => null) : Promise.resolve(null),
-    api.scout(subject).catch(() => null),
+    api.scout(subject, entry.color || null).catch(() => null),
     api.games().catch(() => ({ games: [] })),
   ]);
   if (!book && !data) {
@@ -119,20 +119,56 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
     ? `<details class="acc" id="dossier-acc"><summary><span class="acc-title">Deep dossier</span> <span class="muted" style="font-size:13px">${data.report.games} analysed game${data.report.games === 1 ? '' : 's'}</span></summary><div class="acc-body" id="engine-dossier"></div></details>`
     : `<div id="engine-dossier">${book ? engineHint(book, readonly) : ''}</div>`;
   el.innerHTML = subjectHeader(entry)
+    + colourCut(entry)
+    + (data?.headToHead ? headToHeadCard(data.headToHead, subject) : '')
     + (data ? prepSheetCard(subject, data.report, data.prepSheet, pending, readonly, data.prepSheetVersion) : '')
     + (linkable ? fideLinkCard(subject) : '')
-    + (book ? bookSection(book.dossier, readonly, book.promote) : '')
+    + (book ? bookSection(book.dossier, readonly, book.promote, entry.color) : '')
     + (book ? clashCard() : '')
     + dossierAcc;
 
+  // The colour cut re-renders the whole dossier for that colour (the deep
+  // dossier, the book table, the clash forest, and the prep-round link).
+  el.querySelectorAll('[data-color-cut]').forEach(b => b.onclick = () => { entry.color = b.dataset.colorCut || null; refresh(); });
   if (data) wirePrep(el, subject, data.report, pending, refresh);
   if (linkable) wireFideLink(el, subject);
   if (book) {
     wirePromote(el, book.dossier, subject, book.promote, refresh);
     onFirstOpen(el.querySelector('#book-acc'), () => renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend));
-    onFirstOpen(el.querySelector('#clash-card'), () => wireClash(el, entry.fideId, boardRef, readonly));
+    onFirstOpen(el.querySelector('#clash-card'), () => wireClash(el, entry.fideId, boardRef, readonly, entry.color));
   }
   if (data) onFirstOpen(el.querySelector('#dossier-acc'), () => renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly));
+}
+
+/** "Their games: all, as White, as Black". Preparation is colour-specific: the
+ * student faces the opponent in one colour, so the whole page can be cut to it. */
+function colourCut(entry) {
+  const btn = (val, label) => `<button class="small${(entry.color || '') === val ? ' primary' : ''}" data-color-cut="${val}">${label}</button>`;
+  return `<div class="row" style="gap:6px; align-items:center; margin: 0 0 12px">
+    <span class="muted"><small>Their games:</small></span>${btn('', 'All')}${btn('white', 'As White')}${btn('black', 'As Black')}
+    ${entry.color ? `<small class="muted">Showing ${esc(entry.subject)} as ${entry.color}: what you meet when you have ${entry.color === 'white' ? 'Black' : 'White'}.</small>` : ''}
+  </div>`;
+}
+
+/** Your own record against this opponent: the first thing a player wants to
+ * see, above everything derived from the opponent's other games. */
+function headToHeadCard(h2h, subject) {
+  if (!h2h.games.length) return '';
+  const r = h2h.record;
+  const rows = h2h.games.slice(0, 10).map(g => `<tr>
+    <td><a href="#/game/${g.gameId}">${esc(g.date || '?')}</a></td>
+    <td><span class="chip ${g.color}">${g.color}</span></td>
+    <td>${esc(g.result)}</td>
+    <td>${esc(fmtLine(g.line))}${g.line.length ? ` <a href="${lichess(g.line)}" target="_blank" rel="noopener" title="Open on lichess">↗</a>` : ''}</td>
+    <td class="num">${g.accuracy != null ? g.accuracy + '%' : '–'}</td>
+    <td class="num">${g.moments ?? '–'}</td>
+    <td><small class="muted">${esc(g.event || '')}</small></td>
+  </tr>`).join('');
+  return `<details class="acc" open><summary><span class="acc-title">Head to head</span> <span class="muted" style="font-size:13px">${r.games} game${r.games === 1 ? '' : 's'}: ${r.wins}W ${r.draws}D ${r.losses}L${r.scorePct != null ? `, ${r.scorePct}%` : ''}</span></summary>
+    <div class="acc-body">
+      <table><thead><tr><th>Date</th><th>You</th><th>Result</th><th>Opening</th><th class="num">Accuracy</th><th class="num">Moments</th><th>Event</th></tr></thead><tbody>${rows}</tbody></table>
+      ${h2h.games.length > 10 ? `<p class="muted"><small>Showing the latest 10 of ${h2h.games.length}.</small></p>` : ''}
+    </div></details>`;
 }
 
 /** Run `fn` the first time a <details> is opened (or now, if already open). Lets
@@ -336,7 +372,7 @@ function wireFideLink(el, subject) {
 }
 
 /** The book tier: what they play, weighted to recent, on-strength games. */
-function bookSection(d, readonly, promote) {
+function bookSection(d, readonly, promote, color = null) {
   const cov = d.coverage;
   // Rating over time is a small line graph (filled in after insertion by
   // renderRatingTrend); a row of "year: elo" chips was hard to read as a trend.
@@ -369,9 +405,9 @@ function bookSection(d, readonly, promote) {
     </div>
     <h3 style="margin:16px 0 0">Rating over time</h3>
     ${trendBlock}
-    <div class="grid grid-2" style="margin-top: 16px">
-      <div class="card"><h3 style="margin-top:0">As White <span class="muted">(${d.results.white.games} games, scores ${d.results.white.scorePct ?? '–'}% all-time)</span></h3>${repTable('white')}</div>
-      <div class="card"><h3 style="margin-top:0">As Black <span class="muted">(${d.results.black.games} games, scores ${d.results.black.scorePct ?? '–'}% all-time)</span></h3>${repTable('black')}</div>
+    <div class="grid ${color ? '' : 'grid-2'}" style="margin-top: 16px">
+      ${!color || color === 'white' ? `<div class="card"><h3 style="margin-top:0">As White <span class="muted">(${d.results.white.games} games, scores ${d.results.white.scorePct ?? '–'}% all-time)</span></h3>${repTable('white')}</div>` : ''}
+      ${!color || color === 'black' ? `<div class="card"><h3 style="margin-top:0">As Black <span class="muted">(${d.results.black.games} games, scores ${d.results.black.scorePct ?? '–'}% all-time)</span></h3>${repTable('black')}</div>` : ''}
     </div>
     <div class="card" style="margin-top: 16px">
       <h3 style="margin-top:0">Deep preparation</h3>
@@ -430,10 +466,13 @@ function clashCard() {
   </details>`;
 }
 
-function wireClash(el, fideId, boardRef, readonly) {
+function wireClash(el, fideId, boardRef, readonly, subjectColor = null) {
   const body = el.querySelector('#clash-body');
   if (!body || !fideId) return;
-  loadClash(fideId, body, boardRef, { fideId, readonly });
+  // Cut to one colour: when the subject is shown as White, the student is Black,
+  // so only the black forest (the student's Black openings) applies.
+  const onlyForest = subjectColor ? (subjectColor === 'white' ? 'black' : 'white') : null;
+  loadClash(fideId, body, boardRef, { fideId, readonly, onlyForest });
 }
 
 async function loadClash(fideId, body, boardRef, ctx) {
@@ -597,6 +636,7 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
       : '<div class="muted">Not enough of your games in this colour.</div>';
     return `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">You as ${color} <span class="muted" style="font-size:13px">(${n} of your game${n === 1 ? '' : 's'})</span></h3>${body}</div>`;
   };
+  const forestHtml = () => ['white', 'black'].filter(c => !ctx.onlyForest || ctx.onlyForest === c).map(forest).join('');
   // Home-machine controls: extend prep-end leaves with the engine (once), and an
   // optional coach narration of the key lines.
   const extendCtl = ctx.readonly
@@ -618,7 +658,7 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
         <div class="board-wrap"><div id="clash-board"></div></div>
         <div id="clash-line" class="clash-line muted">Click any move to follow the line here.</div>
       </div>
-      <div id="clash-forests">${forest('white')}${forest('black')}</div>
+      <div id="clash-forests">${forestHtml()}</div>
     </div>
     <p class="muted"><small>${clash.nodeCount} positions${clash.truncated ? ', capped for size' : ''}, from ${clash.coverage.bookGamesParsed} of the opponent's games.</small></p>`;
 
@@ -666,7 +706,7 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
     if (clashFormat() === b.dataset.fmt) return;
     setClashFormat(b.dataset.fmt);
     container.querySelectorAll('[data-fmt]').forEach(x => x.classList.toggle('primary', x.dataset.fmt === b.dataset.fmt));
-    forests.innerHTML = forest('white') + forest('black');
+    forests.innerHTML = forestHtml();
   });
 
   const extendBtn = container.querySelector('#clash-extend');
@@ -706,11 +746,13 @@ function clashNarration(clash) {
 /** The deeper dossier over the analysed subset: where they go wrong, clock,
  * repertoire prep-ends, recurring patterns, and the LLM prep sheet. */
 async function renderEngineDossier(el, data, subject, readonly) {
-  const { report: r, repertoire } = data;
+  const { report: r, repertoire, color } = data;
   const j = r.totalJudged;
   const catLabel = c => CATEGORY_LABEL[c] || c;
+  if (!r.games) { el.innerHTML = `<div class="empty">No analysed games of ${esc(subject)} as ${esc(color)}.</div>`; return; }
+  const roundHref = `#/drills?subject=${encodeURIComponent(subject)}${color ? `&color=${color}` : ''}`;
   el.innerHTML = `
-    <p class="muted" style="margin-top:0">Their mistakes, phrased for your preparation: aim for the phases and structures where they go wrong. Error categories and patterns come from explained scout imports; your own games against them contribute engine data.</p>
+    <p class="muted" style="margin-top:0">Their mistakes, phrased for your preparation: aim for the phases and structures where they go wrong. Error categories and patterns come from explained scout imports; your own games against them contribute engine data. <a href="${roundHref}" title="Every punish drill from these games, opening errors first">Drill their mistakes${color ? ` as ${color}` : ''} ▸</a></p>
     <div class="tiles">
       <div class="tile"><div class="v">${r.overallAccuracy ?? '–'}%</div><div class="l">Their average accuracy</div></div>
       <div class="tile"><div class="v">${(r.totalMoments / r.games).toFixed(1)}</div><div class="l">Their mistakes per game</div></div>

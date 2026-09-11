@@ -4,9 +4,56 @@
 // no engine work is needed. Own games contribute engine data only: explanations
 // exist for the player's moments, not the opponent's, so categories stay
 // "unexplained" unless the subject's other games are imported as scout games.
-import { getGame, listGames, listAllGames, getSettings } from './store.js';
+import { getGame, listGames, listAllGames, listScoutBooks, getPlayers, getSettings } from './store.js';
 import { memberByName } from './users.js';
 import { summarize } from './analyze.js';
+import { lookupFideId } from './players.js';
+import { resultScore } from '../public/shared.js';
+
+const norm = s => (s || '').trim().toLowerCase();
+
+/** The FIDE id a subject name resolves to: its book, its member entry, or the
+ * learned players map (only when unambiguous). Null when nothing links it. */
+export async function subjectFideId(subject) {
+  const book = (await listScoutBooks()).find(b => norm(b.name) === norm(subject));
+  if (book) return book.fideId;
+  const member = await memberByName(subject);
+  if (member?.fideId) return member.fideId;
+  return lookupFideId(await getPlayers(), subject);
+}
+
+/** The viewer's own games against a subject, newest first, with the opening
+ * line and how each went: the record a player wants at the top of a dossier.
+ * Matches on the opponent's name, or on FIDE id when either side carries one. */
+export async function headToHead(userId, subject, fideId = null) {
+  const players = await getPlayers();
+  const games = [];
+  for (const e of await listGames(userId)) {
+    if (e.purpose === 'scout' || !e.playerColor) continue;
+    const oppName = e.playerColor === 'white' ? e.black : e.white;
+    const oppId = e.playerColor === 'white' ? e.blackFideId : e.whiteFideId;
+    const match = norm(oppName) === norm(subject) || (fideId && (oppId === fideId || lookupFideId(players, oppName) === fideId));
+    if (!match) continue;
+    const g = await getGame(e.id);
+    games.push({
+      gameId: e.id, date: e.date, event: e.event, color: e.playerColor, result: e.result,
+      score: resultScore(e.result, e.playerColor), eco: e.eco,
+      line: (g?.moves || []).slice(0, 8).map(m => m.san),
+      accuracy: e.accuracy, moments: e.moments,
+      analysed: e.status === 'analysed' || e.status === 'explained',
+    });
+  }
+  games.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const scored = games.filter(g => g.score != null);
+  const record = {
+    games: games.length,
+    wins: scored.filter(g => g.score === 1).length,
+    draws: scored.filter(g => g.score === 0.5).length,
+    losses: scored.filter(g => g.score === 0).length,
+    scorePct: scored.length ? Math.round((scored.reduce((s, g) => s + g.score, 0) / scored.length) * 100) : null,
+  };
+  return { games, record };
+}
 
 export async function gamesForSubject(subject) {
   const settings = await getSettings();

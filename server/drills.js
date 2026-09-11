@@ -127,6 +127,7 @@ function makePunishDrill(game, ply, tier, existing) {
     id: drillId(game.id, ply),
     kind: 'punish',
     subject: game.subject || null,
+    subjectColor: m.color, // the colour the subject erred in: a prep round asks for one colour only
     gameId: game.id,
     ply,
     fen: m.fenAfter,
@@ -507,17 +508,21 @@ export async function buildDecoys(count, rand = Math.random, userId = DEFAULT_US
  * due or not, back to back (blocked practice). Suspended drills never serve.
  * With `session` (a real sitting, not the badge poll), quiet-position decoys
  * are mixed into the queue, never first. */
-export async function dueDrills(limit = 20, { pattern = null, category = null, session = false, rand = Math.random, userId = DEFAULT_USER } = {}) {
+export async function dueDrills(limit = 20, { pattern = null, category = null, subject = null, color = null, session = false, rand = Math.random, userId = DEFAULT_USER } = {}) {
   const store = await getDrills(userId);
   const now = Date.now();
   const pool = store.drills.filter(d => !d.suspended);
   const suspendedCount = store.drills.length - pool.length;
-  if (pattern || category) {
-    const key = normalizeKey(pattern || category);
-    const field = pattern ? (d => d.pattern) : (d => d.category);
-    const match = pool.filter(d => normalizeKey(field(d)) === key)
-      .sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
-    return { due: match.slice(0, limit), total: store.drills.length, dueCount: match.length, pattern, category, suspendedCount, feedback: store.feedback };
+  if (pattern || category || subject) {
+    // A prep round: this opponent's punish drills, optionally only the colour
+    // they will have against the student (opening-phase errors first, since those
+    // are the positions the student is likeliest to reach).
+    const key = normalizeKey(pattern || category || subject);
+    const field = pattern ? (d => d.pattern) : category ? (d => d.category) : (d => d.subject);
+    let match = pool.filter(d => normalizeKey(field(d)) === key);
+    if (subject) match = match.filter(d => d.kind === 'punish' && (!color || punishSubjectColor(d) === color));
+    match.sort((a, b) => (subject ? phaseRank(a) - phaseRank(b) : 0) || Date.parse(a.due) - Date.parse(b.due));
+    return { due: match.slice(0, limit), total: store.drills.length, dueCount: match.length, pattern, category, subject, color, suspendedCount, feedback: store.feedback };
   }
   const rank = d => (d.tier === 'core' ? 0 : d.tier === 'opening' ? 1 : 2);
   const due = pool.filter(d => Date.parse(d.due) <= now)
@@ -538,13 +543,21 @@ export async function dueDrills(limit = 20, { pattern = null, category = null, s
   return { due: list, total: store.drills.length, dueCount: due.length, suspendedCount, feedback: store.feedback };
 }
 
+/** A punish drill's subject colour (older stores predate the field: the subject
+ * had the colour opposite the student's). */
+export const punishSubjectColor = d => d.subjectColor || (d.sideToMove === 'white' ? 'black' : 'white');
+const phaseRank = d => (d.phase === 'opening' ? 0 : d.phase === 'middlegame' ? 1 : 2);
+
 /** An ephemeral practice set for visitors: punish drills drawn from the shared
  * scout library, built fresh on every request and never stored. Visitors have no
  * games and nothing they do is recorded, so there is no ladder, no due dates, and
- * no store read or write here. */
-export async function visitorDrills(limit = 20, rand = Math.random) {
+ * no store read or write here. With `subject` (and `color`), one opponent's
+ * drills only, the same prep round members get. */
+export async function visitorDrills(limit = 20, rand = Math.random, { subject = null, color = null } = {}) {
   const index = (await listAllGames())
     .filter(g => (g.purpose || 'own') === 'scout' && (g.status === 'analysed' || g.status === 'explained'))
+    .filter(g => !subject || normalizeKey(g.subject) === normalizeKey(subject))
+    .filter(g => !color || g.playerColor === color)
     .sort(() => rand() - 0.5);
   const out = [];
   for (const entry of index) {
@@ -557,5 +570,5 @@ export async function visitorDrills(limit = 20, rand = Math.random) {
       if (out.length >= limit) break;
     }
   }
-  return { due: out, total: out.length, dueCount: out.length, suspendedCount: 0, feedback: {}, visitor: true };
+  return { due: out, total: out.length, dueCount: out.length, subject, color, suspendedCount: 0, feedback: {}, visitor: true };
 }

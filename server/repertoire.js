@@ -8,7 +8,7 @@ const LINE_PLIES = 8;
 /** Most frequent key in a count map (ties: first inserted). */
 const topKey = map => [...map.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 
-export async function buildRepertoire({ purpose = 'own', subject = null, userId = DEFAULT_USER } = {}) {
+export async function buildRepertoire({ purpose = 'own', subject = null, userId = DEFAULT_USER, color = null } = {}) {
   let games;
   if (purpose === 'scout') {
     games = await gamesForSubject(subject);
@@ -16,6 +16,7 @@ export async function buildRepertoire({ purpose = 'own', subject = null, userId 
     const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
     games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
   }
+  if (color) games = games.filter(g => g.playerColor === color);
   const lines = new Map();
   for (const g of games) {
     const opening = g.analysis.moves.slice(0, LINE_PLIES);

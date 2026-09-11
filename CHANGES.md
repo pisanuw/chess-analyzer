@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-11 (Scouting by colour, prep rounds, head to head)
+
+- The dossier can be cut to one of the opponent's colours: `GET /api/scout/:subject?color=white|black` filters the deep report and repertoire (`buildReport`/`buildRepertoire` take `color`), and the Players page gets an "All / As White / As Black" toggle that re-renders the deep dossier, the book table, and the opening clash (only the forest for the colour the student will have). Preparation is colour-specific; half of every dossier used to be about the colour the student would not face.
+- Prep rounds: `GET /api/drills?subject=X&color=black` serves that opponent's punish drills only (opening-phase errors first), for members (blocked practice, ladder untouched) and visitors (ephemeral) alike; punish drills now record `subjectColor`. The deep dossier links "Drill their mistakes", and the Drills page titles the round.
+- Head to head: `/api/scout/:subject` returns the viewer's own games against the subject (matched by name or FIDE id via the book, the roster, or the players map) with the opening line, result, accuracy, and moments, plus a W/D/L record; the Players page shows it above the prep sheet. `subjectFideId` and `headToHead` live in `server/subjects.js`.
+
 ## 2026-09-11 (Route split and shared helpers)
 
 - `server/index.js` (1000+ lines, 45 routes) is now the app shell only: middleware, the read-only gate, static serving, and the SPA catch-all. Routes live in `server/routes/{auth,games,training,scout,admin}.js`, each exporting a `register*Routes(app)`; the request helpers they share (`READONLY`, `wrap`, `effectiveUser`, `requireAdmin`, `blockVisitor`, `visitorNoop`, `studentRating`, `dossierOpts`) moved to `server/http.js`. No route changed.

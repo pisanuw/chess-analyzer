@@ -10,7 +10,7 @@ const WEIGHT = { inaccuracy: 1, mistake: 2, blunder: 3 };
 
 /** Weakness report for the tracked player (default), or for a scouted subject
  * (scout imports plus the player's own games against them, flipped). */
-export async function buildReport({ purpose = 'own', subject = null, userId = DEFAULT_USER } = {}) {
+export async function buildReport({ purpose = 'own', subject = null, userId = DEFAULT_USER, color = null } = {}) {
   let games;
   if (purpose === 'scout') {
     games = await gamesForSubject(subject);
@@ -18,6 +18,9 @@ export async function buildReport({ purpose = 'own', subject = null, userId = DE
     const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
     games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
   }
+  // Preparation is colour-specific: only the subject's games in the colour the
+  // student will face matter, so the whole dossier can be cut to one colour.
+  if (color) games = games.filter(g => g.playerColor === color);
 
   const byCategory = Object.fromEntries([...CATEGORIES, 'unexplained'].map(c => [c, { count: 0, weight: 0, moments: [] }]));
   const byPhase = Object.fromEntries(['opening', 'middlegame', 'endgame'].map(p => [p, { moves: 0, cpl: 0, acc: 0, moments: 0, weight: 0 }]));

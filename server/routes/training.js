@@ -75,11 +75,15 @@ export function registerTrainingRoutes(app) {
 
   // --- drills ----------------------------------------------------------------
   app.get('/api/drills', wrap(async (req, res) => {
+    const limit = Number(req.query.limit) || 20;
+    const subject = req.query.subject || null;
+    const color = ['white', 'black'].includes(req.query.color) ? req.query.color : null;
     // Visitors get an ephemeral scout-derived set; nothing is read from or written to a store.
-    if (isVisitor(await currentUser(req))) return res.json(await visitorDrills(Number(req.query.limit) || 20));
-    res.json(await dueDrills(Number(req.query.limit) || 20, {
+    if (isVisitor(await currentUser(req))) return res.json(await visitorDrills(limit, undefined, { subject, color }));
+    res.json(await dueDrills(limit, {
       pattern: req.query.pattern || null,
       category: req.query.category || null,
+      subject, color, // a prep round: one opponent's punish drills, in the colour they will have
       session: req.query.session === '1', // a real training session (not the badge poll): may mix in decoys
       userId: await effectiveUser(req),
     }));

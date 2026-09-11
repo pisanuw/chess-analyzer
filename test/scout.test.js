@@ -206,6 +206,30 @@ test('FIDE link records an association without a network call; bad input rejecte
   assert.equal((await fetch(base + '/api/players/link', { method: 'POST', headers: H, body: JSON.stringify({ fideId: 'abc', name: 'X' }) })).status, 400, 'non-numeric id rejected');
 });
 
+test('the dossier can be cut to one of the subject colours', async () => {
+  // Every Karpov scout fixture has him as White, so the white cut is the whole dossier.
+  const all = await (await fetch(base + '/api/scout/' + encodeURIComponent('Karpov, A'))).json();
+  const white = await (await fetch(base + '/api/scout/' + encodeURIComponent('Karpov, A') + '?color=white')).json();
+  assert.equal(white.color, 'white');
+  assert.equal(white.report.games, all.report.games);
+  assert.ok(white.report.games >= 2);
+  assert.ok(white.repertoire.every(l => l.color === 'white'));
+  const black = await fetch(base + '/api/scout/' + encodeURIComponent('Karpov, A') + '?color=black');
+  assert.equal(black.status, 200, 'a known subject with no games in that colour is an empty dossier, not a 404');
+  assert.equal((await black.json()).report.games, 0);
+  assert.equal((await fetch(base + '/api/scout/Nobody?color=white')).status, 404);
+});
+
+test('a prep round serves one opponent\'s punish drills, one colour at a time', async () => {
+  const all = await (await fetch(base + '/api/drills?subject=' + encodeURIComponent('Karpov, A'))).json();
+  assert.ok(all.due.length >= 2 && all.due.every(d => d.kind === 'punish' && d.subject === 'Karpov, A'));
+  assert.equal(all.subject, 'Karpov, A');
+  const asWhite = await (await fetch(base + '/api/drills?subject=' + encodeURIComponent('Karpov, A') + '&color=white')).json();
+  assert.ok(asWhite.due.length >= 2 && asWhite.due.every(d => d.subjectColor === 'white'));
+  const asBlack = await (await fetch(base + '/api/drills?subject=' + encodeURIComponent('Karpov, A') + '&color=black')).json();
+  assert.equal(asBlack.due.length, 0, 'Karpov never erred as Black in the fixtures');
+});
+
 test('own games feed a derived dossier for their opponent', async () => {
   // Own game where the OPPONENT (black, named 'Opponent') blunders at ply 2.
   writeGame(dir, makeGame({ id: 'eeeeeeeeee01', color: 'white', moments: [{ ply: 2, loss: 28 }], plies: 4, explained: false }));
@@ -216,6 +240,12 @@ test('own games feed a derived dossier for their opponent', async () => {
   assert.equal(dossier.report.byCategory.unexplained.count, 1, 'own games contribute engine data, not categories');
   assert.equal(dossier.repertoire.reduce((s, l) => s + l.count, 0), 2);
   assert.ok(dossier.repertoire.every(l => l.color === 'black'), 'repertoire is from the opponent\'s side');
+  // Head-to-head: the viewer's own games against this opponent, newest first, with a record.
+  assert.equal(dossier.headToHead.record.games, 2);
+  assert.equal(dossier.headToHead.record.wins, 2, 'both fixtures are 1-0 with the player as White');
+  assert.equal(dossier.headToHead.record.scorePct, 100);
+  assert.ok(dossier.headToHead.games.every(g => g.color === 'white' && Array.isArray(g.line)));
+  assert.ok(dossier.headToHead.games[0].date >= dossier.headToHead.games[1].date, 'newest first');
   // No punish drills from own games: a missed punishment is already the player's own drill.
   await syncAllDrills();
   assert.ok(!(await getDrills()).drills.some(d => d.gameId === 'eeeeeeeeee01'));

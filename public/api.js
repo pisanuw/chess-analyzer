@@ -133,7 +133,7 @@ export const api = {
   report: () => req('GET', '/api/report'),
   repertoire: () => req('GET', '/api/repertoire'),
   scoutSubjects: () => req('GET', '/api/scout'),
-  scout: subject => req('GET', `/api/scout/${encodeURIComponent(subject)}`),
+  scout: (subject, color = null) => req('GET', `/api/scout/${encodeURIComponent(subject)}${color ? `?color=${color}` : ''}`),
   prepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet`),
   requestPrepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet/request`, {}),
   requestPrepByFide: fideId => req('POST', '/api/prep-request', { fideId }),
@@ -155,8 +155,8 @@ export const api = {
   synthesizePattern: pattern => req('POST', '/api/patterns/synthesize', { pattern }),
   puzzles: ({ source = 'tactics', limit = 30 } = {}) =>
     req('GET', `/api/puzzles?source=${encodeURIComponent(source)}&limit=${limit}`),
-  drills: ({ pattern = null, category = null, limit = null, session = false } = {}) =>
-    req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}${category ? `&category=${encodeURIComponent(category)}` : ''}${session ? '&session=1' : ''}`),
+  drills: ({ pattern = null, category = null, subject = null, color = null, limit = null, session = false } = {}) =>
+    req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}${category ? `&category=${encodeURIComponent(category)}` : ''}${subject ? `&subject=${encodeURIComponent(subject)}` : ''}${color ? `&color=${color}` : ''}${session ? '&session=1' : ''}`),
   reviewDrill: noopForVisitor((id, grade, correct, practice = false, ms = null) =>
     req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}) })),
   suspendDrill: noopForVisitor((id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended })),

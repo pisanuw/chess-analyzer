@@ -13,6 +13,7 @@ import { getEnginePool } from '../enginepool.js';
 import { complete } from '../llm.js';
 import { buildReport } from '../report.js';
 import { buildRepertoire } from '../repertoire.js';
+import { subjectFideId, headToHead } from '../subjects.js';
 import { scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, clashLinePrompt, clashNarrationVersion, PREP_SHEET_SCHEMA, CLASH_NARRATION_SCHEMA } from '../prompts.js';
 import { currentUser, rateLimit } from '../auth.js';
 import { sendEmail, adminEmail } from '../email.js';
@@ -320,15 +321,22 @@ export function registerScoutRoutes(app) {
     res.json({ narration });
   }));
 
+  // The per-subject dossier. ?color=white|black cuts it to the subject's games in
+  // that colour (the one the student will face); an unknown subject is a 404, a
+  // colour with no games is an empty dossier. headToHead is the viewer's own
+  // record against the subject.
   app.get('/api/scout/:subject', wrap(async (req, res) => {
     const subject = req.params.subject;
-    const report = await buildReport({ purpose: 'scout', subject });
-    if (!report.games) return res.status(404).json({ error: 'no analysed games for this subject' });
-    const repertoire = await buildRepertoire({ purpose: 'scout', subject });
+    const color = ['white', 'black'].includes(req.query.color) ? req.query.color : null;
+    const report = await buildReport({ purpose: 'scout', subject, color });
+    if (!report.games && !(color && (await buildReport({ purpose: 'scout', subject })).games)) return res.status(404).json({ error: 'no analysed games for this subject' });
+    const repertoire = await buildRepertoire({ purpose: 'scout', subject, color });
     const prepSheet = (await getPrepSheets())[subject] || null;
+    const fideId = await subjectFideId(subject);
+    const h2h = await headToHead(await effectiveUser(req), subject, fideId);
     // The current format fingerprint lets the UI offer a regenerate when the sheet
     // style has changed, not only when new games arrive (null on the hosted mirror).
-    res.json({ subject, report, repertoire, prepSheet, prepSheetVersion: prepSheetVersion() });
+    res.json({ subject, fideId, color, report, repertoire, headToHead: h2h, prepSheet, prepSheetVersion: prepSheetVersion() });
   }));
 
   app.post('/api/scout/:subject/prepsheet', wrap(async (req, res) => {
