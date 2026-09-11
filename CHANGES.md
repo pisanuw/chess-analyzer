@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (syncAllDrills: one store read/write, not one per game)
+
+- `syncAllDrills` now reads the drill store once, syncs every game against it in memory, and writes once (`syncGameUnlocked` takes an optional shared store). Locally this was just extra file I/O, but on the hosted store each per-game read+write was two full-row Supabase transfers, so publish-web's "Syncing hosted drill store" step crawled for 15+ minutes without finishing a single member and never reached the Netlify deploy. Behavior is unchanged; the prune now shares the same single write.
+
 ## 2026-09-11 (Visitor landing fix; ADMIN_EMAIL is a login address)
 
 - Fixed the visitor landing race: the first route no longer runs before `/api/auth/me` resolves, so a visitor lands on the actual Players (Scouting) page instead of the Home dashboard content with the Players tab highlighted (the slow Home view used to clobber the redirect's render, leaving a page a visitor could never navigate back to). `route()` is now called once identity is known, and its existing visitor redirect does the landing (`public/app.js`).

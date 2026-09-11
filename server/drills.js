@@ -206,8 +206,11 @@ export function syncDrillsForGame(game, settings, userId = DEFAULT_USER) {
   return locked(() => syncGameUnlocked(game, settings, userId));
 }
 
-async function syncGameUnlocked(game, settings, userId = DEFAULT_USER) {
-  const store = await getDrills(userId);
+async function syncGameUnlocked(game, settings, userId = DEFAULT_USER, sharedStore = null) {
+  // With sharedStore, mutate the caller's in-memory store and let the caller
+  // save once: against the hosted (Supabase) store a per-game read+write is two
+  // full-row network transfers, which made syncAllDrills crawl for many minutes.
+  const store = sharedStore ?? await getDrills(userId);
   const byId = new Map(store.drills.map(d => [d.id, d]));
   const threshold = settings.drillThreshold ?? 20;
   const scout = (game.purpose || 'own') === 'scout';
@@ -240,7 +243,7 @@ async function syncGameUnlocked(game, settings, userId = DEFAULT_USER) {
     }
   }
   store.drills = [...byId.values()];
-  await saveDrills(store, userId);
+  if (!sharedStore) await saveDrills(store, userId);
   return store;
 }
 
@@ -288,11 +291,12 @@ export function syncAllDrills(userId = DEFAULT_USER) {
     const settings = await getSettings();
     const validIds = new Set();   // drill ids that match a current moment
     const pendingGames = new Set(); // games mid-pipeline: keep their drills as-is
+    const store = await getDrills(userId); // read once, sync every game in memory, write once
     for (const entry of await listGames(userId)) {
       if (entry.status !== 'analysed' && entry.status !== 'explained') { pendingGames.add(entry.id); continue; }
       const game = await getGame(entry.id);
       if (!game?.analysis) { pendingGames.add(entry.id); continue; }
-      await syncGameUnlocked(game, settings, userId);
+      await syncGameUnlocked(game, settings, userId, store);
       for (const ply of game.analysis.summary.moments) {
         validIds.add(drillId(game.id, ply));
         if (wantsThreatDrill(game, ply)) validIds.add(threatDrillId(game.id, ply));
@@ -300,14 +304,10 @@ export function syncAllDrills(userId = DEFAULT_USER) {
       const devPly = openingDrillPly(game);
       if (devPly) validIds.add(openingDrillId(game.id, devPly));
     }
-    const store = await getDrills(userId);
     // Prune drills for deleted games AND for plies that are no longer moments
     // (e.g. after a colour fix or re-analysis changed which side is tracked).
-    const kept = store.drills.filter(d => validIds.has(d.id) || pendingGames.has(d.gameId));
-    if (kept.length !== store.drills.length) {
-      store.drills = kept;
-      await saveDrills(store, userId);
-    }
+    store.drills = store.drills.filter(d => validIds.has(d.id) || pendingGames.has(d.gameId));
+    await saveDrills(store, userId);
   });
 }
 
