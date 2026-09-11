@@ -118,3 +118,12 @@ export function isAdmin(user) {
 export async function findUserByEmail(email) {
   return resolveUserByEmail(await getUsers(), email);
 }
+
+/** The member a scout-subject name refers to (matched on displayName or any of
+ * their playerNames), so a member's own games can back their opponent-facing prep
+ * sheet when they have no scout book. Null for a non-member subject. */
+export async function memberByName(name) {
+  const n = lc(name);
+  if (!n) return null;
+  return (await listMembers()).find(u => lc(u.displayName) === n || (u.playerNames || []).some(p => lc(p) === n)) || null;
+}

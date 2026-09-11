@@ -20,7 +20,7 @@ import { buildPuzzles } from './puzzles.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, clashLinePrompt, clashNarrationVersion, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, CLASH_NARRATION_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { knownPatterns } from './jobs.js';
 import { authMiddleware, loginRoute, meRoute, logoutRoute, currentUser } from './auth.js';
-import { getUser } from './users.js';
+import { getUser, listMembers } from './users.js';
 import { googleStartRoute, googleCallbackRoute } from './googleauth.js';
 import { magicRequestRoute, magicVerifyRoute } from './magiclink.js';
 
@@ -541,18 +541,31 @@ app.get('/api/scout', wrap(async (req, res) => {
     if (analysed) s.analysed++;
     s[kind]++;
   };
+  const ownerCount = new Map(); // member id -> own-game counts, for their own prep-subject entry
   for (const g of await listAllGames()) { // scouting library is shared: draw opponents from every member's games
     const analysed = g.status === 'analysed' || g.status === 'explained';
     if (g.purpose === 'scout' && g.subject) add(g.subject, analysed, 'scoutGames', g.subjectId);
     else if (g.purpose !== 'scout' && g.playerColor) {
       const oppName = g.playerColor === 'white' ? g.black : g.white;
       add(oppName, analysed, 'ownGames', g.playerColor === 'white' ? g.blackFideId : g.whiteFideId);
+      if (g.owner) { const o = ownerCount.get(g.owner) || { games: 0, analysed: 0 }; o.games++; if (analysed) o.analysed++; ownerCount.set(g.owner, o); }
     }
   }
   for (const b of books) {
     const s = ensure(b.name, b.fideId);
     s.subject = b.name; // the book name is the canonical display name
     s.bookGames = b.total || (b.games || []).length;
+  }
+  // Members are prep subjects too (shared library): everyone can prep against
+  // them. Keyed by FIDE id, so a member who also has a book merges into it; a
+  // member with no book (e.g. Kai) is scouted from their own games.
+  for (const m of await listMembers()) {
+    const s = ensure(m.displayName, m.fideId);
+    s.member = true;
+    const o = ownerCount.get(m.id) || { games: 0, analysed: 0 };
+    s.selfGames = o.games;
+    s.games = Math.max(s.games, o.games);
+    s.analysed = Math.max(s.analysed, o.analysed);
   }
   const subjects = [...byKey.values()].map(s => ({
     ...s, names: undefined, aliases: [...s.names].filter(n => n !== s.subject),

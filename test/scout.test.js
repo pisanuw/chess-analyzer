@@ -59,13 +59,16 @@ test('scout games create punish drills from the position after the mistake', asy
 
 test('scout API: subject list includes scouted names and own-game opponents', async () => {
   const subjects = (await (await fetch(base + '/api/scout')).json()).subjects;
-  assert.equal(subjects.length, 2); // Karpov (scouted) and the own game's opponent
-  assert.equal(subjects[0].subject, 'Karpov, A');
-  assert.equal(subjects[0].games, 2);
-  assert.equal(subjects[0].scoutGames, 2);
+  // Karpov (scouted) and the own game's opponent, plus the members who are now
+  // always prep subjects (kai/nikash/neeraj), so opponents can prep against them.
+  const karpov = subjects.find(s => s.subject === 'Karpov, A');
+  assert.ok(karpov, 'scouted subject is listed');
+  assert.equal(karpov.games, 2);
+  assert.equal(karpov.scoutGames, 2);
   const opp = subjects.find(s => s.subject === 'Opponent');
   assert.ok(opp, 'opponents from own games are listed automatically');
   assert.equal(opp.ownGames, 1);
+  assert.ok(subjects.some(s => s.member), 'members appear as prep subjects');
   const res = await fetch(base + '/api/scout/' + encodeURIComponent('Karpov, A'));
   assert.equal(res.status, 200);
   const dossier = await res.json();

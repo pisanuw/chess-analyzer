@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Multi-user phase 7: member prep sheets and members in the prep list)
+
+- Every member now appears in the shared scouting list as a prep subject (marked with a person icon), so members can prep against each other. A member who has a scout book (Nikash, Neeraj) is scouted from that book as before; a member with no book (Kai, the original player) is now scouted from their OWN games, viewed from their own side, so they get the opponent-facing report/repertoire/prep sheet the requirement asks for. `server/subjects.js` gains that own-games fallback in `gamesForSubject` (used only when no scout games match, so book-backed members are unaffected); `server/users.js` gains `memberByName`; `/api/scout` lists members with their own-game counts.
+- Each member's deep report and repertoire stay private on `/api/report` and `/api/repertoire` (member-scoped): the scouting view never includes drills, guesses, feedback, or recognition-speed data, so what opponents see is the shallow prep view, not the training-rich private one. `test/scout-member.test.js` (2 tests); `test/scout.test.js` updated for members appearing in the list. 180 tests pass.
+
 ## 2026-09-10 (Multi-user phase 6: login screen and identity in the UI)
 
 - The frontend now signs members in and shows who they are. On load it calls `/api/auth/me`; when auth is on and nobody is signed in, a sign-in overlay offers the configured methods: a "Sign in with Google" button and/or a magic-link email form, falling back to the legacy password field when neither provider is set (so the existing single-password mirror still works). A denied Google sign-in (the account is not on the allowlist) shows a clear message. The top bar shows the signed-in member's name (with an "admin" chip for the admin) and a Sign out button.

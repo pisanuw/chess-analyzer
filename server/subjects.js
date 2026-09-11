@@ -4,16 +4,19 @@
 // no engine work is needed. Own games contribute engine data only: explanations
 // exist for the player's moments, not the opponent's, so categories stay
 // "unexplained" unless the subject's other games are imported as scout games.
-import { getGame, listAllGames, getSettings } from './store.js';
+import { getGame, listGames, listAllGames, getSettings } from './store.js';
+import { memberByName } from './users.js';
 import { summarize } from './analyze.js';
 
 export async function gamesForSubject(subject) {
   const settings = await getSettings();
   const out = [];
+  let scoutMatched = false;
   for (const e of await listAllGames()) {
     if (e.status !== 'analysed' && e.status !== 'explained') continue;
     if (e.purpose === 'scout') {
       if (e.subject !== subject) continue;
+      scoutMatched = true;
       const g = await getGame(e.id);
       if (g?.analysis && g.playerColor) out.push(g);
       continue;
@@ -23,6 +26,23 @@ export async function gamesForSubject(subject) {
     if (oppName !== subject) continue;
     const g = await getGame(e.id);
     if (g?.analysis) out.push(flipToOpponent(g, settings));
+  }
+  // A member with no scout book is scouted from their OWN games, viewed from
+  // their own side (they ARE the subject, so no flip): this is how a member like
+  // Kai gets the opponent-facing prep sheet the requirement asks for. Members who
+  // have a book keep the book (the scout games matched above). No drills or
+  // private training data ever enters this: the scout report path uses none.
+  if (!scoutMatched) {
+    const member = await memberByName(subject);
+    if (member) {
+      const seen = new Set(out.map(g => g.id));
+      for (const e of await listGames(member.id)) {
+        if (e.purpose !== 'own' || !e.playerColor || seen.has(e.id)) continue;
+        if (e.status !== 'analysed' && e.status !== 'explained') continue;
+        const g = await getGame(e.id);
+        if (g?.analysis && g.playerColor) out.push(g);
+      }
+    }
   }
   return out;
 }
