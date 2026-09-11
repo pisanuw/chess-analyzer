@@ -525,13 +525,77 @@ function clashLeafEngine(node, orient, path = []) {
   return `<div class="clash-engine"><small class="muted">${who}:</small><ul class="clash-tree">${items}</ul></div>`;
 }
 
+// The variation display format is a per-user preference (like the theme), chosen
+// on the clash card and remembered in the browser.
+const clashFormat = () => { try { return localStorage.getItem('clashFormat') === 'lichess' ? 'lichess' : 'tree'; } catch { return 'tree'; } };
+const setClashFormat = v => { try { localStorage.setItem('clashFormat', v); } catch { /* private mode */ } };
+
+// A compact single stat for the lichess view: their reply frequency, or the
+// engine eval on your moves, so the key number survives without the full band.
+function clashStatCompact(node, e) {
+  if (node.mover === 'opponent') return e.share != null ? ` <small class="muted">${e.share}%</small>` : '';
+  return e.cp != null ? ` <small class="muted">${formatEval(e.cp)}</small>` : '';
+}
+
+const clashMoveSpan = (node, edge, line, orient) =>
+  `<span class="clash-move ${node.mover}" data-path="${esc(line.join(' '))}" data-orient="${orient}">${esc(edge.san)}</span>`;
+
+/** Flowing movetext for one variation: the alternative move at `node`, then its
+ * main continuation, with deeper alternatives nested in parentheses (PGN style).
+ * `needNum` forces the move number at the start of a line or after a paren. */
+function clashVarMoves(node, edge, path, orient, needNum) {
+  let html = '', n = node, e = edge, first = needNum;
+  while (n && e) {
+    const num = Math.floor(n.ply / 2) + 1;
+    const numStr = n.side === 'white' ? `${num}.` : (first ? `${num}…` : '');
+    const line = [...path, e.san];
+    html += `${numStr}${clashMoveSpan(n, e, line, orient)}${clashStatCompact(n, e)}${clashFlag(e.child)} `;
+    path = line; first = false;
+    const child = e.child;
+    if (!child || !child.edges || !child.edges.length) break;
+    const [cmain, ...calts] = child.edges;
+    if (calts.length) { for (const a of calts) html += `(${clashVarMoves(child, a, path, orient, true)}) `; first = true; }
+    n = child; e = cmain;
+  }
+  return html.trim();
+}
+
+/** Lichess-style: the main line (top edge at each node) as a two-column table,
+ * with the sibling alternatives inlined as full-width variation bands where they
+ * branch. Emits the same .clash-move spans the board listener already handles. */
+function renderClashLichess(root, orient) {
+  if (!root.edges || !root.edges.length) return '';
+  const rows = [], bands = new Map();
+  const rowFor = num => { let r = rows.find(x => x.num === num); if (!r) { r = { num, white: '', black: '' }; rows.push(r); } return r; };
+  let node = root; const path = [];
+  while (node && node.edges && node.edges.length) {
+    const [main, ...alts] = node.edges;
+    const num = Math.floor(node.ply / 2) + 1;
+    const line = [...path, main.san];
+    const cell = `${clashMoveSpan(node, main, line, orient)}${clashStatCompact(node, main)}${clashFlag(main.child)}`;
+    const row = rowFor(num);
+    if (node.side === 'white') row.white = cell; else row.black = cell;
+    if (alts.length) { const i = rows.indexOf(row); const arr = bands.get(i) || bands.set(i, []).get(i); for (const a of alts) arr.push(clashVarMoves(node, a, path, orient, true)); }
+    path.push(main.san);
+    node = main.child;
+  }
+  let html = '<table class="clash-lichess"><tbody>';
+  rows.forEach((r, i) => {
+    html += `<tr><td class="clash-num">${r.num}.</td><td>${r.white || '…'}</td><td>${r.black || ''}</td></tr>`;
+    for (const b of (bands.get(i) || [])) html += `<tr class="clash-var-row"><td></td><td colspan="2"><span class="clash-var">${b}</span></td></tr>`;
+  });
+  return html + '</tbody></table>';
+}
+
 function renderClashForest(clash, container, boardRef = { board: null }, ctx = {}) {
   boardRef.board?.destroy(); boardRef.board = null; // a fresh build replaces the board div
   const forest = color => {
     const root = clash.forests[color];
     if (!root) return '';
     const n = clash.kaiColorCounts[color] || 0;
-    const body = root.edges.length ? renderClashEdges(root, color) : '<div class="muted">Not enough of your games in this colour.</div>';
+    const body = root.edges.length
+      ? (clashFormat() === 'lichess' ? renderClashLichess(root, color) : renderClashEdges(root, color))
+      : '<div class="muted">Not enough of your games in this colour.</div>';
     return `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">You as ${color} <span class="muted" style="font-size:13px">(${n} of your game${n === 1 ? '' : 's'})</span></h3>${body}</div>`;
   };
   // Home-machine controls: extend prep-end leaves with the engine (once), and an
@@ -544,9 +608,11 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
   const narrateCtl = ctx.readonly
     ? ''
     : `<button class="small" id="clash-narrate" title="Ask the coach model for one grounded note per predicted line">${clash.narration ? 'Regenerate explanation' : 'Explain the key lines'}</button>`;
+  const fmt = clashFormat();
+  const fmtCtl = `<span class="clash-fmt" role="group" aria-label="Variation display"><button class="small${fmt === 'tree' ? ' primary' : ''}" data-fmt="tree" title="Indented branching tree">Tree</button><button class="small${fmt === 'lichess' ? ' primary' : ''}" data-fmt="lichess" title="Main line with inlined variations, lichess style">Lichess</button></span>`;
   container.innerHTML = `
     <p class="muted">Your openings (bold) crossed with ${esc(clash.name)}'s games, showing their most likely replies weighted toward recent, on-strength games. Percentages are how often they chose that reply; "Ng" is the game count behind it. Click any move to follow the line on the board. Badges: <span class="chip warn">not faced</span> they never reached the position, <span class="chip warn">book thins out</span> too few games to trust, <span class="chip warn">your line ends</span> you have no games continuing.</p>
-    <div class="row" style="gap:10px;align-items:center;margin-bottom:6px">${extendCtl}${narrateCtl}</div>
+    <div class="row" style="gap:10px;align-items:center;margin-bottom:6px">${fmtCtl}${extendCtl}${narrateCtl}</div>
     ${clashNarration(clash)}
     <div class="grid grid-2">
       <div class="clash-board-col">
@@ -593,6 +659,15 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
   lineEl.addEventListener('click', e => {
     const p = e.target.closest('.clash-ply');
     if (p && current) showLine(current.sans, current.orient, Number(p.dataset.ply));
+  });
+
+  // Switch variation format in place: only the forests re-render, so the board
+  // and the delegated click listener on #clash-forests are preserved.
+  container.querySelectorAll('[data-fmt]').forEach(b => b.onclick = () => {
+    if (clashFormat() === b.dataset.fmt) return;
+    setClashFormat(b.dataset.fmt);
+    container.querySelectorAll('[data-fmt]').forEach(x => x.classList.toggle('primary', x.dataset.fmt === b.dataset.fmt));
+    forests.innerHTML = forest('white') + forest('black');
   });
 
   const extendBtn = container.querySelector('#clash-extend');

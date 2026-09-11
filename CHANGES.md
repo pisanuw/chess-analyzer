@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Opening clash: Tree or Lichess variation view)
+
+- The Opening Clash can show its lines in two formats, chosen with a Tree/Lichess toggle on the card and remembered per browser. Tree is the existing indented branching list; Lichess renders the main line (the top edge at each node) as a two-column table with the sibling alternatives inlined as full-width variation bands, correctly numbered (white `5.`, black `5...`) and with deeper alternatives nested in parentheses. Both formats emit the same clickable `.clash-move` spans, so the board follow and the lichess link work in either. `renderClashLichess` + `clashVarMoves` in `public/views/scout.js`, styles in `style.css`.
+
 ## 2026-09-11 (Report: pre-tournament card shown inline)
 
 - The pre-tournament card is rendered inline as an open section at the top of the Report page instead of a markdown download. `public/views/report.js` fetches `/api/report/card` and renders its small, fixed-format markdown (headings, numbered and bulleted lists, bold) with a minimal converter; the download button and its handler are gone.
