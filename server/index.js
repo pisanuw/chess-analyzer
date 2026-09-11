@@ -19,7 +19,7 @@ import { dueDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, rem
 import { buildPuzzles } from './puzzles.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, clashLinePrompt, clashNarrationVersion, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, CLASH_NARRATION_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { knownPatterns } from './jobs.js';
-import { authMiddleware, loginRoute } from './auth.js';
+import { authMiddleware, loginRoute, meRoute, logoutRoute } from './auth.js';
 
 // Repo root = the working directory for every supported entry (npm start via
 // server/serve.js, tests, and the bundled Netlify function). Using cwd keeps
@@ -36,6 +36,13 @@ app.post('/api/login', (req, res) => loginRoute(req, res).catch(err => {
   console.error(err);
   res.status(500).json({ error: err.message });
 }));
+// Identity endpoints (exempt from the auth gate and the read-only gate below, so
+// the frontend can ask who it is and log out even on the mirror).
+app.get('/api/auth/me', (req, res) => meRoute(req, res).catch(err => {
+  console.error(err);
+  res.status(500).json({ error: err.message });
+}));
+app.post('/api/auth/logout', (req, res) => logoutRoute(req, res));
 
 // Read-only mirror (hosted copy): game data is managed on the analysing machine
 // and published; only training state (drill reviews, guesses) is writable.

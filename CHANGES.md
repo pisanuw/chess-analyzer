@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Multi-user phase 3a: sessions and identity)
+
+- Added per-user session auth alongside the legacy single password. A `sess` cookie carries the member id, HMAC-signed with `SESSION_SECRET` (falling back to `APP_PASSWORD` so an existing hosted deployment keeps a stable signing key). `authActive()` gates `/api/*` only when `SESSION_SECRET` or `APP_PASSWORD` is set; a bare local run stays open with the operator acting as admin. `server/auth.js` gains `createSessionToken`/`verifySessionToken`, `sessionCookie`/`clearSessionCookie`, an `authMiddleware` that accepts a session OR the legacy password (bearer or the old `auth` cookie, treated as admin during the transition), and `currentUser(req)` which resolves the acting user from the roster.
+- New endpoints: `GET /api/auth/me` (who am I, reachable unauthenticated so the frontend can decide whether to show a login screen) and `POST /api/auth/logout` (clears both cookies); both are exempt from the auth gate and the read-only gate. The Google and magic-link flows (next phases) will issue these sessions. Data routes are not yet scoped to `req.user` (phase 3b wires that), so behavior is unchanged. `test/session.test.js` (5 tests). 162 tests pass.
+
 ## 2026-09-10 (Multi-user phase 2b: per-user drills and pattern notes)
 
 - Drills and pattern notes are now per member. Each member's drill ladder, review history, guesses, feedback, and decoy tally live in `data/users/<id>/drills.json` (mirrored per machine to `data/users/<id>/drills-<host>.json`, and on the hosted store in the Supabase key `drills:<id>`); pattern study notes live in `data/users/<id>/patterns.json`. Every drills.js entry point (`syncDrillsForGame`, `syncAllDrills`, `dueDrills`, `reviewDrill`, `undoReview`, `suspendDrill`, `restoreSuspended`, `recordGuess`, `recordFeedback`, `recordDecoy`, `clearFeedback`, `buildDecoys`, `removeDrillsForGame`) and the store helpers (`getDrills`, `saveDrills`, `getForeignDrillStores`, `getPatternNotes`, `savePatternNotes`) take a `userId` that defaults to `DEFAULT_USER`, so existing callers are unchanged.

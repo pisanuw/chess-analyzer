@@ -3,6 +3,7 @@
 // derived from the password, so there is no separate secret to manage.
 import crypto from 'node:crypto';
 import { kvEnabled, kvGet, kvPut } from './store.js';
+import { getUser, publicUser } from './users.js';
 
 const DAY_S = 86400;
 const COOKIE_DAYS = 90;
@@ -71,16 +72,84 @@ function verify(token) {
   return Number(exp) > Date.now();
 }
 
-export function authMiddleware(req, res, next) {
-  // Guard only real API routes (note the trailing slash): "/api.js" is a static
-  // frontend module and startsWith('/api') would wrongly 401 it, breaking the
-  // whole app when run locally with a password set.
-  if (!password() || !req.path.startsWith('/api/') || req.path === '/api/login') return next();
+// --- per-user sessions -------------------------------------------------------
+// A session cookie carries the member id, HMAC-signed with SESSION_SECRET (which
+// falls back to APP_PASSWORD so the legacy single-password deployment keeps a
+// stable signing key). Auth is only ENFORCED when one of those is set; a bare
+// local run stays open (the operator is the admin). Google/magic-link flows
+// (later phases) issue these sessions; here is the shared verify + cookie plumbing.
+const SESSION_DAYS = 30;
+const sessionSecret = () => crypto.createHash('sha256').update('session:' + (process.env.SESSION_SECRET || password())).digest();
+
+export function authActive() {
+  return !!(process.env.SESSION_SECRET || password());
+}
+
+export function createSessionToken(userId, exp = Date.now() + SESSION_DAYS * DAY_S * 1000) {
+  const payload = `${userId}.${exp}`;
+  return `${payload}.${crypto.createHmac('sha256', sessionSecret()).update(payload).digest('base64url')}`;
+}
+
+/** Verify a session token: returns { userId, exp } or null. userIds contain no
+ * dot (see users.js id rule), so a 3-part split is unambiguous. */
+export function verifySessionToken(token) {
+  const parts = String(token || '').split('.');
+  if (parts.length !== 3) return null;
+  const [userId, exp, mac] = parts;
+  const good = crypto.createHmac('sha256', sessionSecret()).update(`${userId}.${exp}`).digest('base64url');
+  try { if (!crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(good))) return null; } catch { return null; }
+  if (!(Number(exp) > Date.now())) return null;
+  return { userId, exp: Number(exp) };
+}
+
+const cookieFlags = `Path=/; HttpOnly; SameSite=Lax; Secure`;
+export function sessionCookie(token) { return `sess=${token}; ${cookieFlags}; Max-Age=${SESSION_DAYS * DAY_S}`; }
+export function clearSessionCookie() { return `sess=; ${cookieFlags}; Max-Age=0`; }
+
+const readCookie = (req, name) => ((req.headers.cookie || '').match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`)) || [])[1];
+
+/** The legacy single-password path (bearer or the old `auth` cookie): still
+ * accepted, and treated as an admin so an existing hosted deployment keeps full
+ * access during the transition. */
+function legacyOk(req) {
   const bearer = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  if (bearer && passwordOk(bearer)) return next();
-  const cookie = ((req.headers.cookie || '').match(/(?:^|;\s*)auth=([^;]+)/) || [])[1];
-  if (verify(cookie)) return next();
+  if (bearer && passwordOk(bearer)) return true;
+  return verify(readCookie(req, 'auth'));
+}
+
+const isExempt = p => p === '/api/login' || p.startsWith('/api/auth/');
+
+/** Gate /api/* when auth is active, accepting either a session cookie or the
+ * legacy password. Attaches req.session (or null) and req.legacyAuthed for
+ * routes and the identity resolver. Static assets and the auth endpoints pass
+ * through. Kept synchronous: the roster lookup happens lazily in currentUser(). */
+export function authMiddleware(req, res, next) {
+  req.session = verifySessionToken(readCookie(req, 'sess'));
+  req.legacyAuthed = legacyOk(req);
+  if (!authActive() || !req.path.startsWith('/api/') || isExempt(req.path)) return next();
+  if (req.session || req.legacyAuthed) return next();
   res.status(401).json({ error: 'auth required' });
+}
+
+/** The acting user for a request: the session's allowlisted member, an admin for
+ * a legacy password login or a bare local run, or null when auth is on and the
+ * caller is unauthenticated. Reads the roster, so it is async. */
+export async function currentUser(req) {
+  if (req.session?.userId) return await getUser(req.session.userId);
+  if (req.legacyAuthed || !authActive()) return { id: 'admin', displayName: 'Admin', role: 'admin' };
+  return null;
+}
+
+/** Who am I? Drives the frontend login gate; reachable unauthenticated. */
+export async function meRoute(req, res) {
+  const u = await currentUser(req);
+  res.json({ user: publicUser(u), authActive: authActive() });
+}
+
+/** Clear both the session cookie and the legacy password cookie. */
+export function logoutRoute(req, res) {
+  res.setHeader('Set-Cookie', [clearSessionCookie(), `auth=; ${cookieFlags}; Max-Age=0`]);
+  res.json({ ok: true });
 }
 
 export async function loginRoute(req, res) {
