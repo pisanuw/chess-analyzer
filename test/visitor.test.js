@@ -77,3 +77,11 @@ test('anyone signed in can request a prep sheet (it notifies the admin)', async 
   assert.equal(r.status, 200);
   assert.equal((await r.json()).ok, true);
 });
+
+test('a FIDE-id prep request notifies the admin; a non-numeric id is rejected', async () => {
+  const post = fideId => fetch(base + '/api/prep-request', { method: 'POST', headers: { ...vCookie, 'content-type': 'application/json' }, body: JSON.stringify({ fideId }) });
+  const ok = await post('39904881');
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).ok, true);
+  assert.equal((await post('not-a-number')).status, 400);
+});

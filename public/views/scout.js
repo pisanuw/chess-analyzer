@@ -29,6 +29,11 @@ export async function scoutView(root) {
       <input type="search" id="subject-search" placeholder="Find opponent…" style="padding: 6px 10px; font-size: 14px">
     </div>
     <div class="row" id="subject-list" style="gap: 6px; flex-wrap: wrap; margin-bottom: 14px"></div>
+    <div class="row" id="prep-request" style="gap: 6px; align-items: center; margin-bottom: 14px">
+      <span class="muted"><small>Not listed? Request a prep sheet by FIDE id:</small></span>
+      <input type="text" id="prep-fide" inputmode="numeric" placeholder="e.g. 39904881" style="padding: 6px 10px; font-size: 14px; width: 14ch">
+      <button class="small" id="prep-fide-go">Request prep sheet</button>
+    </div>
     <div id="dossier"></div>`;
   const listEl = root.querySelector('#subject-list');
   const COLLAPSE_AT = 15;
@@ -68,6 +73,17 @@ export async function scoutView(root) {
   };
   renderSubjects('');
   root.querySelector('#subject-search').addEventListener('input', e => renderSubjects(e.target.value));
+
+  // Request a prep sheet for someone not yet in the list, by FIDE id: emails the admin.
+  const fideInput = root.querySelector('#prep-fide');
+  const fideBtn = root.querySelector('#prep-fide-go');
+  fideBtn.onclick = () => busy(fideBtn, async () => {
+    const fideId = fideInput.value.trim();
+    if (!/^\d{4,12}$/.test(fideId)) { toast('Enter a numeric FIDE id.', true); return; }
+    try { await api.requestPrepByFide(fideId); toast('Request sent to the admin.'); fideInput.value = ''; }
+    catch (err) { toast(err.message || 'Could not send the request.', true); }
+  });
+  fideInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); fideBtn.click(); } });
   const entry = subjects.find(s => s.subject === current) || { subject: current, fideId: null };
   // The clash board (created lazily) is the one Chessground instance on this page;
   // hold it so the router can tear it down on navigation and re-renders can too.

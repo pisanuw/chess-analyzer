@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Players: request a prep sheet by FIDE id)
+
+- The Players page has a new box to request a preparation sheet for someone not yet listed, by FIDE id. `POST /api/prep-request` validates a numeric id, emails the admin (with the player's FIDE profile link), logs the request to the activity log, is rate-limited, and is open to any signed-in user (members and visitors). The input and button are in `public/views/scout.js`; `test/visitor.test.js` covers the happy path and the non-numeric rejection.
+
 ## 2026-09-11 (Admin activity log: sign-ins and material actions)
 
 - New admin-only activity log so the operator can see who signed in from where and what material actions were taken. `server/audit.js` appends capped (500) events to Supabase (`audit` key) on the hosted mirror or `data/audit.json` locally; it never throws into a request. Logins (Google, magic link, password) and logout are logged with the client IP (the same CDN peer header the login throttle trusts, not X-Forwarded-For); every admin mutation is logged centrally from `requireAdmin` (non-GET only), and prep-sheet requests too. `GET /api/audit` is admin-only; a new admin-only "Log" nav item and `public/views/log.js` render the table (newest first). Sign-ins happen on the mirror so they land in the shared Supabase log; actions taken on the Mac producer land in its local file. `test/audit.test.js` covers the store round-trip and the endpoint gating. 193 tests pass.

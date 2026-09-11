@@ -886,6 +886,27 @@ app.post('/api/scout/:subject/prepsheet/request', wrap(async (req, res) => {
   }
 }));
 
+// Free-form prep-sheet request by FIDE id: the person need not be scouted yet.
+// Emails the admin so they can look the player up, scout them, and build it.
+app.post('/api/prep-request', wrap(async (req, res) => {
+  if (!(await rateLimit(req))) return res.status(429).json({ error: 'too many requests, try again later' });
+  const to = adminEmail();
+  if (!to) return res.status(503).json({ error: 'prep-sheet requests are not configured (no admin email)' });
+  const fideId = String(req.body?.fideId || '').trim();
+  if (!/^\d{4,12}$/.test(fideId)) return res.status(400).json({ error: 'enter a numeric FIDE id' });
+  const u = await currentUser(req);
+  const who = u?.displayName || 'a user';
+  try {
+    await sendEmail(to, `Prep sheet requested: FIDE ${fideId}`,
+      `${who} requested a preparation sheet for FIDE id ${fideId}.\n\nProfile: https://ratings.fide.com/profile/${fideId}\n\nScout their games (Players, Scout an opponent), then Generate prep sheet and publish.`);
+    logEvent({ action: 'prep sheet requested (FIDE id)', detail: fideId, userId: u?.id, name: u?.displayName, role: u?.role, ip: eventIp(req) });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(`prep-sheet request email failed: ${err.message}`);
+    res.status(502).json({ error: 'could not send the request' });
+  }
+}));
+
 // --- pattern study notes -----------------------------------------------------
 app.get('/api/patterns', wrap(async (req, res) => {
   if (await blockVisitor(req, res)) return;
