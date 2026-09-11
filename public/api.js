@@ -88,6 +88,10 @@ export async function showLogin() {
   });
 }
 
+// Visitors record nothing: these writes resolve to a no-op instead of calling
+// the server (the server guards them too). session.user is set at startup.
+const noopForVisitor = fn => (...args) => (session.user?.role === 'visitor' ? Promise.resolve({ ephemeral: true }) : fn(...args));
+
 export const api = {
   status: () => req('GET', '/api/status'),
   me: () => req('GET', '/api/auth/me'),
@@ -106,7 +110,7 @@ export const api = {
   analyseAll: (opts = {}) => req('POST', '/api/games/analyse-all', opts),
   prompt: (id, ply) => req('GET', `/api/games/${id}/moments/${ply}/prompt`),
   saveExplanation: (id, ply, e) => req('PUT', `/api/games/${id}/moments/${ply}/explanation`, e),
-  guess: (id, ply, uci, correct) => req('POST', `/api/games/${id}/moments/${ply}/guess`, { uci, correct }),
+  guess: noopForVisitor((id, ply, uci, correct) => req('POST', `/api/games/${id}/moments/${ply}/guess`, { uci, correct })),
   evalMove: (id, ply, uci) => req('POST', `/api/games/${id}/moments/${ply}/eval`, { uci }),
   testHosts: () => req('POST', '/api/engine/hosts/test', {}),
   jobs: () => req('GET', '/api/jobs'),
@@ -129,13 +133,13 @@ export const api = {
     req('GET', `/api/puzzles?source=${encodeURIComponent(source)}&limit=${limit}`),
   drills: ({ pattern = null, category = null, limit = null, session = false } = {}) =>
     req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}${category ? `&category=${encodeURIComponent(category)}` : ''}${session ? '&session=1' : ''}`),
-  reviewDrill: (id, grade, correct, practice = false, ms = null) =>
-    req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}) }),
-  suspendDrill: (id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended }),
-  undoDrill: id => req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {}),
-  restoreSuspended: () => req('POST', '/api/drills/restore-suspended', {}),
-  recordDecoy: correct => req('POST', '/api/drills/decoy', { correct }),
-  feedback: (id, ply, helpful) => req('POST', `/api/games/${id}/moments/${ply}/feedback`, { helpful }),
+  reviewDrill: noopForVisitor((id, grade, correct, practice = false, ms = null) =>
+    req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}) })),
+  suspendDrill: noopForVisitor((id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended })),
+  undoDrill: noopForVisitor(id => req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {})),
+  restoreSuspended: noopForVisitor(() => req('POST', '/api/drills/restore-suspended', {})),
+  recordDecoy: noopForVisitor(correct => req('POST', '/api/drills/decoy', { correct })),
+  feedback: noopForVisitor((id, ply, helpful) => req('POST', `/api/games/${id}/moments/${ply}/feedback`, { helpful })),
   reexplain: (id, ply) => req('POST', `/api/games/${id}/moments/${ply}/reexplain`, {}),
   playoutMove: (fen, elo) => req('POST', '/api/playout/move', { fen, elo }),
   playoutAssess: fen => req('POST', '/api/playout/assess', { fen }),

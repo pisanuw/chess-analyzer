@@ -1,5 +1,5 @@
 // Drills: positions from the player's own mistakes, scheduled with a small spaced-repetition ladder.
-import { getDrills, saveDrills, getSettings, listGames, getGame, DrillConflict, DEFAULT_USER } from './store.js';
+import { getDrills, saveDrills, getSettings, listGames, listAllGames, getGame, DrillConflict, DEFAULT_USER } from './store.js';
 import { winProb, WP_ACCEPT } from '../public/shared.js';
 
 const LADDER_DAYS = [1, 3, 7, 14, 30, 60];
@@ -540,4 +540,26 @@ export async function dueDrills(limit = 20, { pattern = null, category = null, s
 
 function normalizeKey(s) {
   return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/** An ephemeral practice set for visitors: punish drills drawn from the shared
+ * scout library, built fresh on every request and never stored. Visitors have no
+ * games and nothing they do is recorded, so there is no ladder, no due dates, and
+ * no store read or write here. */
+export async function visitorDrills(limit = 20, rand = Math.random) {
+  const index = (await listAllGames())
+    .filter(g => (g.purpose || 'own') === 'scout' && (g.status === 'analysed' || g.status === 'explained'))
+    .sort(() => rand() - 0.5);
+  const out = [];
+  for (const entry of index) {
+    if (out.length >= limit) break;
+    const game = await getGame(entry.id);
+    if (!game?.analysis) continue;
+    for (const ply of game.analysis.summary.moments) {
+      const d = makePunishDrill(game, ply, 'core', null);
+      if (d) out.push(d);
+      if (out.length >= limit) break;
+    }
+  }
+  return { due: out, total: out.length, dueCount: out.length, suspendedCount: 0, feedback: {}, visitor: true };
 }

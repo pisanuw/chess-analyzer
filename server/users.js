@@ -97,9 +97,21 @@ async function readUsersFile() {
   }
 }
 
-/** The full roster: built-in members plus data/users.json plus AUTH_EMAIL_* env. */
+const slugEmail = e => 'v_' + lc(e).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+
+/** The full roster: built-in members plus data/users.json plus AUTH_EMAIL_* env,
+ * plus a flat visitor allowlist (AUTH_VISITOR_EMAILS). Visitors have no data of
+ * their own: each is a thin identity keyed by their email, allowed to see the
+ * shared scouting library and practice drills/puzzles without anything recorded.
+ * A member or admin email always wins over the visitor list. */
 export async function getUsers() {
-  return buildRoster(DEFAULT_USERS, await readUsersFile(), envEmails());
+  const roster = buildRoster(DEFAULT_USERS, await readUsersFile(), envEmails());
+  const taken = new Set(roster.flatMap(u => u.emails || []));
+  for (const email of parseEmails(process.env.AUTH_VISITOR_EMAILS || '')) {
+    if (taken.has(email)) continue;
+    roster.push({ id: slugEmail(email), displayName: email, role: 'visitor', fideId: null, playerNames: [], rating: null, emails: [email] });
+  }
+  return roster;
 }
 
 export async function getUser(id) {
@@ -112,6 +124,10 @@ export async function listMembers() {
 
 export function isAdmin(user) {
   return !!user && user.role === 'admin';
+}
+
+export function isVisitor(user) {
+  return !!user && user.role === 'visitor';
 }
 
 /** Look up an allowlisted user by their login email (full roster), or null. */

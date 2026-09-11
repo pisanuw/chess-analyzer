@@ -91,6 +91,8 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 .login-err { color: var(--critical); margin: 0; font-size: 13px; }
 .login-msg { color: var(--text-2); min-height: 1em; margin: 0; font-size: 13px; }
 body:not(.is-admin) .admin-only { display: none !important; }
+/* Visitors: no report/repertoire/games/settings, just Scouting, Drills, Puzzles. */
+body.is-visitor [data-nav="home"], body.is-visitor [data-nav="games"], body.is-visitor [data-nav="report"], body.is-visitor [data-nav="repertoire"], body.is-visitor [data-nav="settings"] { display: none; }
 
 main { max-width: 1180px; margin: 0 auto; padding: 20px; }
 

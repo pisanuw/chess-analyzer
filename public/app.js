@@ -25,6 +25,10 @@ const routes = [
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
 ];
 
+// Pages a visitor cannot see (no report/repertoire, no games management). They
+// are redirected to Scouting, which is their landing page.
+const VISITOR_BLOCKED = new Set(['home', 'games', 'report', 'repertoire', 'settings']);
+
 let nav = 0; // navigation token: a stale async view must not clobber a newer one
 
 async function route() {
@@ -32,6 +36,7 @@ async function route() {
   const hash = location.hash || '#/home';
   const r = routes.find(x => x.re.test(hash));
   if (!r) { location.hash = '#/home'; return; }
+  if (session.user?.role === 'visitor' && VISITOR_BLOCKED.has(r.name)) { location.hash = '#/scout'; return; }
   const params = hash.match(r.re).slice(1);
   if (current?.destroy) current.destroy();
   current = null;
@@ -130,7 +135,10 @@ Promise.all([api.me().catch(() => ({})), api.status().catch(() => ({}))]).then((
   session.authActive = !!me.authActive;
   session.providers = me.providers || {};
   document.body.classList.toggle('is-admin', me.user?.role === 'admin');
+  document.body.classList.toggle('is-visitor', me.user?.role === 'visitor');
   if (me.authActive && !me.user) { showLogin(); return; } // not signed in: the overlay covers the app
+  // Visitors land on Scouting; bounce them off any page they cannot see.
+  if (me.user?.role === 'visitor') { const r = routes.find(x => x.re.test(location.hash || '#/home')); if (!r || VISITOR_BLOCKED.has(r.name)) location.hash = '#/scout'; }
   renderWhoami(me);
   updateDrillBadge();
   if (status.readonly) {

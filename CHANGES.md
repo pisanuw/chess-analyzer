@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-11 (Multi-user phase 11: visitor role)
+
+- Added a third role, `visitor` (allowlisted via `AUTH_VISITOR_EMAILS`): guests who can browse the shared scouting library and all prep sheets and practice drills and puzzles, but see no report or repertoire and record nothing. Visitor drills are an ephemeral set of punish drills drawn from the scout library (`visitorDrills`, built fresh per request, never stored); puzzles are the usual stateless scout-sourced set. Every recording route (drill review/suspend/undo/restore/decoy, guess, feedback) no-ops for visitors on both the server and the client, and `report`/`repertoire`/`report-card`/`patterns` return 403. The frontend hides the Home/Games/Report/Repertoire/Settings nav for visitors, lands them on Scouting, and labels the Drills page as practice-only.
+- `server/users.js` gains `isVisitor` and the visitor allowlist; `server/drills.js` gains `visitorDrills`; `server/index.js` gains the guards; the frontend gets `noopForVisitor` (api.js), an `is-visitor` body class and nav hiding (app.js, style.css), and a practice-mode note on Drills. `test/visitor.test.js` (6 tests). 189 tests pass.
+
 ## 2026-09-11 (Multi-user phase 10: docs and wrap-up)
 
 - Documented the multi-user model. CLAUDE.md gains a "Multi-user and auth" section (roster, sessions, Google and magic-link sign-in, the per-user data layout, `effectiveUser`/`requireAdmin`, seeding); README gains a "Users and login" section and an updated hosted-mirror note; BRIEFING records the branch status and the remaining admin steps. No code change; 183 tests pass. This completes the multi-user conversion on the `multi-user` branch (phases 1 through 10). To go live are admin/deploy actions: set the Netlify function env vars (see `.env.example`), seed Nikash and Neeraj (`POST /api/users/<id>/seed`, needs the engine), and merge to `main`.

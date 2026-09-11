@@ -16,12 +16,12 @@ import { checkClaudeCli, complete } from './llm.js';
 import { buildReport, buildPrepCard } from './report.js';
 import { buildRepertoire } from './repertoire.js';
 import { scoreToCp, winProb, summarize } from './analyze.js';
-import { dueDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback, clearFeedback, recordDecoy } from './drills.js';
+import { dueDrills, visitorDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback, clearFeedback, recordDecoy } from './drills.js';
 import { buildPuzzles } from './puzzles.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, prepSheetPrompt, prepSheetVersion, clashLinePrompt, clashNarrationVersion, patternSynthesisPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, PREP_SHEET_SCHEMA, CLASH_NARRATION_SCHEMA, PATTERN_SYNTH_SCHEMA, CATEGORIES } from './prompts.js';
 import { knownPatterns } from './jobs.js';
 import { authMiddleware, loginRoute, meRoute, logoutRoute, currentUser } from './auth.js';
-import { getUser, listMembers } from './users.js';
+import { getUser, listMembers, isVisitor } from './users.js';
 import { googleStartRoute, googleCallbackRoute } from './googleauth.js';
 import { magicRequestRoute, magicVerifyRoute } from './magiclink.js';
 
@@ -117,6 +117,14 @@ async function requireAdmin(req, res) {
   const u = await currentUser(req);
   if (u && u.role === 'admin') return true;
   res.status(403).json({ error: 'admin only' });
+  return false;
+}
+
+// Visitors (allowlisted guests) can browse the shared scouting library and
+// practice drills/puzzles, but see no report or repertoire and record nothing.
+// Returns true (and sends 403) when the caller is a visitor.
+async function blockVisitor(req, res) {
+  if (isVisitor(await currentUser(req))) { res.status(403).json({ error: 'not available to visitors' }); return true; }
   return false;
 }
 
@@ -365,6 +373,7 @@ app.put('/api/games/:id/moments/:ply/explanation', wrap(async (req, res) => {
 
 // Guess-first attempts: recorded per machine (drill store), seeds and boosts drills.
 app.post('/api/games/:id/moments/:ply/guess', wrap(async (req, res) => {
+  if (isVisitor(await currentUser(req))) return res.json({ ok: true, ephemeral: true }); // visitors record nothing
   const uid = await effectiveUser(req);
   const game = await getGame(req.params.id, uid);
   const ply = Number(req.params.ply);
@@ -449,6 +458,7 @@ app.post('/api/games/:id/moments/:ply/reexplain', wrap(async (req, res) => {
 // Was the explanation useful? Per-machine, like drill reviews; the report
 // aggregates it so prompt wording can be tuned from real use.
 app.post('/api/games/:id/moments/:ply/feedback', wrap(async (req, res) => {
+  if (isVisitor(await currentUser(req))) return res.json({ ok: true, ephemeral: true }); // visitors record nothing
   const uid = await effectiveUser(req);
   const game = await getGame(req.params.id, uid);
   const ply = Number(req.params.ply);
@@ -493,17 +503,24 @@ app.post('/api/playout/assess', wrap(async (req, res) => {
 
 // --- jobs, report, drills ----------------------------------------------------
 app.get('/api/jobs', (req, res) => res.json({ jobs: listJobs() }));
-app.get('/api/report', wrap(async (req, res) => res.json({ report: await buildReport({ userId: await effectiveUser(req) }) })));
+app.get('/api/report', wrap(async (req, res) => {
+  if (await blockVisitor(req, res)) return;
+  res.json({ report: await buildReport({ userId: await effectiveUser(req) }) });
+}));
 
 // One-page markdown card: focus areas, synthesized rules, clock line, study list.
 app.get('/api/report/card', wrap(async (req, res) => {
+  if (await blockVisitor(req, res)) return;
   const uid = await effectiveUser(req);
   const report = await buildReport({ userId: uid });
   if (!report.games) return res.status(400).json({ error: 'no analysed games yet' });
   res.type('text/markdown').send(buildPrepCard(report, await getPatternNotes(uid), await getSettings()));
 }));
 
-app.get('/api/repertoire', wrap(async (req, res) => res.json({ repertoire: await buildRepertoire({ userId: await effectiveUser(req) }) })));
+app.get('/api/repertoire', wrap(async (req, res) => {
+  if (await blockVisitor(req, res)) return;
+  res.json({ repertoire: await buildRepertoire({ userId: await effectiveUser(req) }) });
+}));
 
 // --- scouting ----------------------------------------------------------------
 const SCOUT_MAX_GAMES = 2000; // book tier: no per-game jobs, but bound the one-shot parse
@@ -837,7 +854,10 @@ app.post('/api/scout/:subject/prepsheet', wrap(async (req, res) => {
 }));
 
 // --- pattern study notes -----------------------------------------------------
-app.get('/api/patterns', wrap(async (req, res) => res.json({ notes: await getPatternNotes(await effectiveUser(req)) })));
+app.get('/api/patterns', wrap(async (req, res) => {
+  if (await blockVisitor(req, res)) return;
+  res.json({ notes: await getPatternNotes(await effectiveUser(req)) });
+}));
 app.post('/api/patterns/synthesize', wrap(async (req, res) => {
   if (!(await requireAdmin(req, res))) return;
   const uid = await effectiveUser(req);
@@ -872,21 +892,31 @@ app.get('/api/puzzles', wrap(async (req, res) => {
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 30));
   res.json(await buildPuzzles(req.query.source || 'tactics', limit, undefined, await effectiveUser(req)));
 }));
-app.get('/api/drills', wrap(async (req, res) => res.json(await dueDrills(Number(req.query.limit) || 20, {
-  pattern: req.query.pattern || null,
-  category: req.query.category || null,
-  session: req.query.session === '1', // a real training session (not the badge poll): may mix in decoys
-  userId: await effectiveUser(req),
-}))));
-app.post('/api/drills/restore-suspended', wrap(async (req, res) => res.json({ restored: await restoreSuspended(await effectiveUser(req)) })));
-app.post('/api/drills/decoy', wrap(async (req, res) => res.json({ decoys: await recordDecoy(!!req.body?.correct, await effectiveUser(req)) })));
+app.get('/api/drills', wrap(async (req, res) => {
+  // Visitors get an ephemeral scout-derived set; nothing is read from or written to a store.
+  if (isVisitor(await currentUser(req))) return res.json(await visitorDrills(Number(req.query.limit) || 20));
+  res.json(await dueDrills(Number(req.query.limit) || 20, {
+    pattern: req.query.pattern || null,
+    category: req.query.category || null,
+    session: req.query.session === '1', // a real training session (not the badge poll): may mix in decoys
+    userId: await effectiveUser(req),
+  }));
+}));
+// A visitor records nothing: the drill-write routes no-op for them (their
+// practice is ephemeral). The frontend also skips these calls for visitors.
+const visitorNoop = async (req, res) => { if (isVisitor(await currentUser(req))) { res.json({ ok: true, ephemeral: true }); return true; } return false; };
+app.post('/api/drills/restore-suspended', wrap(async (req, res) => { if (await visitorNoop(req, res)) return; res.json({ restored: await restoreSuspended(await effectiveUser(req)) }); }));
+app.post('/api/drills/decoy', wrap(async (req, res) => { if (await visitorNoop(req, res)) return; res.json({ decoys: await recordDecoy(!!req.body?.correct, await effectiveUser(req)) }); }));
 app.post('/api/drills/:id/review', wrap(async (req, res) => {
+  if (await visitorNoop(req, res)) return;
   res.json({ drill: await reviewDrill(req.params.id, req.body?.grade || 'good', req.body?.correct, !!req.body?.practice, Number(req.body?.ms), await effectiveUser(req)) });
 }));
 app.post('/api/drills/:id/suspend', wrap(async (req, res) => {
+  if (await visitorNoop(req, res)) return;
   res.json({ drill: await suspendDrill(req.params.id, req.body?.suspended !== false, await effectiveUser(req)) });
 }));
 app.post('/api/drills/:id/undo', wrap(async (req, res) => {
+  if (await visitorNoop(req, res)) return;
   res.json({ drill: await undoReview(req.params.id, await effectiveUser(req)) });
 }));
 
