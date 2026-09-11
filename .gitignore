@@ -4,5 +4,6 @@ downloaded/
 *.log
 .DS_Store
 
+.env
 .env.web
 web-dist/
