@@ -9,6 +9,7 @@ import { drillsView } from './views/drills.js';
 import { puzzlesView } from './views/puzzles.js';
 import { settingsView } from './views/settings.js';
 import { logView } from './views/log.js';
+import { adminView } from './views/admin.js';
 
 const app = document.getElementById('app');
 let current = null; // { name, destroy }
@@ -24,6 +25,7 @@ const routes = [
   { re: /^#\/puzzles(?:\?(.*))?$/, name: 'puzzles', view: puzzlesView }, // optional query: ?source=tactics|moments|missed
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
   { re: /^#\/log$/, name: 'log', view: logView }, // admin-only activity log
+  { re: /^#\/admin$/, name: 'admin', view: adminView }, // admin-only roster management
 ];
 
 // Pages a visitor cannot see (no report/repertoire, no games management). They
@@ -38,7 +40,7 @@ async function route() {
   const r = routes.find(x => x.re.test(hash));
   if (!r) { location.hash = '#/home'; return; }
   if (session.user?.role === 'visitor' && VISITOR_BLOCKED.has(r.name)) { location.hash = '#/scout'; return; }
-  if (r.name === 'log' && session.user?.role !== 'admin') { location.hash = session.user?.role === 'visitor' ? '#/scout' : '#/home'; return; }
+  if ((r.name === 'log' || r.name === 'admin') && session.user?.role !== 'admin') { location.hash = session.user?.role === 'visitor' ? '#/scout' : '#/home'; return; }
   const params = hash.match(r.re).slice(1);
   if (current?.destroy) current.destroy();
   current = null;
@@ -175,8 +177,9 @@ Promise.all([api.me().catch(() => ({})), api.status().catch(() => ({}))]).then((
   if (status.readonly) {
     window.addEventListener('hashchange', updateDrillBadge);
   } else {
-    // Settings is admin-only; the nav link ships hidden, revealed here for an admin.
-    if (me.user?.role === 'admin') document.querySelector('[data-nav="settings"]')?.removeAttribute('hidden');
+    // Settings and Admin are admin-only and producer-only (they write); the nav
+    // links ship hidden, revealed here for an admin on the analysing machine.
+    if (me.user?.role === 'admin') { document.querySelector('[data-nav="settings"]')?.removeAttribute('hidden'); document.querySelector('[data-nav="admin"]')?.removeAttribute('hidden'); }
     pollJobs();
     setInterval(updateDrillBadge, 60000);
     jobEvents.addEventListener('finished', updateDrillBadge);

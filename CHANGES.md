@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Admin page: manage the roster; visitors can request access)
+
+- New admin-only, producer-only Admin page (`#/admin`) to add visitors and players to the allowlist without editing env vars. Additions are written to `data/users.json` (merged into the roster by `getUsers`, and bundled to the mirror at publish time); built-in members and env-based visitors are listed but marked "built-in" and edited in the environment. New roster helpers in `server/users.js` (`addVisitor`, `addMember`, `managedUsers`, `removeRosterEntry`; player-name substrings are semicolon-separated, since PGN names contain commas) and admin routes `GET/POST/DELETE /api/admin/*`. Unauthorized visitors get a "Request access" form on the sign-in screen (email plus reason) that emails the admin: `POST /api/auth/request-access`, public, allowed on the read-only mirror, rate-limited, and logged. `test/admin.test.js` covers the helpers, route gating, and request-access. 200 tests pass.
+
 ## 2026-09-11 (Report page: collapsible sections)
 
 - The weakness report is split into collapsible sections (Focus areas; Moments by error type, phase and colour; Accuracy by game; weakness trend; Time management; Endgames; Explanation feedback; Drill performance; Patterns and concepts; Pattern study notes) so it is scannable instead of one long scroll. The at-a-glance tiles stay pinned at the top, and the chart-bearing sections open by default so the charts size correctly. Repertoire is one more accordion below. `public/views/report.js` renders the sections via an `acc()` helper; `public/views/review.js` no longer wraps the report in an outer "Weakness report" accordion.

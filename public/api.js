@@ -71,9 +71,24 @@ export async function showLogin() {
     ${denied === 'denied' ? '<p class="login-err">That account is not on the invite list. Ask the admin to add your email.</p>' : ''}
     ${denied === 'google_denied' ? '<p class="login-err">Google sign-in was cancelled. Try again.</p>' : ''}
     ${google}${magic}${pw}
+    <details class="login-request">
+      <summary>Not on the list? Request access</summary>
+      <form id="req-access-form" class="login-magic">
+        <input type="email" id="req-email" placeholder="you@example.com" autocomplete="email" required>
+        <textarea id="req-reason" placeholder="Why you would like access (optional)" rows="2" style="width:100%; box-sizing:border-box"></textarea>
+        <button class="btn" type="submit">Send request</button>
+      </form>
+    </details>
     <p id="login-msg" class="login-msg"></p>
   </div>`;
   document.body.appendChild(div);
+  div.querySelector('#req-access-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    try {
+      await api.requestAccess(div.querySelector('#req-email').value.trim(), div.querySelector('#req-reason').value.trim());
+      div.querySelector('#login-msg').textContent = 'Request sent. The admin will be in touch.';
+    } catch (err) { div.querySelector('#login-msg').textContent = err.message; }
+  });
   div.querySelector('#magic-form')?.addEventListener('submit', async e => {
     e.preventDefault();
     try {
@@ -121,7 +136,12 @@ export const api = {
   prepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet`),
   requestPrepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet/request`, {}),
   requestPrepByFide: fideId => req('POST', '/api/prep-request', { fideId }),
+  requestAccess: (email, reason) => req('POST', '/api/auth/request-access', { email, reason }),
   audit: () => req('GET', '/api/audit'),
+  adminUsers: () => req('GET', '/api/admin/users'),
+  addVisitor: email => req('POST', '/api/admin/visitors', { email }),
+  addPlayer: ({ email, displayName, fideId, playerNames }) => req('POST', '/api/admin/players', { email, displayName, fideId, playerNames }),
+  removeUser: id => req('DELETE', `/api/admin/users/${encodeURIComponent(id)}`),
   scoutImport: ({ pgn, fideId, name, filename }) => req('POST', '/api/scout/import', { pgn, fideId, name, filename }),
   scoutBook: fideId => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}`),
   promoteScout: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/promote`, {}),

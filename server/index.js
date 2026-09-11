@@ -23,7 +23,7 @@ import { knownPatterns } from './jobs.js';
 import { authMiddleware, loginRoute, meRoute, logoutRoute, currentUser, rateLimit } from './auth.js';
 import { sendEmail, adminEmail } from './email.js';
 import { logEvent, readAudit, eventIp } from './audit.js';
-import { getUser, listMembers, isVisitor } from './users.js';
+import { getUser, getUsers, listMembers, isVisitor, publicUser, addVisitor, addMember, managedUsers, removeRosterEntry } from './users.js';
 import { googleStartRoute, googleCallbackRoute } from './googleauth.js';
 import { magicRequestRoute, magicVerifyRoute } from './magiclink.js';
 
@@ -64,6 +64,21 @@ app.get('/api/auth/magic/verify', (req, res) => magicVerifyRoute(req, res).catch
   console.error(err);
   res.status(500).send('sign-in failed');
 }));
+// Request access: an unauthorized visitor asks the admin to be added. Public
+// (under /api/auth/, so exempt from the auth gate) and registered before the
+// read-only gate so it works on the hosted mirror, where such requests happen.
+app.post('/api/auth/request-access', (req, res) => (async () => {
+  if (!(await rateLimit(req))) return res.status(429).json({ error: 'too many requests, try again later' });
+  const to = adminEmail();
+  if (!to) return res.status(503).json({ error: 'access requests are not configured' });
+  const email = String(req.body?.email || '').trim();
+  const reason = String(req.body?.reason || '').trim().slice(0, 2000);
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'enter a valid email address' });
+  await sendEmail(to, `Access request: ${email}`,
+    `${email} is requesting access to Chess Analyzer.\n\nReason:\n${reason || '(none given)'}\n\nAdd them from the Admin page: Add visitor, or Add player.`);
+  logEvent({ action: 'access requested', detail: email, ip: eventIp(req) });
+  res.json({ ok: true });
+})().catch(err => { console.error(`access request failed: ${err.message}`); res.status(502).json({ error: 'could not send the request' }); }));
 
 // Read-only mirror (hosted copy): game data is managed on the analysing machine
 // and published; only training state (drill reviews, guesses) is writable.
@@ -514,6 +529,30 @@ app.get('/api/jobs', (req, res) => res.json({ jobs: listJobs() }));
 app.get('/api/audit', wrap(async (req, res) => {
   if (!(await requireAdmin(req, res))) return; // GET, so requireAdmin does not self-log
   res.json({ events: await readAudit(Math.min(500, Number(req.query.limit) || 200)) });
+}));
+
+// --- admin: manage the roster (add visitors and players) ---------------------
+// Writes to data/users.json on the producer; publish bundles it to the mirror.
+app.get('/api/admin/users', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const managed = new Set((await managedUsers()).map(u => u.id));
+  const users = (await getUsers()).map(u => ({ ...publicUser(u), emails: u.emails || [], managed: managed.has(u.id) }));
+  res.json({ users });
+}));
+app.post('/api/admin/visitors', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  try { res.json({ ok: true, user: publicUser(await addVisitor(req.body?.email)) }); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+}));
+app.post('/api/admin/players', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  try { res.json({ ok: true, user: publicUser(await addMember({ email: req.body?.email, displayName: req.body?.displayName, fideId: req.body?.fideId, playerNames: req.body?.playerNames })) }); }
+  catch (err) { res.status(400).json({ error: err.message }); }
+}));
+app.delete('/api/admin/users/:id', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const ok = await removeRosterEntry(req.params.id);
+  res.status(ok ? 200 : 404).json(ok ? { ok: true } : { error: 'not an admin-managed user (built-ins and env visitors cannot be removed here)' });
 }));
 app.get('/api/report', wrap(async (req, res) => {
   if (await blockVisitor(req, res)) return;

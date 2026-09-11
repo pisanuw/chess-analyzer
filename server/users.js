@@ -10,7 +10,7 @@
 // per-user data layout. Those wire it in later phases.
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { DATA_DIR } from './store.js';
+import { DATA_DIR, writeJson } from './store.js';
 
 // role 'admin' can import games, run analysis, manage users, and edit the global
 // engine/LLM settings. role 'member' sees only their own games/report/repertoire/
@@ -34,6 +34,15 @@ const uniq = arr => [...new Set(arr)];
 export function parseEmails(value) {
   return uniq(String(value || '').split(/[\s,;]+/).map(lc).filter(Boolean));
 }
+
+/** Split a semicolon/newline list of player-name substrings, case preserved.
+ * Not comma-separated: PGN names are "Last, First", so commas stay in the name. */
+export function parseNames(value) {
+  if (Array.isArray(value)) return uniq(value.map(s => String(s).trim()).filter(Boolean));
+  return uniq(String(value || '').split(/[;\n]+/).map(s => s.trim()).filter(Boolean));
+}
+
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 /** Login emails supplied through the environment, keyed by user id. Form:
  *  AUTH_EMAIL_<ID>="a@x.com, b@y.com" (id uppercased). Read per call, not at
@@ -97,7 +106,9 @@ async function readUsersFile() {
   }
 }
 
-const slugEmail = e => 'v_' + lc(e).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+const slugId = (prefix, e) => prefix + lc(e).replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+const slugEmail = e => slugId('v_', e);   // visitor id from email
+const memberId = e => slugId('p_', e);    // admin-added player (member) id from email
 
 /** The full roster: built-in members plus data/users.json plus AUTH_EMAIL_* env,
  * plus a flat visitor allowlist (AUTH_VISITOR_EMAILS). Visitors have no data of
@@ -142,4 +153,52 @@ export async function memberByName(name) {
   const n = lc(name);
   if (!n) return null;
   return (await listMembers()).find(u => lc(u.displayName) === n || (u.playerNames || []).some(p => lc(p) === n)) || null;
+}
+
+// --- admin-managed roster (data/users.json) ---------------------------------
+// The admin UI adds visitors and players here. buildRoster merges these by id
+// with the built-ins, so a fresh id creates a user and a reused id extends one.
+// Written on the producer and bundled to the mirror at publish time.
+
+/** The entries currently stored in data/users.json (admin-managed, removable). */
+export async function managedUsers() { return readUsersFile(); }
+
+async function writeUsersFile(users) { await writeJson(path.join(DATA_DIR, 'users.json'), users); }
+
+async function upsertRosterEntry(entry) {
+  const users = await readUsersFile();
+  const i = users.findIndex(u => u.id === entry.id);
+  if (i >= 0) users[i] = { ...users[i], ...entry, emails: uniq([...(users[i].emails || []), ...(entry.emails || [])].map(lc)) };
+  else users.push(entry);
+  await writeUsersFile(users);
+  return entry;
+}
+
+/** Add (or re-point) a visitor by email. */
+export async function addVisitor(email) {
+  const e = lc(email);
+  if (!EMAIL_RE.test(e)) throw new Error('enter a valid email address');
+  return upsertRosterEntry({ id: slugEmail(e), displayName: e, role: 'visitor', fideId: null, playerNames: [], rating: null, emails: [e] });
+}
+
+/** Add a player (member) with a login email and optional FIDE id / name matches. */
+export async function addMember({ email, displayName, fideId = null, playerNames = [], rating = null }) {
+  const e = lc(email);
+  if (!EMAIL_RE.test(e)) throw new Error('enter a valid email address');
+  const name = String(displayName || '').trim();
+  if (!name) throw new Error('enter a display name');
+  return upsertRosterEntry({
+    id: memberId(e), displayName: name, role: 'member',
+    fideId: fideId ? String(fideId).trim() : null,
+    playerNames: parseNames(playerNames), rating: rating ?? null, emails: [e],
+  });
+}
+
+/** Remove an admin-managed entry. Built-ins and env visitors are not in the file. */
+export async function removeRosterEntry(id) {
+  const users = await readUsersFile();
+  const next = users.filter(u => u.id !== id);
+  if (next.length === users.length) return false;
+  await writeUsersFile(next);
+  return true;
 }
