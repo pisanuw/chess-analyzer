@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Multi-user phase 6: login screen and identity in the UI)
+
+- The frontend now signs members in and shows who they are. On load it calls `/api/auth/me`; when auth is on and nobody is signed in, a sign-in overlay offers the configured methods: a "Sign in with Google" button and/or a magic-link email form, falling back to the legacy password field when neither provider is set (so the existing single-password mirror still works). A denied Google sign-in (the account is not on the allowlist) shows a clear message. The top bar shows the signed-in member's name (with an "admin" chip for the admin) and a Sign out button.
+- Admin gating in the UI: the body gets an `is-admin` class and a `body:not(.is-admin) .admin-only { display: none }` rule hides admin controls from members, and the Settings nav link is revealed only for an admin. The server already enforces this with 403s (requireAdmin), and the read-only mirror where members sign in already hides the write UI, so this is the matching presentation layer. `public/api.js` (session state, `me`/`logout`/`magicRequest`, the new overlay), `public/app.js` (identity bootstrap, whoami, admin body class), `public/index.html`, `public/style.css`. Frontend only; 178 tests pass (backend unchanged). Live UI verification is pending a run with SESSION_SECRET set.
+
 ## 2026-09-10 (Multi-user phase 5: magic-link sign-in)
 
 - Passwordless sign-in by email. `POST /api/auth/magic/request` looks the address up in the allowlist and, if found, emails a short-lived (15 minute) HMAC-signed one-time link; the response is identical for allowlisted and unknown addresses so the endpoint cannot enumerate members, and it is rate-limited per client (shared limiter with password login). `GET /api/auth/magic/verify?token=...` checks the signature and expiry, re-confirms the member on the allowlist, and issues a session. Delivery uses Resend's REST API (`RESEND_API_KEY`, `AUTH_FROM_EMAIL`); with no key set the link is logged to the console as a local dev fallback.

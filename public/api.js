@@ -38,32 +38,61 @@ export async function busy(btn, fn) {
   try { return await fn(); } finally { btn.disabled = was; }
 }
 
-/** Password overlay for the hosted copy; shown on any 401. */
-export function showLogin() {
-  if (document.getElementById('login-overlay')) return;
+/** Populated once at startup from /api/auth/me; views read session.user?.role. */
+export const session = { user: null, authActive: false, providers: {} };
+
+let loginShown = false;
+
+/** Sign-in overlay: Google and/or a magic-link email (or the legacy single
+ * password when neither provider is configured). Shown on any 401 and at startup
+ * when auth is on but nobody is signed in. Fetches /api/auth/me (which is exempt
+ * from the auth gate) to learn which methods to offer. */
+export async function showLogin() {
+  if (loginShown || document.getElementById('login-overlay')) return;
+  loginShown = true; // set before the await so two concurrent 401s cannot both build the overlay
+  let providers = {};
+  try { const me = await api.me(); if (me.user) { loginShown = false; return; } providers = me.providers || {}; } catch {}
+  const denied = new URLSearchParams(location.search).get('login');
+  const google = providers.google ? `<a class="btn primary login-google" href="/api/auth/google">Sign in with Google</a>` : '';
+  const magic = providers.magic ? `<form id="magic-form" class="login-magic">
+      <input type="email" id="magic-email" placeholder="you@example.com" autocomplete="email" required>
+      <button class="btn" type="submit">Email me a sign-in link</button>
+    </form>` : '';
+  const pw = (!providers.google && !providers.magic) ? `<form id="pw-form" class="login-magic">
+      <input type="password" id="login-pw" placeholder="Password" autocomplete="current-password">
+      <button class="btn primary" type="submit">Enter</button>
+    </form>` : '';
   const div = document.createElement('div');
   div.id = 'login-overlay';
-  div.style.cssText = 'position:fixed;inset:0;background:rgba(10,10,14,.92);display:flex;align-items:center;justify-content:center;z-index:100';
-  div.innerHTML = `<form style="display:flex;flex-direction:column;gap:10px;align-items:center">
+  div.className = 'login-overlay';
+  div.innerHTML = `<div class="login-box">
     <div style="font-size:42px">♞</div>
-    <input type="password" id="login-pw" placeholder="Password" autocomplete="current-password" style="padding:8px 10px;font-size:16px">
-    <button class="primary" style="padding:8px 18px">Enter</button>
-    <p id="login-err" style="color:#e66;min-height:1em;margin:0"></p>
-  </form>`;
+    <h2 style="margin:0">Chess Analyzer</h2>
+    ${denied === 'denied' ? '<p class="login-err">That account is not on the invite list. Ask the admin to add your email.</p>' : ''}
+    ${denied === 'google_denied' ? '<p class="login-err">Google sign-in was cancelled. Try again.</p>' : ''}
+    ${google}${magic}${pw}
+    <p id="login-msg" class="login-msg"></p>
+  </div>`;
   document.body.appendChild(div);
-  const input = div.querySelector('#login-pw');
-  input.focus();
-  div.querySelector('form').addEventListener('submit', async e => {
+  div.querySelector('#magic-form')?.addEventListener('submit', async e => {
     e.preventDefault();
     try {
-      await req('POST', '/api/login', { password: input.value });
-      location.reload();
-    } catch (err) { div.querySelector('#login-err').textContent = err.message; }
+      await api.magicRequest(div.querySelector('#magic-email').value.trim());
+      div.querySelector('#login-msg').textContent = 'Check your email for a sign-in link (valid for 15 minutes).';
+    } catch (err) { div.querySelector('#login-msg').textContent = err.message; }
+  });
+  div.querySelector('#pw-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    try { await req('POST', '/api/login', { password: div.querySelector('#login-pw').value }); location.reload(); }
+    catch (err) { div.querySelector('#login-msg').textContent = err.message; }
   });
 }
 
 export const api = {
   status: () => req('GET', '/api/status'),
+  me: () => req('GET', '/api/auth/me'),
+  logout: () => req('POST', '/api/auth/logout', {}),
+  magicRequest: email => req('POST', '/api/auth/magic/request', { email }),
   settings: () => req('GET', '/api/settings'),
   saveSettings: patch => req('PUT', '/api/settings', patch),
   games: () => req('GET', '/api/games'),

@@ -80,6 +80,18 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1
 .jobs .bar i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
 .badge { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: #fff; font-size: 11px; text-align: center; line-height: 18px; margin-left: 4px; }
 
+/* Identity in the top bar, and the sign-in overlay. Members never see admin-only
+   controls (marked .admin-only); the server also enforces this with a 403. */
+.whoami { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
+.whoami .who { font-weight: 600; color: var(--text); }
+.login-overlay { position: fixed; inset: 0; background: rgba(10, 10, 14, .92); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 20px; }
+.login-box { display: flex; flex-direction: column; gap: 12px; align-items: stretch; text-align: center; background: var(--surface); border: 1px solid var(--border); padding: 28px 32px; border-radius: 12px; min-width: 300px; max-width: 340px; }
+.login-box .btn { width: 100%; text-align: center; }
+.login-magic { display: flex; flex-direction: column; gap: 8px; margin: 0; }
+.login-err { color: var(--critical); margin: 0; font-size: 13px; }
+.login-msg { color: var(--text-2); min-height: 1em; margin: 0; font-size: 13px; }
+body:not(.is-admin) .admin-only { display: none !important; }
+
 main { max-width: 1180px; margin: 0 auto; padding: 20px; }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
