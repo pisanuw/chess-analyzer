@@ -5,7 +5,7 @@
 // here: associations only come from data the user already imported. Resolving an
 // id for a player who has no tag anywhere is the opt-in FIDE-lookup step, later.
 import { fideIdFromHeaders } from './pgn.js';
-import { getPlayers, savePlayers, listGames, listScoutBooks } from './store.js';
+import { getPlayers, savePlayers, listAllGames, listScoutBooks } from './store.js';
 
 const norm = s => (s || '').trim().toLowerCase();
 
@@ -70,7 +70,7 @@ export async function recordAssociations(assocs, now = new Date().toISOString())
  * the FIDE tags (no full-file reads). Called once at startup. */
 export async function syncPlayers(now = new Date().toISOString()) {
   const assocs = [];
-  for (const g of await listGames()) {
+  for (const g of await listAllGames()) {
     if (g.whiteFideId && g.white) assocs.push({ fideId: g.whiteFideId, name: g.white });
     if (g.blackFideId && g.black) assocs.push({ fideId: g.blackFideId, name: g.black });
   }

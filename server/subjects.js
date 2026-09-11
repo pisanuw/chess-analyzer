@@ -4,13 +4,13 @@
 // no engine work is needed. Own games contribute engine data only: explanations
 // exist for the player's moments, not the opponent's, so categories stay
 // "unexplained" unless the subject's other games are imported as scout games.
-import { getGame, listGames, getSettings } from './store.js';
+import { getGame, listAllGames, getSettings } from './store.js';
 import { summarize } from './analyze.js';
 
 export async function gamesForSubject(subject) {
   const settings = await getSettings();
   const out = [];
-  for (const e of await listGames()) {
+  for (const e of await listAllGames()) {
     if (e.status !== 'analysed' && e.status !== 'explained') continue;
     if (e.purpose === 'scout') {
       if (e.subject !== subject) continue;

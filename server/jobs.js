@@ -1,7 +1,7 @@
 // Sequential job queue: engine analysis, then LLM explanations. Progress is polled by the UI.
 import { getEnginePool } from './enginepool.js';
 import { analyseGame, summarize } from './analyze.js';
-import { getGame, saveGame, getSettings, listGames, listScoutBooks } from './store.js';
+import { getGame, saveGame, getSettings, listAllGames, listScoutBooks, DEFAULT_USER } from './store.js';
 import { ensureClashIndex } from './clash.js';
 import { complete, LlmError } from './llm.js';
 import { flushCache } from './evalcache.js';
@@ -60,7 +60,7 @@ async function updateGame(id, mutate) {
 export async function resumeInterrupted() {
   const settings = await getSettings();
   let analyse = 0, explain = 0;
-  for (const g of await listGames()) {
+  for (const g of await listAllGames()) {
     if (!g.playerColor) continue;
     if (g.status === 'imported' || g.status === 'analysing') { enqueue('analyse', g.id); analyse++; }
     else if (g.status === 'analysed' && settings.autoExplain && settings.llmProvider !== 'manual') { enqueue('explain', g.id); explain++; }
@@ -132,7 +132,7 @@ async function runAnalyse(job) {
     g.explanations = g.explanations || {};
     g.status = 'analysed';
   });
-  await syncDrillsForGame(saved, settings);
+  await syncDrillsForGame(saved, settings, saved.owner || DEFAULT_USER); // drills belong to the game's owner
   await flushCache(); // persist opening evals gathered this job (debounced otherwise)
   if (settings.autoExplain && settings.llmProvider !== 'manual') {
     await runExplain(job);
@@ -254,7 +254,7 @@ async function runExplain(job) {
   }
   job.progress = job.total;
   const done = await updateGame(job.gameId, g => { g.status = 'explained'; });
-  await syncDrillsForGame(done, settings); // copy fresh categories/patterns onto drills
+  await syncDrillsForGame(done, settings, done.owner || DEFAULT_USER); // copy fresh categories/patterns onto the owner's drills
 }
 
 /** Build one opponent's clash index (the synthetic gameId "clash:<fideId>" keys
@@ -286,7 +286,7 @@ export async function prebuildClashes() {
 export async function knownPatterns(currentGame) {
   const patterns = new Map(), concepts = new Map();
   const add = (map, key) => { if (key) map.set(key, (map.get(key) || 0) + 1); };
-  for (const entry of await listGames()) {
+  for (const entry of await listAllGames()) {
     if (!entry.explained) continue;
     // Pattern libraries do not mix: the player's own patterns stay separate from
     // each scouted subject's patterns.

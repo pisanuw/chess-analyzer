@@ -8,7 +8,8 @@ process.env.DATA_DIR = tempData();
 process.env.SESSION_SECRET = 'test-session-secret';
 delete process.env.APP_PASSWORD;
 delete process.env.READONLY_DATA;
-writeGame(process.env.DATA_DIR, makeGame({ id: 'abcdefabcdef' }));
+writeGame(process.env.DATA_DIR, makeGame({ id: 'abcdefabcdef' }));                    // kai's (legacy owner -> kai)
+writeGame(process.env.DATA_DIR, makeGame({ id: 'ababababab01', owner: 'nikash' }));    // nikash's own game
 
 const { createSessionToken, verifySessionToken, authActive } = await import('../server/auth.js');
 const { app } = await import('../server/index.js');
@@ -60,4 +61,30 @@ test('logout clears the session cookie', async () => {
   const setCookie = r.headers.get('set-cookie');
   assert.match(setCookie, /sess=;/);
   assert.match(setCookie, /Max-Age=0/);
+});
+
+const gameIds = async headers => (await (await req('GET', '/api/games', { headers })).json()).games.map(g => g.id);
+
+test('members see only their own games; an admin can target a member with ?user=', async () => {
+  const kai = await gameIds(sessCookie('kai'));
+  assert.ok(kai.includes('abcdefabcdef') && !kai.includes('ababababab01'), 'kai sees own, not nikash');
+  const nik = await gameIds(sessCookie('nikash'));
+  assert.ok(nik.includes('ababababab01') && !nik.includes('abcdefabcdef'), 'nikash sees own, not kai');
+  const adminDefault = await gameIds(sessCookie('yusuf'));
+  assert.ok(adminDefault.includes('abcdefabcdef') && !adminDefault.includes('ababababab01'), 'admin defaults to the primary member');
+  const adminNik = (await (await req('GET', '/api/games?user=nikash', { headers: sessCookie('yusuf') })).json()).games.map(g => g.id);
+  assert.ok(adminNik.includes('ababababab01'), 'admin can view another member via ?user=');
+});
+
+test('a member cannot view another member\'s game', async () => {
+  assert.equal((await req('GET', '/api/games/ababababab01', { headers: sessCookie('kai') })).status, 404);
+  assert.equal((await req('GET', '/api/games/ababababab01', { headers: sessCookie('nikash') })).status, 200);
+});
+
+test('management routes are admin only', async () => {
+  assert.equal((await req('POST', '/api/games/import', { headers: sessCookie('kai') })).status, 403);
+  assert.equal((await req('PUT', '/api/settings', { headers: sessCookie('kai') })).status, 403);
+  assert.equal((await req('DELETE', '/api/games/abcdefabcdef', { headers: sessCookie('kai') })).status, 403);
+  // admin passes the guard: import with no body is a 400 (missing PGN), not a 403
+  assert.equal((await req('POST', '/api/games/import', { headers: sessCookie('yusuf') })).status, 400);
 });

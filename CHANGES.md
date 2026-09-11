@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Multi-user phase 3b: identity wired through the routes)
+
+- The API now acts on the logged-in member. An `effectiveUser(req)` resolver scopes the per-user views and training writes (report, repertoire, games list, game view, drills, puzzles, pattern notes, guess and feedback) to that member: a member is locked to their own data, while an admin (or the local operator when auth is off) may target any member with `?user=<id>`, defaulting to the primary member. A member cannot view another member's game (404); scout games stay shared. `requireAdmin` gates the management routes (settings, import, delete, player and names, analyse/explain/analyse-all, manual explain and prompt, reexplain, scout import/promote/clash-narrate, players link, prep sheet, pattern synthesis) with 403 for members.
+- Genuinely global work now reads every member's games via `listAllGames()` so nothing is missed once members are seeded: the FIDE/players sync, the job queue and startup resume, the scout-subject aggregation, the shared scouting list, threshold re-scoring, promote status, and analyse-all. Analysis jobs sync drills to the game's owner; puzzles are per-member (`buildPuzzles(userId)`). Behavior is unchanged for today's single-operator Kai-only data (defaults resolve to the primary member). `test/session.test.js` gains per-member scoping and admin-guard cases. 165 tests pass. Deferred to phase 7: per-viewer scoping of the opening clash and the shared scout dossier's own-games enrichment.
+
 ## 2026-09-10 (Multi-user phase 3a: sessions and identity)
 
 - Added per-user session auth alongside the legacy single password. A `sess` cookie carries the member id, HMAC-signed with `SESSION_SECRET` (falling back to `APP_PASSWORD` so an existing hosted deployment keeps a stable signing key). `authActive()` gates `/api/*` only when `SESSION_SECRET` or `APP_PASSWORD` is set; a bare local run stays open with the operator acting as admin. `server/auth.js` gains `createSessionToken`/`verifySessionToken`, `sessionCookie`/`clearSessionCookie`, an `authMiddleware` that accepts a session OR the legacy password (bearer or the old `auth` cookie, treated as admin during the transition), and `currentUser(req)` which resolves the acting user from the roster.
