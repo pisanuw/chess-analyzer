@@ -140,10 +140,19 @@ export async function currentUser(req) {
   return null;
 }
 
-/** Who am I? Drives the frontend login gate; reachable unauthenticated. */
+/** Who am I? Drives the frontend login gate; reachable unauthenticated. Also
+ * advertises which login methods are configured so the login screen can show the
+ * right buttons (env read inline to avoid importing the provider modules). */
 export async function meRoute(req, res) {
   const u = await currentUser(req);
-  res.json({ user: publicUser(u), authActive: authActive() });
+  res.json({
+    user: publicUser(u),
+    authActive: authActive(),
+    providers: {
+      google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+      magic: !!process.env.RESEND_API_KEY,
+    },
+  });
 }
 
 /** Clear both the session cookie and the legacy password cookie. */

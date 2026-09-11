@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-10 (Multi-user phase 4: Google sign-in)
+
+- Hand-rolled Google OAuth2 (authorization-code flow, no library). `GET /api/auth/google` redirects to Google's consent screen with a signed anti-CSRF state (mirrored in a short-lived `g_state` cookie and double-submit checked); `GET /api/auth/google/callback` exchanges the code for an id_token at Google's token endpoint, decodes it (received over a trusted TLS channel, so no signature re-check), verifies the audience and `email_verified`, matches the email to the allowlist, and issues a session, redirecting to `/` (or `/?login=denied` when the Google account is signed in but not on the allowlist). `server/googleauth.js`; wired in `server/index.js`; `/api/auth/me` now advertises which providers are configured so the login screen can show the right buttons.
+- Needs `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `SESSION_SECRET`, and `PUBLIC_URL` (or an explicit `GOOGLE_REDIRECT_URI`) in the environment; the authorized redirect URI is `PUBLIC_URL/api/auth/google/callback`. `test/googleauth.test.js` (8 tests: auth URL, CSRF state, id_token decode, allowlist-to-session, the wired routes). 173 tests pass.
+
 ## 2026-09-10 (Multi-user phase 3b: identity wired through the routes)
 
 - The API now acts on the logged-in member. An `effectiveUser(req)` resolver scopes the per-user views and training writes (report, repertoire, games list, game view, drills, puzzles, pattern notes, guess and feedback) to that member: a member is locked to their own data, while an admin (or the local operator when auth is off) may target any member with `?user=<id>`, defaulting to the primary member. A member cannot view another member's game (404); scout games stay shared. `requireAdmin` gates the management routes (settings, import, delete, player and names, analyse/explain/analyse-all, manual explain and prompt, reexplain, scout import/promote/clash-narrate, players link, prep sheet, pattern synthesis) with 403 for members.
