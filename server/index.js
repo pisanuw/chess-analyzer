@@ -1,6 +1,7 @@
 // Express server: static frontend + JSON API. Runs locally; nothing leaves the machine except claude CLI calls.
 import express from 'express';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { Chess } from 'chess.js';
 import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from './pgn.js';
 import { getSettings, saveSettings, listGames, listAllGames, getGame, saveGame, deleteGame, getDrills, getPatternNotes, savePatternNotes, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, getClashNotes, saveClashNotes, DEFAULT_SETTINGS, DEFAULT_USER, DATA_DIR } from './store.js';
@@ -697,6 +698,46 @@ app.post('/api/scout/book/:fideId/promote', wrap(async (req, res) => {
     if (game.playerColor) { enqueue('analyse', game.id); queued.push(game.id); }
   }
   res.json({ subject: book.name, fideId: book.fideId, queued: queued.length, already: already.length, analysisSet: dossier.analysisSet.length });
+}));
+
+// Seed a member's OWN games from their scout book: import the recent, on-strength
+// subset (the same set promote uses) as purpose='own' owned by the member, so the
+// member gets a private report, repertoire, drills, and puzzles from their own
+// play. The id is namespaced by member, so a game the shared scouting library
+// already holds as a scout copy is never overwritten (both coexist). Needs
+// Stockfish, like promote; body { analyse: false } seeds the records without
+// queueing analysis (a dry run, and how the tests exercise it).
+const seededOwnGameId = (memberId, gameId) => crypto.createHash('sha1').update(`${memberId}:${gameId}`).digest('hex').slice(0, 12);
+
+app.post('/api/users/:id/seed', wrap(async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const member = await getUser(req.params.id);
+  if (!member || member.role !== 'member') return res.status(404).json({ error: 'unknown member' });
+  if (!member.fideId) return res.status(400).json({ error: `${member.id} has no FIDE id to seed from` });
+  const book = await getScoutBook(member.fideId);
+  if (!book) return res.status(404).json({ error: `no scout book for ${member.displayName} (FIDE ${member.fideId}); import it first` });
+  const settings = await getSettings();
+  const dossier = scoutDossier(book, dossierOpts(settings));
+  const byId = new Map(book.games.map(g => [g.id, g]));
+  const names = [book.name, ...(book.aliases || []), ...(member.playerNames || [])];
+  const seeded = [], queued = [], already = [];
+  for (const bookId of dossier.analysisSet) {
+    const bg = byId.get(bookId);
+    if (!bg?.pgn) continue;
+    const g = parseGame(bg.pgn);
+    const id = seededOwnGameId(member.id, g.id);
+    if (await getGame(id)) { already.push(id); continue; }
+    const game = {
+      id, headers: g.headers, moves: g.moves, pgn: g.pgn,
+      playerColor: detectPlayerColor(g.headers, names) || bg.color,
+      purpose: 'own', owner: member.id, seededFrom: { fideId: book.fideId, gameId: g.id },
+      status: 'imported', importedAt: new Date().toISOString(),
+    };
+    await saveGame(game, member.id);
+    seeded.push(id);
+    if (game.playerColor && req.body?.analyse !== false) { enqueue('analyse', id); queued.push(id); }
+  }
+  res.json({ member: member.id, fideId: member.fideId, analysisSet: dossier.analysisSet.length, seeded: seeded.length, queued: queued.length, already: already.length });
 }));
 
 // Opening clash: the predicted, branching, alternating tree of how this opponent

@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-11 (Multi-user phase 8: seed a member's own games from their scout book)
+
+- New admin endpoint `POST /api/users/:id/seed` imports the recent, on-strength subset of a member's scout book (the same set promote uses) as that member's OWN games (`purpose:'own'`, `owner:<id>`) and queues analysis, so a member like Nikash or Neeraj gets a private report, repertoire, drills, and puzzles from their own play. The seeded id is namespaced by member (`sha1(member:bookGameId)`), so it never overwrites the shared scout copy of the same game: both coexist, the scout copy backing the shared library and the own copy backing the member's private pages. It is idempotent (skips already-seeded games), admin-only, and `{ analyse: false }` seeds the records without queueing (a dry run).
+- This is the only step that needs Stockfish, so it runs on the home machine like promote. `test/seed-member.test.js` (3 tests, analyse:false so no engine runs). 183 tests pass. To actually seed, with the server running on the home machine: `curl -X POST http://localhost:3210/api/users/nikash/seed` (and `.../neeraj/seed`); their books are already imported, so this queues the analysis that builds their report/repertoire/drills/puzzles.
+
 ## 2026-09-10 (Multi-user phase 7: member prep sheets and members in the prep list)
 
 - Every member now appears in the shared scouting list as a prep subject (marked with a person icon), so members can prep against each other. A member who has a scout book (Nikash, Neeraj) is scouted from that book as before; a member with no book (Kai, the original player) is now scouted from their OWN games, viewed from their own side, so they get the opponent-facing report/repertoire/prep sheet the requirement asks for. `server/subjects.js` gains that own-games fallback in `gamesForSubject` (used only when no scout games match, so book-backed members are unaffected); `server/users.js` gains `memberByName`; `/api/scout` lists members with their own-game counts.
