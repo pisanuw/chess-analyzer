@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-11 (Multi-user phase 10: docs and wrap-up)
+
+- Documented the multi-user model. CLAUDE.md gains a "Multi-user and auth" section (roster, sessions, Google and magic-link sign-in, the per-user data layout, `effectiveUser`/`requireAdmin`, seeding); README gains a "Users and login" section and an updated hosted-mirror note; BRIEFING records the branch status and the remaining admin steps. No code change; 183 tests pass. This completes the multi-user conversion on the `multi-user` branch (phases 1 through 10). To go live are admin/deploy actions: set the Netlify function env vars (see `.env.example`), seed Nikash and Neeraj (`POST /api/users/<id>/seed`, needs the engine), and merge to `main`.
+
 ## 2026-09-11 (Multi-user phase 9: hosted mirror serves per-user data)
 
 - The Netlify mirror now backs multiple members. Because own and scout games share `data/games/` (ownership is a record field), the existing bundle already carries every member's games; `netlify.toml` additionally bundles per-member pattern notes (`data/users/*/patterns.json`) and the roster (`data/users.json`). Per-member drills are not files: they live in Supabase under the key `drills:<id>`, and `scripts/web-sync-drills.js` now syncs each member's drill store (built from the games they can see) during publish, so the mirror serves per-member drills with each member's reviews preserved. The session, Google, and magic-link routes are already exempt from the read-only and auth gates, so sign-in works on the mirror.
