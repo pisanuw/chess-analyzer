@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-11 (Multi-user phase 9: hosted mirror serves per-user data)
+
+- The Netlify mirror now backs multiple members. Because own and scout games share `data/games/` (ownership is a record field), the existing bundle already carries every member's games; `netlify.toml` additionally bundles per-member pattern notes (`data/users/*/patterns.json`) and the roster (`data/users.json`). Per-member drills are not files: they live in Supabase under the key `drills:<id>`, and `scripts/web-sync-drills.js` now syncs each member's drill store (built from the games they can see) during publish, so the mirror serves per-member drills with each member's reviews preserved. The session, Google, and magic-link routes are already exempt from the read-only and auth gates, so sign-in works on the mirror.
+- Added `.env.example` documenting every auth/config variable. To switch the mirror to multi-user, set the function's environment in the Netlify dashboard: `SESSION_SECRET`, `PUBLIC_URL` (the site URL), an `AUTH_EMAIL_<member>` for each member, and optionally `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` and `RESEND_API_KEY`/`AUTH_FROM_EMAIL`. The legacy `APP_PASSWORD` is still accepted as an admin login during the transition (drop it once members sign in with Google or a link); the old Supabase `drills` row is superseded by `drills:kai` after the next publish and can be deleted. 183 tests pass.
+
 ## 2026-09-11 (Multi-user phase 8: seed a member's own games from their scout book)
 
 - New admin endpoint `POST /api/users/:id/seed` imports the recent, on-strength subset of a member's scout book (the same set promote uses) as that member's OWN games (`purpose:'own'`, `owner:<id>`) and queues analysis, so a member like Nikash or Neeraj gets a private report, repertoire, drills, and puzzles from their own play. The seeded id is namespaced by member (`sha1(member:bookGameId)`), so it never overwrites the shared scout copy of the same game: both coexist, the scout copy backing the shared library and the own copy backing the member's private pages. It is idempotent (skips already-seeded games), admin-only, and `{ analyse: false }` seeds the records without queueing (a dry run).
