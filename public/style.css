@@ -178,6 +178,18 @@ tr.clickable:hover td { background: var(--surface-2); }
 .clash-move.engine { color: var(--accent); }
 .clash-engine { margin: 2px 0 2px 16px; }
 .clash-engine .clash-tree { border-left-style: dashed; margin-top: 1px; }
+/* Lichess-style variation view: main line as a two-column table, alternatives
+   inlined as full-width bands. */
+.clash-num { color: var(--text-2); font-variant-numeric: tabular-nums; }
+.clash-lichess { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.clash-lichess td { padding: 2px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+.clash-lichess td.clash-num { width: 2.5em; text-align: right; padding-right: 6px; }
+.clash-var-row td { background: var(--surface-2); font-size: 13px; line-height: 1.7; }
+.clash-var .clash-move { margin: 0 1px; }
+.clash-fmt { display: inline-flex; }
+.clash-fmt button { border-radius: 0; }
+.clash-fmt button:first-child { border-radius: 6px 0 0 6px; }
+.clash-fmt button:last-child { border-radius: 0 6px 6px 0; margin-left: -1px; }
 /* Keep the board (and the moves-played list under it) in view while the
    variation tree scrolls; drop the pinning when the grid collapses on mobile. */
 .clash-board-col { align-self: start; }
