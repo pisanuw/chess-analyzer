@@ -189,6 +189,34 @@ test('ensureClashIndex builds once, reuses when fresh, and returns null with no 
   assert.equal(await ensureClashIndex('99999', { now: NOW }), null);
 });
 
+test('the opponent index harvests structure habits from the whole game', async () => {
+  const bookGames = [
+    // Subject as White: castles short, opponent castles long (opposite sides), queens traded, wins vs a higher-rated player.
+    { color: 'white', date: '2026.06.01', result: '1-0', subjectElo: 2000, oppElo: 2100, posKey: 'A', pgn: pgnOf(['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'O-O', 'd6', 'd3', 'Bg4', 'h3', 'Bxf3', 'Qxf3', 'Qf6', 'Qxf6', 'Nxf6', 'Nc3', 'O-O-O'], '1-0') },
+    // Subject as White again in the same line, draws vs a level player, never castles.
+    { color: 'white', date: '2026.05.01', result: '1/2-1/2', subjectElo: 2000, oppElo: 2010, posKey: 'A', pgn: pgnOf(['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5', 'd3', 'd6'], '1/2-1/2') },
+    // Subject as Black, a sideline position (out of book), loses to a lower-rated player.
+    { color: 'black', date: '2026.04.01', result: '1-0', subjectElo: 2000, oppElo: 1900, posKey: 'B', pgn: pgnOf(['d4', 'd5', 'c4', 'e6', 'Nc3', 'Nf6', 'Bg5', 'Be7', 'e3', 'O-O'], '1-0') },
+  ];
+  const { features } = await buildOpponentIndex(bookOf(bookGames), SETTINGS, { now: NOW });
+  assert.equal(features.games, 3);
+  assert.equal(features.castling.white.short, 1);
+  assert.equal(features.castling.white.none, 1);
+  assert.equal(features.castling.black.short, 1);
+  assert.equal(features.oppositeCastlingPct, 33, 'one of three games had opposite-side castling');
+  assert.equal(features.queenTrade.pct, 33);
+  assert.equal(features.queenTrade.medianMove, 8, 'queens came off on move 8 in that game');
+  assert.equal(features.firstCaptureMedianMove, 6);
+  assert.equal(features.drawRate.white, 50);
+  assert.equal(features.vsHigher.scorePct, 100);
+  assert.equal(features.vsLower.scorePct, 0);
+  assert.equal(features.vsLevel.games, 1);
+  assert.equal(features.inBook.games, 3, 'with three games every 8-ply position is a top line');
+  assert.equal(features.form.games, 3);
+  assert.equal(features.form.scorePct, 50);
+  assert.ok(features.avgMoves >= 4);
+});
+
 test('loadStudentGames is scoped to the member whose openings the clash crosses', async () => {
   const { writeGame, makeGame } = await import('./helpers.js');
   const { loadStudentGames } = await import('../server/clash.js');

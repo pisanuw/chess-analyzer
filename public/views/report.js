@@ -4,6 +4,7 @@
 import { api, esc, toast, movePrefix } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 import { CATEGORY_LABEL, KIND_LABEL } from '../labels.js';
+import { tendencyTiles } from '../widgets.js';
 
 const catLabel = c => CATEGORY_LABEL[c] || c;
 const fmtSecs = s => s == null ? '–' : s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
@@ -162,6 +163,7 @@ export async function reportView(root) {
     + acc('Focus areas', focusBody, true)
     + acc('Moments by error type, phase &amp; colour', chartsBody, true)
     + acc('Accuracy by game', trendBody, true)
+    + (r.tendencies?.games ? acc('Winning, losing, and turning positions', tendencyTiles(r.tendencies)) : '')
     + (catTrendBody ? acc('Are the weaknesses shrinking?', catTrendBody) : '')
     + (timeBody ? acc('Time management', timeBody) : '')
     + (endgamesBody ? acc('Recurring endgame trouble', endgamesBody) : '')

@@ -57,6 +57,21 @@ export function parseTimeControl(tc) {
   return { base: Number(m[1]), inc: Number(m[2] || 0) };
 }
 
+/** classical | rapid | blitz | unknown, from a TimeControl header (FIDE bands on
+ * the time for 60 moves) or, failing that, words in the event name. */
+export function classifyTimeControl(tc, event = '') {
+  const t = parseTimeControl(tc);
+  if (t) {
+    const sixty = t.base + 60 * t.inc;
+    return sixty >= 3600 ? 'classical' : sixty >= 600 ? 'rapid' : 'blitz';
+  }
+  const e = String(event || '').toLowerCase();
+  if (/\b(blitz|bullet)\b/.test(e)) return 'blitz';
+  if (/\b(rapid|quick|active)\b/.test(e)) return 'rapid';
+  if (/\b(classical|standard)\b/.test(e)) return 'classical';
+  return 'unknown';
+}
+
 /** Seconds spent on each move, aligned with `moves` (null where unknown).
  * [%clk] comments store seconds REMAINING after the move; spent time is the
  * difference from the mover's previous clock (or the base time control),

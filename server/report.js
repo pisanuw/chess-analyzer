@@ -3,6 +3,7 @@ import { getGame, listGames, getDrills, getForeignDrillStores, DEFAULT_USER } fr
 import { gamesForSubject } from './subjects.js';
 import { parseTimeControl, spentPerMove, resultScore, normalizeKey } from '../public/shared.js';
 import { CATEGORIES } from './prompts.js';
+import { curveTendencies } from './tendencies.js';
 
 export { parseTimeControl, resultScore };
 
@@ -259,6 +260,9 @@ export async function buildReport({ purpose = 'own', subject = null, userId = DE
     activity: [...activityDates].sort(),
     feedback,
     timeManagement,
+    // Conversion, defence, swings, and where the eval turns, straight from the
+    // stored win-probability curves (no labels involved).
+    tendencies: games.length ? curveTendencies(games) : null,
     // Rank by how many distinct games a signature recurs in, not raw moment
     // count: three blunders in one endgame is one trouble spot, not three.
     endgames: [...endgames.values()]

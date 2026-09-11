@@ -144,7 +144,7 @@ export const api = {
   addPlayer: ({ email, displayName, fideId, playerNames }) => req('POST', '/api/admin/players', { email, displayName, fideId, playerNames }),
   removeUser: id => req('DELETE', `/api/admin/users/${encodeURIComponent(id)}`),
   scoutImport: ({ pgn, fideId, name, filename }) => req('POST', '/api/scout/import', { pgn, fideId, name, filename }),
-  scoutBook: fideId => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}`),
+  scoutBook: (fideId, tc = null) => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}${tc && tc !== 'all' ? `?tc=${tc}` : ''}`),
   promoteScout: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/promote`, {}),
   scoutClash: (fideId, opts = {}) => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}/clash${opts.extend ? '?extend=1' : ''}`),
   narrateClash: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/clash/narrate`, {}),

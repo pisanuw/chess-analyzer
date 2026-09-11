@@ -181,11 +181,16 @@ export function registerScoutRoutes(app) {
     res.json({ fideId, name, imported: book.total, skipped: failed, dossier });
   }));
 
+  // The book dossier. ?tc=classical|rapid|blitz keeps one time-control class
+  // (default: every game). `features` are the structure habits the clash index
+  // harvested from the whole history (null until that index has been built).
   app.get('/api/scout/book/:fideId', wrap(async (req, res) => {
     const book = await getScoutBook(req.params.fideId);
     if (!book) return res.status(404).json({ error: 'no scout book for this FIDE id' });
-    const dossier = scoutDossier(book, dossierOpts(await getSettings()));
-    res.json({ fideId: book.fideId, name: book.name, importedAt: book.importedAt, dossier, promote: await promoteStatus(book, dossier) });
+    const dossier = scoutDossier(book, dossierOpts(await getSettings(), req.query.tc));
+    const entry = (await getClashStore())[book.fideId];
+    const features = entry && entry.bookImportedAt === book.importedAt ? entry.features || null : null;
+    res.json({ fideId: book.fideId, name: book.name, importedAt: book.importedAt, dossier, features, promote: await promoteStatus(book, dossier) });
   }));
 
   // Promote the recent, on-strength subset into the engine/LLM dossier: create

@@ -6,6 +6,7 @@ import { barChart, lineChart } from '../charts.js';
 import { Board, walkSans } from '../board.js';
 import { CATEGORY_LABEL } from '../labels.js';
 import { fmtLine, lichessUrl as lichess } from '../shared.js';
+import { tendencyTiles, habitTiles } from '../widgets.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -98,7 +99,7 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
   // are independent: a freshly imported opponent has a book but no engine data.
   // The games list drives the "still processing" / "stale" prep-sheet flags.
   const [book, data, gamesRes] = await Promise.all([
-    entry.fideId ? api.scoutBook(entry.fideId).catch(() => null) : Promise.resolve(null),
+    entry.fideId ? api.scoutBook(entry.fideId, entry.tc || null).catch(() => null) : Promise.resolve(null),
     api.scout(subject, entry.color || null).catch(() => null),
     api.games().catch(() => ({ games: [] })),
   ]);
@@ -123,13 +124,15 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
     + (data?.headToHead ? headToHeadCard(data.headToHead, subject) : '')
     + (data ? prepSheetCard(subject, data.report, data.prepSheet, pending, readonly, data.prepSheetVersion) : '')
     + (linkable ? fideLinkCard(subject) : '')
-    + (book ? bookSection(book.dossier, readonly, book.promote, entry.color) : '')
+    + (book ? bookSection(book.dossier, readonly, book.promote, entry.color, book.features, entry.tc) : '')
     + (book ? clashCard() : '')
     + dossierAcc;
 
   // The colour cut re-renders the whole dossier for that colour (the deep
-  // dossier, the book table, the clash forest, and the prep-round link).
+  // dossier, the book table, the clash forest, and the prep-round link); the
+  // time-control cut re-derives the book dossier from one class of games.
   el.querySelectorAll('[data-color-cut]').forEach(b => b.onclick = () => { entry.color = b.dataset.colorCut || null; refresh(); });
+  el.querySelectorAll('[data-tc]').forEach(b => b.onclick = () => { entry.tc = b.dataset.tc === 'all' ? null : b.dataset.tc; refresh(); });
   if (data) wirePrep(el, subject, data.report, pending, refresh);
   if (linkable) wireFideLink(el, subject);
   if (book) {
@@ -372,8 +375,14 @@ function wireFideLink(el, subject) {
 }
 
 /** The book tier: what they play, weighted to recent, on-strength games. */
-function bookSection(d, readonly, promote, color = null) {
+function bookSection(d, readonly, promote, color = null, features = null, tc = null) {
   const cov = d.coverage;
+  // Offer a time-control cut only when the book actually mixes classes (an
+  // export with no TimeControl headers is all "unknown" and gets no toggle).
+  const classes = ['classical', 'rapid', 'blitz'].filter(k => (cov.byTimeControl || {})[k] > 0);
+  const tcToggle = classes.length && (classes.length > 1 || (cov.byTimeControl.unknown || 0) > 0)
+    ? `<div class="row" style="gap:6px; margin:6px 0"><span class="muted"><small>Time control:</small></span>${[['all', `All (${cov.bookTotal})`], ...classes.map(k => [k, `${k[0].toUpperCase()}${k.slice(1)} (${cov.byTimeControl[k]})`])].map(([v, label]) => `<button class="small${(tc || 'all') === v ? ' primary' : ''}" data-tc="${v}">${label}</button>`).join('')}${cov.byTimeControl.unknown ? ` <small class="muted">${cov.byTimeControl.unknown} with no time control recorded</small>` : ''}</div>`
+    : '';
   // Rating over time is a small line graph (filled in after insertion by
   // renderRatingTrend); a row of "year: elo" chips was hard to read as a trend.
   const trendBlock = d.eloTrend.length
@@ -396,13 +405,15 @@ function bookSection(d, readonly, promote, color = null) {
   return `
     <details class="acc" id="book-acc"><summary><span class="acc-title">Repertoire book</span> <span class="muted" style="font-size:13px">${d.total} games</span></summary>
     <div class="acc-body">
-    <p class="muted">Repertoire book from ${d.total} games${d.dateRange ? ` (${esc(d.dateRange.from)} to ${esc(d.dateRange.to)})` : ''}. Weighted toward recent, on-strength games: ${cov.droppedOld} game${cov.droppedOld === 1 ? '' : 's'} older than ${cov.maxAgeYears} years and ${cov.droppedElo} more than ${cov.eloBand} Elo off their current strength are set aside, because they no longer describe the player you will face.</p>
+    <p class="muted">Repertoire book from ${d.total} games${tc ? ` (${tc} only)` : ''}${d.dateRange ? ` (${esc(d.dateRange.from)} to ${esc(d.dateRange.to)})` : ''}. Weighted toward recent, on-strength games: ${cov.droppedOld} game${cov.droppedOld === 1 ? '' : 's'} older than ${cov.maxAgeYears} years and ${cov.droppedElo} more than ${cov.eloBand} Elo off their current strength are set aside, because they no longer describe the player you will face.</p>
+    ${tcToggle}
     <div class="tiles">
       <div class="tile"><div class="v">${d.currentElo ?? '–'}</div><div class="l">Current strength</div></div>
       <div class="tile"><div class="v">${d.peakElo ?? '–'}</div><div class="l">Peak in file</div></div>
       <div class="tile"><div class="v">${d.results.white.recentScorePct ?? '–'}% / ${d.results.black.recentScorePct ?? '–'}%</div><div class="l">Recent score W / B</div></div>
       <div class="tile"><div class="v">${cov.analysing}</div><div class="l">Recent games to analyse</div></div>
     </div>
+    ${features ? `<h3 style="margin:16px 0 0">Habits from their whole history</h3>${habitTiles(features)}` : ''}
     <h3 style="margin:16px 0 0">Rating over time</h3>
     ${trendBlock}
     <div class="grid ${color ? '' : 'grid-2'}" style="margin-top: 16px">
@@ -759,6 +770,7 @@ async function renderEngineDossier(el, data, subject, readonly) {
       <div class="tile"><div class="v">${j.blunder} / ${j.mistake} / ${j.inaccuracy}</div><div class="l">Blunders / mistakes / inaccuracies</div></div>
       <div class="tile"><div class="v">${r.timeManagement ? r.timeManagement.underTwoMinMoments : '–'}</div><div class="l">Their errors under 2 minutes</div></div>
     </div>
+    ${r.tendencies?.games ? `<h3>How they handle the evaluation</h3>${tendencyTiles(r.tendencies)}` : ''}
     ${r.focus.length ? `<h3>Where they go wrong</h3><div class="grid grid-3">${r.focus.map((f, i) => `
       <div class="card"><div class="muted">#${i + 1}</div><b>${esc(catLabel(f.category))}</b><div class="muted">${f.count} moment${f.count === 1 ? '' : 's'}, weighted ${f.weight}</div></div>`).join('')}</div>` : ''}
     <div class="grid grid-2" style="margin-top: 20px">

@@ -5,7 +5,7 @@
 // headers, and derived stats in data/scouts/<fideId>.json. From it we derive a
 // recency- and rating-weighted repertoire and pick the handful of recent games
 // worth the expensive engine/LLM dossier (see promote in index.js).
-import { resultScore, posKeyOf } from '../public/shared.js';
+import { resultScore, posKeyOf, classifyTimeControl } from '../public/shared.js';
 
 const OPENING_PLIES = 8; // position after these plies identifies a line (matches repertoire.js)
 const LINE_SAN = 10;     // SAN prefix stored per game, enough to name the variant
@@ -74,6 +74,10 @@ export function buildScoutBook(parsed, { fideId, name, aliases = [] }, now = new
       subjectElo,
       oppElo,
       eco: g.headers.ECO || '',
+      // Time control (header, else the event name) so a rapid-heavy export does
+      // not silently skew a classical profile; the dossier can filter on it.
+      timeControl: g.headers.TimeControl || '',
+      tc: classifyTimeControl(g.headers.TimeControl, g.headers.Event),
       line: g.moves.slice(0, LINE_SAN).map(m => m.san),
       // Full PGN so the selected subset can be promoted into the engine/LLM
       // dossier later without keeping the original export file around.
@@ -88,7 +92,10 @@ export function buildScoutBook(parsed, { fideId, name, aliases = [] }, now = new
   return { fideId: String(fideId || ''), name, aliases, games, total: games.length, importedAt: now.toISOString() };
 }
 
-const DEFAULTS = { maxAgeYears: 3, eloBand: 200, halfLifeDays: 540, analyseCount: 30 };
+const DEFAULTS = { maxAgeYears: 3, eloBand: 200, halfLifeDays: 540, analyseCount: 30, timeControl: 'all' };
+
+/** A book game's time-control class; books written before the field carry none. */
+export const bookTc = g => g.tc || classifyTimeControl(g.timeControl, g.event);
 
 /** Recency weight of a game by its age in days: halves every halfLifeDays, zero
  * past maxDays, a small flat weight for undated games so they still count a
@@ -105,13 +112,21 @@ export function recencyWeight(age, maxDays, halfLifeDays) {
  * lets a player prep against an opponent with hundreds of games instantly. */
 export function scoutDossier(book, opts = {}) {
   const now = opts.now || new Date();
-  const { maxAgeYears, eloBand, halfLifeDays, analyseCount } = { ...DEFAULTS, ...opts };
+  const { maxAgeYears, eloBand, halfLifeDays, analyseCount, timeControl } = { ...DEFAULTS, ...opts };
   const maxDays = maxAgeYears * 365.25;
+
+  // How the book splits by time control, before any filter, so the UI can offer
+  // the classes that exist; then keep one class when asked ('all' keeps every
+  // game, including ones whose control is unknown).
+  const byTimeControl = { classical: 0, rapid: 0, blitz: 0, unknown: 0 };
+  for (const g of book.games) byTimeControl[bookTc(g)] = (byTimeControl[bookTc(g)] || 0) + 1;
+  const inClass = g => timeControl === 'all' || !timeControl || bookTc(g) === timeControl;
 
   // Sort by the actual parsed date, not the string: PGN dates are often not
   // zero-padded ("2026.7.29"), so a string sort would rank Sept above Oct.
   // Undated games sort last.
   const games = book.games
+    .filter(inClass)
     .map(g => ({ ...g, age: ageDays(g.date, now), ts: pgnToDate(g.date)?.getTime() ?? -Infinity }))
     .sort((a, b) => b.ts - a.ts);
 
@@ -194,7 +209,7 @@ export function scoutDossier(book, opts = {}) {
     repertoire,
     eloTrend,
     analysisSet,
-    coverage: { total: games.length, eligible: eligible.length, analysing: analysisSet.length, droppedOld, droppedElo, maxAgeYears, eloBand, currentElo },
+    coverage: { total: games.length, eligible: eligible.length, analysing: analysisSet.length, droppedOld, droppedElo, maxAgeYears, eloBand, currentElo, timeControl: timeControl || 'all', byTimeControl, bookTotal: book.games.length },
   };
 }
 

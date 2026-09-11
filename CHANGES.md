@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-11 (Deterministic tendencies; time control in scout books)
+
+- `server/tendencies.js` reads the stored win-probability curves of analysed games and reports what the labels cannot: conversion rate (games that reached 75 percent and were won), hold rate (games that fell to 25 percent and were not lost), collapses and comebacks (40-point swings within 10 plies), the phase in which the evaluation first turned, draw rate, and average length. `buildReport` returns it as `tendencies` for the member's own report and every scout dossier; the Report page and the deep dossier show the tiles, counts beside every rate.
+- The clash index job already parses every recent book game; it now harvests structure habits in the same pass (`features` on the stored index, served by `GET /api/scout/book/:fideId`): form over the last ten games, score against higher- and lower-rated opponents, score inside their three main lines versus out of them, draw rate by colour, castling side, opposite-side castling, queen-trade frequency and typical move, first-capture move, and average length. The Repertoire book section shows them as "Habits from their whole history".
+- Scout books record each game's time control (`timeControl`, and a `tc` class: classical, rapid, blitz, or unknown from the header bands or the event name; `classifyTimeControl` in `public/shared.js`). `scoutDossier` takes `timeControl` and `GET /api/scout/book/:fideId?tc=` keeps one class; the book section offers the toggle only when the book mixes classes, with the counts. Books written before the field classify on the fly.
+
 ## 2026-09-11 (Scouting by colour, prep rounds, head to head)
 
 - The dossier can be cut to one of the opponent's colours: `GET /api/scout/:subject?color=white|black` filters the deep report and repertoire (`buildReport`/`buildRepertoire` take `color`), and the Players page gets an "All / As White / As Black" toggle that re-renders the deep dossier, the book table, and the opening clash (only the forest for the colour the student will have). Preparation is colour-specific; half of every dossier used to be about the colour the student would not face.

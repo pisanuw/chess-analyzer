@@ -91,6 +91,26 @@ test('scoutDossier: games far off current strength are dropped from the analysis
   assert.equal(d.analysisSet.length, 2);
 });
 
+test('books record the time-control class; the dossier can keep one class', () => {
+  const sans = ['e4', 'c5', 'Nf3', 'd6', 'd4', 'cxd4', 'Nxd4', 'Nf6'];
+  const parsed = [
+    makeParsed({ id: 'c1', white: 'H', black: 'X', date: '2026.08.01', whiteElo: 2200, blackElo: 2150, sans, headers: { TimeControl: '5400+30' } }),
+    makeParsed({ id: 'c2', white: 'H', black: 'Y', date: '2026.07.01', whiteElo: 2200, blackElo: 2150, sans, headers: { TimeControl: '5400+30' } }),
+    makeParsed({ id: 'r1', white: 'H', black: 'Z', date: '2026.06.01', whiteElo: 2200, blackElo: 2150, sans, headers: { TimeControl: '900+10' } }),
+    makeParsed({ id: 'u1', white: 'H', black: 'W', date: '2026.05.01', whiteElo: 2200, blackElo: 2150, sans, headers: { Event: 'Spring Open' } }),
+  ];
+  const book = buildScoutBook(parsed, { fideId: '444', name: 'H' }, NOW);
+  assert.deepEqual(book.games.map(g => g.tc), ['classical', 'classical', 'rapid', 'unknown']);
+  const all = scoutDossier(book, { now: NOW });
+  assert.equal(all.total, 4);
+  assert.deepEqual(all.coverage.byTimeControl, { classical: 2, rapid: 1, blitz: 0, unknown: 1 });
+  const classical = scoutDossier(book, { now: NOW, timeControl: 'classical' });
+  assert.equal(classical.total, 2, 'rapid and unknown games are set aside');
+  assert.equal(classical.coverage.timeControl, 'classical');
+  assert.equal(classical.coverage.bookTotal, 4);
+  assert.equal(scoutDossier(book, { now: NOW, timeControl: 'blitz' }).total, 0);
+});
+
 test('scoutDossier: analysis set is capped and prefers the most recent games', () => {
   const parsed = [];
   for (let i = 0; i < 40; i++) {

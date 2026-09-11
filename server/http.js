@@ -63,7 +63,8 @@ export async function studentRating(req, settings) {
 
 // Recency/rating knobs that bound which of an opponent's games still describe
 // the player you will face. Shared by the dossier view and promotion.
-export const dossierOpts = settings => ({
+export const dossierOpts = (settings, timeControl = 'all') => ({
   maxAgeYears: settings.scoutMaxAgeYears, eloBand: settings.scoutEloBand,
   halfLifeDays: settings.scoutHalfLifeDays, analyseCount: settings.scoutAnalyseCount,
+  timeControl: ['classical', 'rapid', 'blitz'].includes(timeControl) ? timeControl : 'all',
 });

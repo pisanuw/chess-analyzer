@@ -17,7 +17,7 @@
 // lines, or the opponent having no or too few games in the position).
 import { Chess } from 'chess.js';
 import { parseGame } from './pgn.js';
-import { ageDays, recencyWeight } from './scoutbook.js';
+import { ageDays, pgnToDate, recencyWeight } from './scoutbook.js';
 import { getGame, listGames, getScoutBook, getClashStore, saveClashStore, getSettings, DEFAULT_USER } from './store.js';
 import { scoreToCp, stmSign } from './analyze.js';
 import { winProb, WP_ACCEPT, resultScore, posKeyOf, fmtLine } from '../public/shared.js';
@@ -97,6 +97,7 @@ export async function buildOpponentIndex(book, settings, { onProgress, cancelled
   const colorCounts = { white: 0, black: 0 };
   let parsed = 0, skipped = 0;
   const games = book.games || [];
+  const features = featureCollector(games, now, maxDays, halfLife);
   for (let i = 0; i < games.length; i++) {
     if (cancelled?.()) break;
     if (onProgress && i % 25 === 0) { onProgress(i, games.length); await new Promise(r => setImmediate(r)); }
@@ -121,10 +122,90 @@ export async function buildOpponentIndex(book, settings, { onProgress, cancelled
       if (g.oppElo) { a.oppEloSum += g.oppElo; a.oppEloN++; }
       if ((g.date || '') > a.lastDate) a.lastDate = g.date || '';
     }
+    features.parsed(g, pg); // the whole game is parsed anyway: harvest the structure habits
     parsed++; colorCounts[color]++;
   }
   onProgress?.(games.length, games.length);
-  return { index, coverage: { total: games.length, bookGamesParsed: parsed, bookGamesSkipped: skipped, oppColorCounts: colorCounts } };
+  return { index, features: features.finish(), coverage: { total: games.length, bookGamesParsed: parsed, bookGamesSkipped: skipped, oppColorCounts: colorCounts } };
+}
+
+// --- book features: habits the whole history reveals without an engine --------
+// Computed in the same pass as the opening index (the PGNs are parsed anyway):
+// game length, draw rate, castling side, queen trades, first capture, the score
+// against higher- and lower-rated opponents, the score when out of their own
+// main lines, and current form. Everything is a count next to a rate so a thin
+// sample reads as thin.
+const RATING_GAP = 50;      // "higher rated" means at least this much above the subject
+const MAIN_LINES = 3;       // a game is "in book" when its 8-ply position is one of the subject's top lines per colour
+const FORM_GAMES = 10;      // form: the last this-many dated games
+const RECENT_DAYS = 90;     // ...and how many games in this window
+
+function featureCollector(games, now, maxDays, halfLife) {
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
+  const tally = () => ({ games: 0, scored: 0, score: 0 });
+  const add = (t, score) => { t.games++; if (score != null) { t.scored++; t.score += score; } };
+  const rate = t => ({ games: t.games, scorePct: pct(t.score, t.scored) });
+  // Main lines per colour from the stored 8-ply posKeys (no parse needed).
+  const inWindow = games.filter(g => g.posKey && (g.color === 'white' || g.color === 'black') && weightOf(g.date, now, maxDays, halfLife) > 0);
+  const mainLines = { white: new Set(), black: new Set() };
+  for (const color of ['white', 'black']) {
+    const counts = new Map();
+    for (const g of inWindow) if (g.color === color) counts.set(g.posKey, (counts.get(g.posKey) || 0) + 1);
+    [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAIN_LINES).forEach(([k]) => mainLines[color].add(k));
+  }
+  const f = {
+    white: { games: 0, draws: 0, castled: { short: 0, long: 0, none: 0 } },
+    black: { games: 0, draws: 0, castled: { short: 0, long: 0, none: 0 } },
+    oppositeCastling: 0, queenTrades: 0, queenTradePlies: [], firstCapturePlies: [], plies: [],
+    vsHigher: tally(), vsLower: tally(), vsLevel: tally(),
+    inBook: tally(), outOfBook: tally(),
+  };
+  return {
+    parsed(g, pg) {
+      const color = g.color;
+      const score = resultScore(g.result, color);
+      const c = f[color];
+      c.games++;
+      if (score === 0.5) c.draws++;
+      f.plies.push(pg.moves.length);
+      const castle = { white: null, black: null };
+      let queenTrade = null, firstCapture = null;
+      for (const m of pg.moves) {
+        if (m.san === 'O-O' || m.san === 'O-O-O') castle[m.color] = m.san === 'O-O' ? 'short' : 'long';
+        if (firstCapture == null && m.san.includes('x')) firstCapture = m.ply;
+        if (queenTrade == null && !/[qQ]/.test(m.fenAfter.split(' ')[0])) queenTrade = m.ply;
+      }
+      c.castled[castle[color] || 'none']++;
+      if (castle.white && castle.black && castle.white !== castle.black) f.oppositeCastling++;
+      if (queenTrade != null) { f.queenTrades++; f.queenTradePlies.push(queenTrade); }
+      if (firstCapture != null) f.firstCapturePlies.push(firstCapture);
+      if (g.subjectElo && g.oppElo) {
+        const gap = g.oppElo - g.subjectElo;
+        add(gap >= RATING_GAP ? f.vsHigher : gap <= -RATING_GAP ? f.vsLower : f.vsLevel, score);
+      }
+      add(mainLines[color].has(g.posKey) ? f.inBook : f.outOfBook, score);
+    },
+    finish() {
+      const median = xs => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2); };
+      const dated = games.filter(g => pgnToDate(g.date)).sort((a, b) => pgnToDate(b.date) - pgnToDate(a.date));
+      const form = tally();
+      for (const g of dated.slice(0, FORM_GAMES)) add(form, resultScore(g.result, g.color));
+      const recent = dated.filter(g => ageDays(g.date, now) <= RECENT_DAYS).length;
+      const total = f.white.games + f.black.games;
+      return {
+        games: total,
+        avgMoves: f.plies.length ? Math.round(f.plies.reduce((s, n) => s + n, 0) / f.plies.length / 2) : null,
+        drawRate: { white: pct(f.white.draws, f.white.games), black: pct(f.black.draws, f.black.games) },
+        castling: { white: f.white.castled, black: f.black.castled },
+        oppositeCastlingPct: pct(f.oppositeCastling, total),
+        queenTrade: { pct: pct(f.queenTrades, total), medianMove: f.queenTradePlies.length ? Math.ceil(median(f.queenTradePlies) / 2) : null },
+        firstCaptureMedianMove: f.firstCapturePlies.length ? Math.ceil(median(f.firstCapturePlies) / 2) : null,
+        vsHigher: rate(f.vsHigher), vsLower: rate(f.vsLower), vsLevel: rate(f.vsLevel),
+        inBook: rate(f.inBook), outOfBook: rate(f.outOfBook),
+        form: { ...rate(form), recentGames: recent, days: RECENT_DAYS },
+      };
+    },
+  };
 }
 
 /** Build (or reuse) one opponent's parsed opening index, persisted to the local
@@ -136,9 +217,9 @@ export async function ensureClashIndex(fideId, { force = false, onProgress, canc
   if (!book) return null;
   const store = await getClashStore();
   if (!force && store[book.fideId]?.bookImportedAt === book.importedAt) return store[book.fideId];
-  const { index, coverage } = await buildOpponentIndex(book, await getSettings(), { onProgress, cancelled, now });
+  const { index, features, coverage } = await buildOpponentIndex(book, await getSettings(), { onProgress, cancelled, now });
   if (cancelled?.()) return null;
-  store[book.fideId] = { bookImportedAt: book.importedAt, builtAt: new Date().toISOString(), coverage, index };
+  store[book.fideId] = { bookImportedAt: book.importedAt, builtAt: new Date().toISOString(), coverage, features, index };
   await saveClashStore(store);
   return store[book.fideId];
 }
