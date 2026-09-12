@@ -263,6 +263,15 @@ export const api = {
 // Chess math shared with the server (one definition, no sync hazard).
 export { winProb, formatEval, WP_ACCEPT } from './shared.js';
 
+/** Catch a request's failure with a fallback value, EXCEPT a genuine offline
+ * error (fetch itself failed): that one is rethrown so it reaches the router's
+ * "Cannot reach the server" state instead of being rendered as empty data. Use
+ * this instead of `.catch(() => fallback)` for any request whose failure would
+ * otherwise look like "nothing here" rather than "you're offline". */
+export function orIfOffline(promise, fallback) {
+  return promise.catch(err => { if (err.offline) throw err; return fallback; });
+}
+
 export function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

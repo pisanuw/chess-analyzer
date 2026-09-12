@@ -1,5 +1,5 @@
 // Games list and PGN import.
-import { api, esc, toast, busy, session } from '../api.js';
+import { api, esc, toast, busy, session, orIfOffline } from '../api.js';
 
 export async function gamesView(root) {
   const { settings } = await api.settings();
@@ -11,7 +11,7 @@ export async function gamesView(root) {
   const editable = !status.readonly && canManage;
   // With several members, an import is filed under one of them (their PGN
   // names decide the colour); the server defaults to the primary member.
-  const members = editable && session.authActive ? (await api.members().catch(() => ({ members: [] }))).members : [];
+  const members = editable && session.authActive ? (await orIfOffline(api.members(), { members: [] })).members : [];
   const selectedOwner = () => root.querySelector('#owner')?.value || null;
   const playerNames = () => {
     const m = members.find(x => x.id === selectedOwner());

@@ -1,7 +1,7 @@
 // Small shared render helpers for numbers and cards that appear on more than one
 // page (the Players dossier and the Prepare page).
 import { esc } from './api.js';
-import { fmtLine, lichessUrl } from './shared.js';
+import { fmtLine, lichessUrl, formatEval } from './shared.js';
 
 /** The reading panel for a generated prep sheet: a headline, a fixed-row profile
  * table (the same rows for every opponent), a numbered plan, an openings table,
@@ -111,6 +111,45 @@ export function habitTiles(f) {
     ${tile(f.firstCaptureMedianMove ?? '–', 'First capture (median move)')}
   </div>
   <p class="muted" style="margin:6px 0 0"><small>From the game records of ${f.games} games in the recency window, no engine: every rate carries its game count.</small></p>`;
+}
+
+/** The engine-lines list under a critical moment: eval chip, SAN, and a "best"/
+ * "played" chip, shared by puzzles, drills, prep, and the game view. `clickable`
+ * renders each move as a `data-line`/`data-idx` span (for board preview on click)
+ * with move numbers, as the game view needs; `mistakeClass` adds the "mistake"
+ * modifier to the played chip (skipped for puzzles and for a scouted opponent's
+ * own move, which isn't "their" mistake to the viewer). */
+export function linesList(lines, playedUci, { clickable = false, moveNumber, color, mistakeClass = true } = {}) {
+  const row = (l, i) => {
+    const played = l.uci === playedUci;
+    const san = clickable
+      ? l.san.map((s, j) => `<span class="san" data-line="${i}" data-idx="${j}" style="cursor:pointer">${j === 0 || (color === 'white' ? j % 2 === 0 : j % 2 === 1) ? `<span class="muted">${moveNumber + Math.floor((j + (color === 'white' ? 0 : 1)) / 2)}.</span>` : ''}${esc(s)}</span>`).join(' ')
+      : esc(l.san.join(' '));
+    return `<li class="${played ? 'played' : ''}"${clickable ? ` data-line="${i}"` : ''}><span class="ev">${formatEval(l.cp)}</span><span>${san}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${played ? `<span class="chip${mistakeClass ? ' mistake' : ''}">played</span>` : ''}</li>`;
+  };
+  return `<ul class="lines">${lines.map(row).join('')}</ul>`;
+}
+
+/** Focus-trap a modal-like overlay: focuses its first focusable element, keeps
+ * Tab cycling inside the container, and (if given) calls `onEscape` on Escape.
+ * Returns a cleanup function to call when the overlay closes; restoring focus
+ * to whatever opened the overlay is the caller's job, since only it knows what
+ * that was. */
+export function trapFocus(container, { onEscape } = {}) {
+  const focusable = () => [...container.querySelectorAll('button, [href], input, select, textarea, [tabindex]')]
+    .filter(el => !el.disabled && el.tabIndex !== -1);
+  const onKey = e => {
+    if (e.key === 'Escape' && onEscape) { e.preventDefault(); onEscape(); return; }
+    if (e.key !== 'Tab') return;
+    const items = focusable();
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  container.addEventListener('keydown', onKey);
+  focusable()[0]?.focus();
+  return () => container.removeEventListener('keydown', onKey);
 }
 
 /** A one-line key legend for the foot of a panel: [['Space', 'show answer'], ...]. */

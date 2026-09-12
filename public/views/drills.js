@@ -2,7 +2,7 @@
 import { api, esc, toast, formatEval, fmtClock, winProb, WP_ACCEPT, session as auth } from '../api.js';
 import { Board, applyMove, gameStatus, walkSans, lineShapes } from '../board.js';
 import { CATEGORY_LABEL } from '../labels.js';
-import { keymap } from '../widgets.js';
+import { keymap, linesList } from '../widgets.js';
 
 const MAX_FOLLOWUPS = 2;      // player moves asked beyond the first, along the engine's PV
 const CALC_FOLLOWUPS = 4;     // calculation errors demand the full line
@@ -475,7 +475,7 @@ export async function drillsView(root, query) {
       pane.innerHTML = `<div class="guess">
         <div class="result ${state.verdict.correct ? 'good' : 'bad'}">${esc(state.verdict.text)}</div>
         <p style="margin: 6px 0">${chips}</p>
-        <ul class="lines">${d.lines.map((l, i) => `<li class="${l.uci === d.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === d.playedUci ? '<span class="chip mistake">played</span>' : ''}</li>`).join('')}</ul>
+        ${linesList(d.lines, d.playedUci)}
         <p class="muted">Checking your move with the engine…</p>
       </div>`;
       return;
@@ -490,7 +490,7 @@ export async function drillsView(root, query) {
         <div class="result bad">${esc(state.verdict.text)}</div>
         ${state.verdict.followMiss ? `<div class="result bad">${esc(state.verdict.followMiss)}</div>` : ''}
         <p style="margin: 6px 0">${chips}</p>
-        <ul class="lines">${d.lines.map((l, i) => `<li class="${l.uci === d.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === d.playedUci ? '<span class="chip mistake">played</span>' : ''}</li>`).join('')}</ul>
+        ${linesList(d.lines, d.playedUci)}
         <div class="explanation"><p class="muted" style="margin:0 0 6px">Before the coach's answer: what did you miss, in one line?</p>
           <div class="row" style="gap:6px"><input type="text" id="explain-back" maxlength="300" placeholder="e.g. the knight was not really pinned" style="flex:1; min-width: 200px">
           <button class="small primary" id="eb-compare">Compare <span class="kbd">Enter</span></button> <button class="small" id="eb-skip">Skip</button></div></div>
@@ -529,7 +529,7 @@ export async function drillsView(root, query) {
       ${note ? `<div class="kq"><b>${esc(note.pattern)}:</b> ${esc(note.rule)} Watch for: ${esc(note.triggers)}</div>` : ''}
       ${decoyNote}
       <p style="margin: 6px 0">${chips}${answeredIn ? `<small class="muted">${answeredIn}</small>` : ''}</p>
-      <ul class="lines">${d.lines.map((l, i) => `<li class="${l.uci === d.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === d.playedUci ? '<span class="chip mistake">played</span>' : ''}</li>`).join('')}</ul>
+      ${linesList(d.lines, d.playedUci)}
       ${state.note ? `<div class="kq">You wrote: ${esc(state.note)}</div>` : ''}
       ${e ? `<div class="explanation"><div class="row"><span class="chip cat">${esc(e.category)}</span> <b>${esc(e.pattern)}</b></div><p>${esc(e.explanation)}</p><div class="kq">Ask yourself: ${esc(e.key_question)}</div>
         <div class="row" style="margin-top: 6px; gap: 6px"><small class="muted">Was this explanation useful?</small>

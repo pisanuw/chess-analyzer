@@ -2,6 +2,7 @@
 import { api, esc, toast, formatEval, fmtClock, moveLabel, movePrefix, winProb, WP_ACCEPT, JUDGE_MARK } from '../api.js';
 import { Board, applyMove, gameStatus, walkSans, lineShapes } from '../board.js';
 import { evalGraph } from '../charts.js';
+import { linesList, trapFocus } from '../widgets.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -17,9 +18,8 @@ function editNamesDialog(current, wantSubject) {
       ${wantSubject ? `<label class="field"><span>Scouting subject (must match one of the names)</span><input name="subject" value="${esc(current.subject || '')}"></label>` : ''}
       <div class="row" style="justify-content:flex-end; gap:8px"><button type="button" class="small" data-d="cancel">Cancel</button><button class="small primary">Save</button></div>
     </form>`;
-    const done = v => { div.remove(); document.removeEventListener('keydown', onKey); resolve(v); };
-    const onKey = e => { if (e.key === 'Escape') done(null); };
-    document.addEventListener('keydown', onKey);
+    const opener = document.activeElement;
+    const done = v => { untrap(); div.remove(); opener?.focus?.(); resolve(v); };
     div.addEventListener('click', e => { if (e.target === div || e.target.closest('[data-d="cancel"]')) done(null); });
     div.querySelector('form').addEventListener('submit', e => {
       e.preventDefault();
@@ -31,7 +31,7 @@ function editNamesDialog(current, wantSubject) {
       });
     });
     document.body.appendChild(div);
-    div.querySelector('input').focus();
+    const untrap = trapFocus(div, { onEscape: () => done(null) });
   });
 }
 
@@ -581,10 +581,7 @@ export async function gameView(root, id, startPly) {
           : `<p class="muted">Play your move on the board.${m.clock != null ? ` Clock in the game: ${fmtClock(m.clock)}.` : ''}</p>`}
       </div>`;
     }
-    const lines = t.lines.map((l, i) => `<li class="${l.uci === t.uci ? 'played' : ''}" data-line="${i}">
-      <span class="ev">${formatEval(l.cp)}</span>
-      <span>${l.san.map((s, j) => `<span class="san" data-line="${i}" data-idx="${j}" style="cursor:pointer">${j === 0 || (t.color === 'white' ? j % 2 === 0 : j % 2 === 1) ? `<span class="muted">${t.moveNumber + Math.floor((j + (t.color === 'white' ? 0 : 1)) / 2)}.</span>` : ''}${esc(s)}</span>`).join(' ')}</span>
-      ${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === t.uci ? `<span class="chip ${scout ? '' : 'mistake'}">played</span>` : ''}</li>`).join('');
+    const lines = linesList(t.lines, t.uci, { clickable: true, moveNumber: t.moveNumber, color: t.color, mistakeClass: !scout });
     const nextPly = game.analysis.summary.moments.find(p => p > g.ply);
     return `<div class="guess">
       <div class="row" style="justify-content: space-between"><b>${scout ? `${esc(game.subject || 'They')} played ` : ''}${esc(moveLabel(m))} <span class="chip ${m.judgment}">${m.judgment}</span></b>
@@ -597,7 +594,7 @@ export async function gameView(root, id, startPly) {
           : `<button class="small" data-g="played">Played: ${esc(m.san)} (${formatEval(m.evalAfter)})</button>`}
         ${!readonly && engineOk ? `<button class="small" data-g="playout" title="Finish the position against a strength-limited engine">Play it out</button>` : ''}
       </div>
-      <ul class="lines">${lines}</ul>
+      ${lines}
       <p class="muted" style="font-size:13px">Click a move in a line to see it on the board. Green arrow: engine's choice. Red: the move played.</p>
       ${e ? `<div class="explanation">
           <div class="row"><span class="chip cat">${esc(e.category)}</span> <b>${esc(e.pattern)}</b> ${e.time_pressure ? '<span class="chip">likely time pressure</span>' : ''}</div>

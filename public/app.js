@@ -46,7 +46,11 @@ async function route() {
   const params = hash.match(r.re).slice(1);
   if (current?.destroy) current.destroy();
   current = null;
-  document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === r.name));
+  document.querySelectorAll('[data-nav]').forEach(a => {
+    const isCurrent = a.dataset.nav === r.name;
+    a.classList.toggle('active', isCurrent);
+    if (isCurrent) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
   // Each view renders into its own element: a slow view that resolves after the
   // user has moved on writes into a detached node, never over the newer page.
   const host = document.createElement('div');
@@ -142,8 +146,8 @@ function renderWhoami(me) {
   let theme = 'auto'; try { theme = localStorage.getItem('theme') || 'auto'; } catch {}
   const opt = (val, label) => `<button class="small theme-opt${theme === val ? ' primary' : ''}" data-theme-set="${val}">${label}</button>`;
   el.innerHTML = `<div class="whoami-wrap">
-    <button id="whoami-btn" title="${esc(name)}${roleTag ? ` (${roleTag})` : ''}">${avatar}<span class="who">${esc(name)}</span></button>
-    <div id="whoami-menu" class="hidden">
+    <button id="whoami-btn" aria-haspopup="true" aria-expanded="false" aria-controls="whoami-menu" title="${esc(name)}${roleTag ? ` (${roleTag})` : ''}">${avatar}<span class="who">${esc(name)}</span></button>
+    <div id="whoami-menu" class="hidden" role="menu" aria-label="Account menu">
       <div class="menu-head">${esc(name)}${roleTag ? ` <span class="chip">${roleTag}</span>` : ''}</div>
       <div class="menu-label">Page theme</div>
       <div class="menu-row">${opt('auto', 'Auto')}${opt('light', 'Light')}${opt('dark', 'Dark')}</div>
@@ -168,14 +172,27 @@ function renderWhoami(me) {
     }).catch(() => {});
     viewAs.onchange = () => {
       setViewAs(viewAs.value || null);
-      menu.classList.add('hidden');
+      closeMenu();
       route();
       updateDrillBadge();
     };
   }
   const menu = el.querySelector('#whoami-menu');
-  el.querySelector('#whoami-btn').onclick = e => { e.stopPropagation(); menu.classList.toggle('hidden'); };
-  document.addEventListener('click', e => { if (!el.contains(e.target)) menu.classList.add('hidden'); });
+  const btn = el.querySelector('#whoami-btn');
+  const closeMenu = ({ restoreFocus = false } = {}) => {
+    if (menu.classList.contains('hidden')) return;
+    menu.classList.add('hidden');
+    btn.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) btn.focus();
+  };
+  btn.onclick = e => {
+    e.stopPropagation();
+    const willOpen = menu.classList.contains('hidden');
+    menu.classList.toggle('hidden', !willOpen);
+    btn.setAttribute('aria-expanded', String(willOpen));
+  };
+  document.addEventListener('click', e => { if (!el.contains(e.target)) closeMenu(); });
+  menu.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); closeMenu({ restoreFocus: true }); } });
   el.querySelectorAll('[data-theme-set]').forEach(b => b.onclick = () => {
     const val = b.dataset.themeSet;
     try { localStorage.setItem('theme', val); } catch {}

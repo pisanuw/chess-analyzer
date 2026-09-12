@@ -4,10 +4,10 @@
 // along the predicted lines, their mistakes to punish, and predicted positions
 // to play out). Progress is remembered per member so the Home page can say how
 // far the prep has come.
-import { api, esc, toast, busy, formatEval, session } from '../api.js';
+import { api, esc, toast, busy, session } from '../api.js';
 import { Board, applyMove, lineShapes } from '../board.js';
 import { fmtLine, lichessUrl } from '../shared.js';
-import { prepSheetBody, headToHeadCard, tendencyTiles, habitTiles } from '../widgets.js';
+import { prepSheetBody, headToHeadCard, tendencyTiles, habitTiles, linesList } from '../widgets.js';
 import { renderClashForest } from './scout.js';
 import { createPlayout } from '../playout.js';
 
@@ -205,7 +205,7 @@ export async function prepView(root, subjectEnc, query) {
     pane.innerHTML = `<div class="guess">
       <div class="result ${state.correct ? 'good' : 'bad'}">${esc(state.text)}</div>
       <p style="margin:6px 0">${kindChip}</p>
-      <ul class="lines">${d.lines.map((l, i) => `<li class="${l.uci === d.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === d.playedUci ? '<span class="chip mistake">played</span>' : ''}</li>`).join('')}</ul>
+      ${linesList(d.lines, d.playedUci)}
       <div class="row" style="margin-top:12px"><button class="primary" id="deck-next">Next <span class="kbd">N</span></button></div>
     </div>`;
     pane.querySelector('#deck-next').onclick = next;

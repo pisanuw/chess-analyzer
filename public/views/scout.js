@@ -1,7 +1,7 @@
 // Scouting: a FIDE-keyed "book" dossier built instantly from an opponent's
 // whole game history (recency/rating weighted), plus the deeper engine/LLM
 // dossier for the recent subset once it has been analysed.
-import { api, esc, toast, movePrefix, busy, formatEval, session } from '../api.js';
+import { api, esc, toast, movePrefix, busy, formatEval, session, orIfOffline } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 import { Board, walkSans } from '../board.js';
 import { CATEGORY_LABEL } from '../labels.js';
@@ -12,10 +12,10 @@ const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 export async function scoutView(root) {
   const { subjects } = await api.scoutSubjects();
-  const { readonly } = await api.status().catch(() => ({}));
+  const { readonly } = await orIfOffline(api.status(), {});
   // Federation for each linked opponent comes from the players map (the scout
   // subject list carries the id but not the federation).
-  const { players = [] } = await api.players().catch(() => ({ players: [] }));
+  const { players = [] } = await orIfOffline(api.players(), { players: [] });
   const fedById = new Map(players.map(p => [p.fideId, p.federation]));
   subjects.forEach(s => { if (s.fideId) s.fed = fedById.get(s.fideId) || null; });
   if (!subjects.length) {
@@ -119,9 +119,9 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
   const [book, data, gamesRes] = await Promise.all([
     // Only subjects with a book have one to fetch (a member with a FIDE id but no
     // book used to trigger a 404 on every visit).
-    entry.fideId && entry.bookGames ? api.scoutBook(entry.fideId, entry.tc || null).catch(() => null) : Promise.resolve(null),
-    api.scout(subject, entry.color || null).catch(() => null),
-    api.games().catch(() => ({ games: [] })),
+    entry.fideId && entry.bookGames ? orIfOffline(api.scoutBook(entry.fideId, entry.tc || null), null) : Promise.resolve(null),
+    orIfOffline(api.scout(subject, entry.color || null), null),
+    orIfOffline(api.games(), { games: [] }),
   ]);
   if (!book && !data) {
     el.innerHTML = `<div class="empty">Nothing to show yet for ${esc(subject)}. Their games may still be in the analysis queue.</div>`;
@@ -466,10 +466,11 @@ function wireClash(el, fideId, boardRef, readonly, subjectColor = null) {
 async function loadClash(fideId, body, boardRef, ctx) {
   try {
     const r = await api.scoutClash(fideId);
+    if (!body.isConnected) return; // navigated away, or the dossier re-rendered, while this was in flight
     if (r.unavailable) return unavailableClash(body);
     if (r.building) return pollClash(fideId, body, boardRef, ctx);
     renderClashForest(r.clash, body, boardRef, ctx);
-  } catch (err) { body.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
+  } catch (err) { if (body.isConnected) body.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
 }
 
 function unavailableClash(body) {
@@ -479,20 +480,27 @@ function unavailableClash(body) {
 /** Poll the job queue while the opponent index builds, then render. */
 async function pollClash(fideId, body, boardRef, ctx) {
   body.innerHTML = '<p class="muted">Building the clash tree (parsing the opponent’s games)…</p>';
+  // `body.isConnected` goes false the moment the view navigates away or the
+  // dossier re-renders (both replace this element's ancestor's innerHTML), so
+  // checking it after every await stops the loop from firing further requests
+  // into, or rendering into, a container nobody can see anymore.
   for (let i = 0; i < 200; i++) {
     await new Promise(r => setTimeout(r, 1500));
+    if (!body.isConnected) return;
     const { jobs = [] } = await api.jobs().catch(() => ({ jobs: [] }));
+    if (!body.isConnected) return;
     const job = jobs.find(j => j.gameId === 'clash:' + fideId && j.kind === 'clash');
     if (job && job.total) body.innerHTML = `<p class="muted">Building the clash tree: parsed ${job.progress} of ${job.total} games…</p>`;
     if (job && job.status === 'failed') { body.innerHTML = `<div class="empty">Could not build the clash tree: ${esc(job.error || 'unknown error')}</div>`; return; }
     if (!job || job.status === 'done' || job.status === 'cancelled') {
       const r = await api.scoutClash(fideId);
+      if (!body.isConnected) return;
       if (r.building) continue; // re-queued; keep waiting
       if (r.unavailable) return unavailableClash(body);
       return renderClashForest(r.clash, body, boardRef, ctx);
     }
   }
-  body.innerHTML = '<div class="empty">The clash build is taking longer than expected. Reload the page to check.</div>';
+  if (body.isConnected) body.innerHTML = '<div class="empty">The clash build is taking longer than expected. Reload the page to check.</div>';
 }
 
 /** A per-node marker for where a prediction runs out (coverage, not just depth). */

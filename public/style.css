@@ -302,6 +302,15 @@ a.chip.ev:hover { background: var(--accent-soft); }
 @media (max-width: 700px) { .import-area { grid-template-columns: 1fr; } }
 .drill-layout { display: grid; grid-template-columns: minmax(320px, 480px) 1fr; gap: 20px; align-items: start; }
 @media (max-width: 900px) { .drill-layout { grid-template-columns: 1fr; } }
+/* A phone held sideways (a tournament hall, playing offline) is wide enough
+ * for board and panel side by side; stacking them would push the guess/grade
+ * buttons below the fold after every move. Narrower columns than the desktop
+ * layout, and only when height confirms landscape (a portrait tablet at this
+ * width should still stack). */
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 500px) {
+  .game-layout, .drill-layout { grid-template-columns: minmax(200px, 42vw) 1fr; gap: 12px; }
+  .board-wrap { max-width: 100%; }
+}
 .kbd { font-family: ui-monospace, Menlo, monospace; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; background: var(--surface-2); }
 .empty { color: var(--muted); padding: 30px; text-align: center; }
 .promo-overlay { position: fixed; inset: 0; background: rgba(10, 10, 14, .45); display: flex; align-items: center; justify-content: center; z-index: 30; }
