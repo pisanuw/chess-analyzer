@@ -217,6 +217,49 @@ test('the opponent index harvests structure habits from the whole game', async (
   assert.ok(features.avgMoves >= 4);
 });
 
+// A deterministic 20-ply legal game (always the first move chess.js offers)
+// so pgn.js's parser has real FENs to walk, with a %clk comment on every move
+// counting down 10 minutes a move, White's side.
+function clockGameSans() {
+  const chess = new Chess();
+  const sans = [];
+  for (let i = 0; i < 20; i++) {
+    const moves = chess.moves();
+    if (!moves.length) break;
+    chess.move(moves[0]);
+    sans.push(moves[0]);
+  }
+  return sans;
+}
+const fmtClk = sec => `${Math.floor(sec / 3600)}:${String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`;
+function clockPgnOf(sans, startSec, secPerMove) {
+  let mt = '';
+  for (let i = 0; i < sans.length; i++) {
+    if (i % 2 === 0) mt += `${i / 2 + 1}. `;
+    const clk = Math.max(0, startSec - Math.floor(i / 2) * secPerMove);
+    mt += `${sans[i]} {[%clk ${fmtClk(clk)}]} `;
+  }
+  return `[White "W"]\n[Black "B"]\n[Result "1-0"]\n\n${mt}1-0`;
+}
+
+test('the opponent index derives a median-clock-by-move pacing curve from their own games', async () => {
+  const sans = clockGameSans();
+  // 5 games (the minimum sample), subject as White, burning 90s a move: by
+  // move 10 they have used 900s from a notional starting clock.
+  const bookGames = Array.from({ length: 5 }, () => ({
+    color: 'white', date: '2026.06.01', result: '1-0', posKey: 'std', pgn: clockPgnOf(sans, 3600, 90),
+  }));
+  const { features } = await buildOpponentIndex(bookOf(bookGames), SETTINGS, { now: NOW });
+  assert.ok(features.clockByMove.length >= 1, 'at least one checkpoint has enough samples');
+  const at10 = features.clockByMove.find(c => c.move === 10);
+  assert.ok(at10, 'move 10 (5 own moves in) is reached with clocks');
+  assert.equal(at10.medianSeconds, 3600 - 9 * 90, 'median clock after their 10th move (9 full moves elapsed)');
+  assert.equal(at10.games, 5);
+  // Too few games with clock data: below MIN_CLOCK_SAMPLES, so no checkpoint.
+  const { features: thin } = await buildOpponentIndex(bookOf(bookGames.slice(0, 2)), SETTINGS, { now: NOW });
+  assert.equal(thin.clockByMove.length, 0, 'a thin sample is not reported as a tendency');
+});
+
 test('walkPrediction reports where a real game left the predicted tree and by whom', async () => {
   const { walkPrediction } = await import('../server/clash.js');
   const studentGames = [studentGame('white', ['d4', 'Nf6', 'c4', 'g6']), studentGame('white', ['d4', 'Nf6', 'c4', 'g6'])];

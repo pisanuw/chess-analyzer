@@ -26,8 +26,10 @@ export function validateSheet(output, evidence) {
     headline: String(output?.headline || ''),
     profile: output?.profile || {},
     exploit_plan: clean(output?.exploit_plan, 'step'),
+    structures: clean(output?.structures, 'structure'),
     openings: clean(output?.openings, 'when'),
     watch_fors: clean(output?.watch_fors, 'cue'),
+    matchup_risks: clean(output?.matchup_risks, 'risk'),
   };
 }
 
@@ -49,13 +51,20 @@ export function buildScoutCard(subject, sheet, headToHead = null) {
   const ev = sheet.evidence || {};
   const plan = Array.isArray(sheet.exploit_plan) ? sheet.exploit_plan : (sheet.exploit_plan ? [sheet.exploit_plan] : []);
   if (plan.length) { out.push('', '## Game plan', ''); plan.forEach((s, i) => out.push(`${i + 1}. ${typeof s === 'string' ? s : s.step + evNote(s.evidence, ev)}`)); }
+  const structures = Array.isArray(sheet.structures) ? sheet.structures : [];
+  if (structures.length) {
+    out.push('', '## Structures and plans', '');
+    for (const s of structures) out.push(`- ${s.structure}: ${s.plan}${evNote(s.evidence, ev)}`);
+  }
   if (Array.isArray(sheet.openings) && sheet.openings.length) {
     out.push('', '## Openings', '', '| When | You play | Why |', '| --- | --- | --- |');
     for (const o of sheet.openings) out.push(`| ${o.when} | ${o.play} | ${o.why}${o.evidence ? evNote(o.evidence, ev) : ''} |`);
   } else if (sheet.openings_advice) out.push('', '## Openings', '', sheet.openings_advice);
   const watch = Array.isArray(sheet.watch_fors) ? sheet.watch_fors : (sheet.watch_fors ? [sheet.watch_fors] : []);
   if (watch.length) { out.push('', '## Watch for', ''); for (const w of watch) out.push(`- ${typeof w === 'string' ? w : w.cue + evNote(w.evidence, ev)}`); }
-  const cited = new Set([...plan, ...(Array.isArray(sheet.openings) ? sheet.openings : []), ...watch].flatMap(x => x?.evidence || []));
+  const risks = Array.isArray(sheet.matchup_risks) ? sheet.matchup_risks : [];
+  if (risks.length) { out.push('', '## Matchup risks', ''); for (const r of risks) out.push(`- ${r.risk}${evNote(r.evidence, ev)}`); }
+  const cited = new Set([...plan, ...structures, ...(Array.isArray(sheet.openings) ? sheet.openings : []), ...watch, ...risks].flatMap(x => x?.evidence || []));
   if (cited.size) {
     out.push('', '## Evidence', '');
     for (const id of [...cited].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))) if (ev[id]) out.push(`- ${id}: ${ev[id].text}`);

@@ -130,19 +130,25 @@ export function writeJson(file, value) {
   return next;
 }
 
-/** Remove leftover atomic-write temp files. A crash between writeFile and
- * rename strands them, and the data repo's `git add -A` (push-data) would
- * sync the partial file to every machine. Called once at startup. */
+/** Remove leftover atomic-write temp files, anywhere under DATA_DIR (games/,
+ * scouts/, users/<id>/, and the root alike: writeJson's tmp path always sits
+ * next to its target file, so a crash strands one whichever directory that
+ * is in). A crash between writeFile and rename strands them, and the data
+ * repo's `git add -A` (push-data) would sync the partial file to every
+ * machine. Called once at startup. Never descends into `.git`: data/ can be
+ * its own git repo, and that tree is not this sweep's business. */
 export async function sweepTmpFiles() {
   await ensureDirs();
   let removed = 0;
-  for (const dir of [DATA_DIR, GAMES_DIR]) {
-    for (const f of await fs.readdir(dir).catch(() => [])) {
-      if (!f.endsWith('.tmp')) continue;
-      await fs.rm(path.join(dir, f), { force: true });
-      removed++;
+  async function walk(dir) {
+    for (const e of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      if (e.name === '.git') continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) { await walk(full); continue; }
+      if (e.name.endsWith('.tmp')) { await fs.rm(full, { force: true }); removed++; }
     }
   }
+  await walk(DATA_DIR);
   return removed;
 }
 

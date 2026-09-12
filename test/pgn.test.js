@@ -23,10 +23,10 @@ test('parseGame extracts moves, headers, clocks, and a stable 12-hex id', () => 
   assert.equal(parseGame(PGN).id, g.id); // deterministic
 });
 
-test('splitPgn separates multiple games', () => {
+test('splitPgn separates multiple games', async () => {
   const two = PGN + '\n\n' + PGN.replace('Kai', 'Ada');
   assert.equal(splitPgn(two).length, 2);
-  assert.equal(parsePgnFile(two).length, 2);
+  assert.equal((await parsePgnFile(two)).length, 2);
 });
 
 test('clocks stay per-move even when a position repeats', () => {

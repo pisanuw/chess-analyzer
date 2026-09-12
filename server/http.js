@@ -11,8 +11,32 @@ export const READONLY = !!process.env.READONLY_DATA;
 
 export const wrap = fn => (req, res) => fn(req, res).catch(err => {
   console.error(err);
-  res.status(err.status || 500).json({ error: err.message });
+  const status = err.status || 500;
+  // A raw Node system error (fs, network: ENOENT, EACCES, ECONNREFUSED, ...)
+  // carries internal detail (a path, a host) in its message; a deliberately
+  // thrown `Error('...')` is a message the developer wrote for this exact
+  // situation and is usually actionable ("Stockfish not found..."), so only
+  // the former gets sanitized. `err.code` is how Node marks the former; a
+  // plain `new Error(...)` never sets it.
+  const message = err.code && status === 500 ? 'Internal server error' : err.message;
+  res.status(status).json({ error: message });
 });
+
+// Best-effort, in-memory throttle on the "viewing as" audit entry below: a
+// single report/drills/prep page fires several GETs, and the badge and job
+// poller repeat every request on an interval, so logging every one of them
+// would drown the admin-mutation log (capped at 500 events) in traffic for a
+// single browsing session. One entry per admin/target pair per window is
+// enough to show that it happened.
+const impersonationLogged = new Map(); // `${adminId}:${targetId}` -> last-logged ms
+const IMPERSONATION_LOG_WINDOW_MS = 15 * 60 * 1000;
+function shouldLogImpersonation(adminId, targetId) {
+  const key = `${adminId}:${targetId}`;
+  const last = impersonationLogged.get(key) || 0;
+  if (Date.now() - last < IMPERSONATION_LOG_WINDOW_MS) return false;
+  impersonationLogged.set(key, Date.now());
+  return true;
+}
 
 // The member whose private data a request acts on (report, repertoire, games,
 // drills, puzzles, pattern notes). A member is locked to themselves; an admin
@@ -23,7 +47,15 @@ export async function effectiveUser(req) {
   if (!u && authActive()) { const err = new Error('auth required'); err.status = 401; throw err; }
   if (u && u.role !== 'admin') return u.id;
   const q = typeof req.query.user === 'string' ? req.query.user : '';
-  return q && (await getUser(q)) ? q : DEFAULT_USER;
+  if (!q || !u) return DEFAULT_USER;
+  const target = await getUser(q);
+  if (!target) return DEFAULT_USER;
+  // Viewing as oneself is not impersonation; requireAdmin logs mutations
+  // separately, so this only covers the read side (?user= is GET-only).
+  if (target.id !== u.id && shouldLogImpersonation(u.id, target.id)) {
+    logEvent({ action: 'view-as', userId: u.id, name: u.displayName, role: u.role, ip: eventIp(req), detail: `viewing as ${target.displayName || target.id}` });
+  }
+  return target.id;
 }
 
 // Gate for management routes (import, analysis, settings, users, scouting

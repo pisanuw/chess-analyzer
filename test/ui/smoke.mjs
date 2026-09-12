@@ -35,11 +35,12 @@ const PAGES = [
 ];
 
 const problems = [];
+let ignoreRequestFailures = false; // set around the deliberate offline-simulation block below
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
 const page = await browser.newPage({ viewport: { width: 1200, height: 900 } });
-page.on('console', msg => { if (msg.type() === 'error') problems.push(`console error on ${page.url()}: ${msg.text()}`); });
+page.on('console', msg => { if (msg.type() === 'error' && !ignoreRequestFailures) problems.push(`console error on ${page.url()}: ${msg.text()}`); });
 page.on('pageerror', err => problems.push(`page error on ${page.url()}: ${err.message}`));
-page.on('requestfailed', req => problems.push(`request failed on ${page.url()}: ${req.url()} ${req.failure()?.errorText}`));
+page.on('requestfailed', req => { if (!ignoreRequestFailures) problems.push(`request failed on ${page.url()}: ${req.url()} ${req.failure()?.errorText}`); });
 page.on('response', res => { if (res.status() >= 500) problems.push(`HTTP ${res.status()} on ${page.url()}: ${res.url()}`); });
 
 await page.goto(base + '/');
@@ -81,12 +82,54 @@ await page.keyboard.press('1');
 await page.locator('#stopfollow').click({ timeout: 8000 }); // the follow-up along the engine line: show it
 await page.getByText('How well did you know it?', { exact: false }).first().waitFor({ timeout: 8000 });
 await page.keyboard.press('2');
+// Undo last grade: reverts to the same drill, back to a fresh guess (not the
+// confidence step, which isn't part of the saved review), rather than just
+// hiding the button. Proceed by giving up on it (below) instead of retyping
+// the move: that exercises the same drill's miss path just as well and avoids
+// a race against the freshly (re)mounted board's own input element.
+await page.locator('#undo-last:not([hidden])').waitFor({ timeout: 8000 });
+await page.locator('#undo-last').click({ timeout: 8000 });
+await page.getByText('Find the best move', { exact: false }).first().waitFor({ timeout: 8000 });
 // Giving up is a miss, so the explain-back line comes before the coach's
 // answer and the grade buttons; skipping it reaches "Continue".
 await page.getByText('Show answer').first().click({ timeout: 8000 });
 await page.locator('#explain-back').waitFor({ timeout: 8000 });
 await page.locator('#eb-skip').click({ timeout: 8000 });
 await page.getByText('Continue', { exact: false }).first().waitFor({ timeout: 8000 });
+// Suspend: parks the drill instead of grading it.
+await page.locator('button[data-suspend]').first().click({ timeout: 8000 });
+await page.getByText('Drill suspended', { exact: false }).first().waitFor({ timeout: 8000 });
+
+// PGN import: paste a small game (auto-analyse off, no engine in this test).
+await page.evaluate(() => { location.hash = '#/games'; });
+await page.locator('#pgn').waitFor({ timeout: 8000 });
+await page.locator('#auto').uncheck();
+await page.locator('#pgn').fill('[Event "Test"]\n[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 1-0\n');
+await page.locator('#import').click({ timeout: 8000 });
+await page.getByText('Imported 1', { exact: false }).first().waitFor({ timeout: 8000 });
+
+// Responsive: a landscape phone (short and wide, under the 900px breakpoint)
+// keeps the board and panel side by side instead of stacking them, so the
+// guess/grade buttons stay on screen after every move.
+await page.evaluate(() => { location.hash = '#/game/f1f1f1f1f101'; });
+await page.getByText('Critical moments', { exact: false }).first().waitFor({ timeout: 8000 });
+await page.setViewportSize({ width: 800, height: 420 });
+const columns = await page.locator('.game-layout').evaluate(el => getComputedStyle(el).gridTemplateColumns.trim().split(/\s+/).length);
+if (columns < 2) problems.push(`landscape-phone viewport (800x420): .game-layout has ${columns} grid column(s), expected 2 side by side`);
+await page.setViewportSize({ width: 1200, height: 900 });
+
+// Offline mid-render: a deeper request failing (not the page's first request)
+// should surface "Cannot reach the server", not render as if the opponent had
+// no data. Only the dossier's own calls are aborted; the page shell is already
+// loaded, so this exercises exactly the fetch calls inside renderDossier.
+ignoreRequestFailures = true;
+await page.route('**/api/scout/**', route => route.abort());
+await page.route('**/api/games', route => route.abort());
+await page.evaluate(() => { location.hash = '#/scout/' + encodeURIComponent('Karpov, A'); });
+await page.getByText('Cannot reach the server', { exact: false }).first().waitFor({ timeout: 8000 });
+await page.unroute('**/api/scout/**');
+await page.unroute('**/api/games');
+ignoreRequestFailures = false;
 
 await browser.close();
 server.kill();

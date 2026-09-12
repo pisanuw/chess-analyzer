@@ -1,7 +1,7 @@
 // Small shared render helpers for numbers and cards that appear on more than one
 // page (the Players dossier and the Prepare page).
 import { esc } from './api.js';
-import { fmtLine, lichessUrl } from './shared.js';
+import { fmtLine, lichessUrl, formatEval } from './shared.js';
 
 /** The reading panel for a generated prep sheet: a headline, a fixed-row profile
  * table (the same rows for every opponent), a numbered plan, an openings table,
@@ -17,7 +17,7 @@ export function prepSheetBody(sheet) {
     ['Style', p.style], ['Strongest phase', p.strongest_phase], ['Weakest phase', p.weakest_phase],
     ['Main errors', p.main_errors], ['Time trouble', p.time_trouble],
   ].filter(([, v]) => v);
-  const plan = asList(sheet.exploit_plan), openings = asList(sheet.openings), watch = asList(sheet.watch_fors);
+  const plan = asList(sheet.exploit_plan), structures = asList(sheet.structures), openings = asList(sheet.openings), watch = asList(sheet.watch_fors), risks = asList(sheet.matchup_risks);
   const ev = sheet.evidence || {};
   const chips = item => {
     if (typeof item === 'string') return '';
@@ -28,12 +28,16 @@ export function prepSheetBody(sheet) {
       : '').join('');
   };
   const text = (item, key) => esc(typeof item === 'string' ? item : item[key]);
+  const needLabel = { win: 'Plan weighted toward a must-win: complicate.', draw: 'Plan weighted toward a safe draw.' }[sheet.need] || '';
   return `<div class="prep-sheet">
+    ${needLabel ? `<p class="muted"><small>${needLabel}</small></p>` : ''}
     ${sheet.headline ? `<p class="prep-headline">${esc(sheet.headline)}</p>` : ''}
     ${rows.length ? `<h3>Profile</h3><table class="prep-table"><tbody>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
     ${plan.length ? `<h3>Game plan</h3><ol>${plan.map(s => `<li>${text(s, 'step')}${chips(s)}</li>`).join('')}</ol>` : ''}
+    ${structures.length ? `<h3>Structures and plans</h3><ul>${structures.map(s => `<li>${typeof s === 'string' ? esc(s) : `<b>${esc(s.structure)}:</b> ${esc(s.plan)}`}${chips(s)}</li>`).join('')}</ul>` : ''}
     ${openings.length ? `<h3>Openings</h3><table class="prep-table"><thead><tr><th>When</th><th>You play</th><th>Why</th></tr></thead><tbody>${openings.map(o => `<tr><td>${esc(o.when)}</td><td>${esc(o.play)}</td><td>${esc(o.why)}${chips(o)}</td></tr>`).join('')}</tbody></table>` : ''}
     ${watch.length ? `<h3>Watch for</h3><ul>${watch.map(w => `<li>${text(w, 'cue')}${chips(w)}</li>`).join('')}</ul>` : ''}
+    ${risks.length ? `<h3>Matchup risks</h3><ul>${risks.map(r => `<li>${text(r, 'risk')}${chips(r)}</li>`).join('')}</ul>` : ''}
   </div>`;
 }
 
@@ -66,9 +70,14 @@ export function headToHeadCard(h2h, open = true) {
   </tr>`).join('');
   const p = h2h.prediction;
   const predNote = p ? `<p class="muted" style="margin:0 0 8px"><small>Opening prediction against them: held to move 6 or beyond in ${p.heldToMove6} of ${p.games} game${p.games === 1 ? '' : 's'}, median ${p.medianPlies} plies on a predicted line${p.leftByThem ? `; they left the predicted lines ${p.leftByThem} time${p.leftByThem === 1 ? '' : 's'}` : ''}${p.leftByYou ? `; you left your own lines ${p.leftByYou} time${p.leftByYou === 1 ? '' : 's'}` : ''}. Use it to judge how much to trust the predicted lines.</small></p>` : '';
+  // A deviation that has happened more than once against this exact opponent
+  // is a pattern to expect again, not a one-off from a single past game.
+  const recurring = (h2h.recurringDeviations || []).map(d => `<li>${d.by === 'opponent' ? 'They' : 'You'} left the predicted line with ${esc(d.san)} around move ${d.moveNo}, in ${d.count} of your games${d.dates.length ? ` (${d.dates.map(esc).join(', ')})` : ''}.</li>`).join('');
+  const recurringNote = recurring ? `<p class="muted" style="margin:0 0 4px"><small><b>Watch for:</b> a deviation you have seen before against them:</small></p><ul class="muted" style="margin:0 0 8px; font-size:13px">${recurring}</ul>` : '';
   return `<details class="acc"${open ? ' open' : ''}><summary><span class="acc-title">Head to head</span> <span class="muted" style="font-size:13px">${r.games} game${r.games === 1 ? '' : 's'}: ${r.wins}W ${r.draws}D ${r.losses}L${r.scorePct != null ? `, ${r.scorePct}%` : ''}</span></summary>
     <div class="acc-body">
       ${predNote}
+      ${recurringNote}
       <table><thead><tr><th>Date</th><th>You</th><th>Result</th><th>Opening</th><th class="num">Accuracy</th><th class="num">Moments</th><th>Event</th></tr></thead><tbody>${rows}</tbody></table>
       ${h2h.games.length > 10 ? `<p class="muted"><small>Showing the latest 10 of ${h2h.games.length}.</small></p>` : ''}
     </div></details>`;
@@ -109,8 +118,48 @@ export function habitTiles(f) {
     ${tile(pc(f.oppositeCastlingPct), 'Opposite-side castling')}
     ${tile(pc(f.queenTrade.pct), `Queens traded${f.queenTrade.medianMove ? `, typically by move ${f.queenTrade.medianMove}` : ''}`)}
     ${tile(f.firstCaptureMedianMove ?? '–', 'First capture (median move)')}
+    ${f.clockByMove?.length ? tile(`${Math.round(f.clockByMove[f.clockByMove.length - 1].medianSeconds / 60)} min`, `Typically left by move ${f.clockByMove[f.clockByMove.length - 1].move}`, `Median clock in their own games: ${f.clockByMove.map(c => `${Math.round(c.medianSeconds / 60)} min by move ${c.move}`).join(', ')}`) : ''}
   </div>
   <p class="muted" style="margin:6px 0 0"><small>From the game records of ${f.games} games in the recency window, no engine: every rate carries its game count.</small></p>`;
+}
+
+/** The engine-lines list under a critical moment: eval chip, SAN, and a "best"/
+ * "played" chip, shared by puzzles, drills, prep, and the game view. `clickable`
+ * renders each move as a `data-line`/`data-idx` span (for board preview on click)
+ * with move numbers, as the game view needs; `mistakeClass` adds the "mistake"
+ * modifier to the played chip (skipped for puzzles and for a scouted opponent's
+ * own move, which isn't "their" mistake to the viewer). */
+export function linesList(lines, playedUci, { clickable = false, moveNumber, color, mistakeClass = true } = {}) {
+  const row = (l, i) => {
+    const played = l.uci === playedUci;
+    const san = clickable
+      ? l.san.map((s, j) => `<span class="san" data-line="${i}" data-idx="${j}" style="cursor:pointer">${j === 0 || (color === 'white' ? j % 2 === 0 : j % 2 === 1) ? `<span class="muted">${moveNumber + Math.floor((j + (color === 'white' ? 0 : 1)) / 2)}.</span>` : ''}${esc(s)}</span>`).join(' ')
+      : esc(l.san.join(' '));
+    return `<li class="${played ? 'played' : ''}"${clickable ? ` data-line="${i}"` : ''}><span class="ev">${formatEval(l.cp)}</span><span>${san}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${played ? `<span class="chip${mistakeClass ? ' mistake' : ''}">played</span>` : ''}</li>`;
+  };
+  return `<ul class="lines">${lines.map(row).join('')}</ul>`;
+}
+
+/** Focus-trap a modal-like overlay: focuses its first focusable element, keeps
+ * Tab cycling inside the container, and (if given) calls `onEscape` on Escape.
+ * Returns a cleanup function to call when the overlay closes; restoring focus
+ * to whatever opened the overlay is the caller's job, since only it knows what
+ * that was. */
+export function trapFocus(container, { onEscape } = {}) {
+  const focusable = () => [...container.querySelectorAll('button, [href], input, select, textarea, [tabindex]')]
+    .filter(el => !el.disabled && el.tabIndex !== -1);
+  const onKey = e => {
+    if (e.key === 'Escape' && onEscape) { e.preventDefault(); onEscape(); return; }
+    if (e.key !== 'Tab') return;
+    const items = focusable();
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  };
+  container.addEventListener('keydown', onKey);
+  focusable()[0]?.focus();
+  return () => container.removeEventListener('keydown', onKey);
 }
 
 /** A one-line key legend for the foot of a panel: [['Space', 'show answer'], ...]. */

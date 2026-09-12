@@ -143,16 +143,25 @@ test('sweepTmpFiles removes crash leftovers; ensureDataIgnores guards the data r
   const dir = process.env.DATA_DIR;
   writeFileSync(path.join(dir, 'drills.json.123.4.tmp'), '{');
   writeFileSync(path.join(dir, 'games', 'aaaa.json.9.1.tmp'), '{');
+  // A per-user subdirectory, not just the top level or games/: the sweep walks
+  // the whole tree, not a fixed list of directories.
+  mkdirSync(path.join(dir, 'users', 'kai'), { recursive: true });
+  writeFileSync(path.join(dir, 'users', 'kai', 'drills.json.5.1.tmp'), '{');
   const removed = await sweepTmpFiles();
-  assert.ok(removed >= 2, 'both leftovers removed');
+  assert.ok(removed >= 3, 'all leftovers removed, including the nested one');
   assert.ok(!existsSync(path.join(dir, 'drills.json.123.4.tmp')));
+  assert.ok(!existsSync(path.join(dir, 'users', 'kai', 'drills.json.5.1.tmp')));
 
   // Not a git repo: no .gitignore appears.
   await ensureDataIgnores();
   assert.ok(!existsSync(path.join(dir, '.gitignore')));
 
-  // A data repo gets the local-only entries appended exactly once.
-  mkdirSync(path.join(dir, '.git'), { recursive: true });
+  // A data repo gets the local-only entries appended exactly once, and its
+  // .git tree is never descended into (large, and not this sweep's business).
+  mkdirSync(path.join(dir, '.git', 'objects'), { recursive: true });
+  writeFileSync(path.join(dir, '.git', 'objects', 'stray.tmp'), 'not json');
+  await sweepTmpFiles();
+  assert.ok(existsSync(path.join(dir, '.git', 'objects', 'stray.tmp')), '.git is never swept');
   writeFileSync(path.join(dir, '.gitignore'), 'drills.json\n');
   await ensureDataIgnores();
   await ensureDataIgnores();

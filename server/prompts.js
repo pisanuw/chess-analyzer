@@ -123,6 +123,19 @@ export const PREP_SHEET_SCHEMA = {
       description: 'Numbered game-plan steps in order, each one short action sentence in active voice',
       items: { type: 'object', properties: { step: { type: 'string' }, evidence: EVIDENCE }, required: ['step', 'evidence'] },
     },
+    structures: {
+      type: 'array', maxItems: 3,
+      description: 'Typical pawn structures or plans from their whole-history habits (F habit ids: castling side, queen-trade timing, game length): a concrete MIDDLEGAME plan, not another opening note. Omit entirely (empty array) when no whole-history habit (F) data is given, rather than inventing one.',
+      items: {
+        type: 'object',
+        properties: {
+          structure: { type: 'string', description: 'The structural habit, from an F id, e.g. "castles queenside about 40% of the time as White"' },
+          plan: { type: 'string', description: 'The concrete middlegame plan this suggests for the student, one short sentence' },
+          evidence: EVIDENCE,
+        },
+        required: ['structure', 'plan', 'evidence'],
+      },
+    },
     openings: {
       type: 'array', minItems: 1, maxItems: 6,
       description: 'Opening advice as one row per line, so it scans quickly. Reference their actual lines only, and the student\'s own lines where given.',
@@ -141,6 +154,15 @@ export const PREP_SHEET_SCHEMA = {
       type: 'array', minItems: 3, maxItems: 5,
       description: 'Three to five short cues to watch for during the game, one per item',
       items: { type: 'object', properties: { cue: { type: 'string' }, evidence: EVIDENCE }, required: ['cue', 'evidence'] },
+    },
+    matchup_risks: {
+      type: 'array', maxItems: 3,
+      description: 'Where the student\'s OWN weakness (an S id) lines up with something this specific opponent does well or steers toward (an E, T, F, or L id): the real head-to-head risk, not the student\'s weakness or the opponent\'s strength stated alone. Each item must cite at least one S id and at least one non-S id. Omit entirely when the student has no weakness data, or none of it crosses this opponent\'s profile.',
+      items: {
+        type: 'object',
+        properties: { risk: { type: 'string', description: 'The crossing risk, one concrete sentence, e.g. "you convert winning positions poorly and they specifically steer into a grind"' }, evidence: EVIDENCE },
+        required: ['risk', 'evidence'],
+      },
     },
   },
   required: ['headline', 'profile', 'exploit_plan', 'openings', 'watch_fors'],
@@ -388,6 +410,18 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
   const bookLines = book ? ['white', 'black'].flatMap(c => book.repertoire.filter(l => l.color === c).slice(0, 5))
     .map(l => cite('L', 'book line', `as ${l.color}: ${lineText(l.line)}${l.eco ? ` (${l.eco})` : ''}, ${l.share}% of their ${l.color} games (${l.count} games), scores ${pctText(l.scorePct)}${l.avgOppElo ? ` vs ~${l.avgOppElo}` : ''}${l.lastDate ? `, last ${l.lastDate}` : ''}`)) : [];
   const strength = book ? [cite('F', 'strength', `current strength about ${book.currentElo ?? '?'}${book.peakElo ? ` (peak ${book.peakElo})` : ''}; recent score ${pctText(book.results?.white?.recentScorePct)} as White, ${pctText(book.results?.black?.recentScorePct)} as Black`)] : [];
+  // Rating trend: without it, a fast-improving or declining opponent reads the
+  // same as a plateaued one at the same current rating, even though their
+  // history is a worse predictor of who shows up to THIS game.
+  const trend = book?.eloTrend?.length >= 2 ? [(() => {
+    const first = book.eloTrend[0], last = book.eloTrend[book.eloTrend.length - 1];
+    const delta = last.elo - first.elo;
+    const years = last.year - first.year;
+    const seq = book.eloTrend.map(y => `${y.year}: ${y.elo} (${y.games} game${y.games === 1 ? '' : 's'})`).join(', ');
+    const stability = Math.abs(delta) >= 100 ? `their history is a weaker guide than usual: they are a different player now than for much of it`
+      : 'a fairly stable rating over this span';
+    return cite('F', 'rating trend', `${delta >= 0 ? 'gained' : 'lost'} about ${Math.abs(delta)} rating points over ${years || 1} year${years === 1 ? '' : 's'} (${seq}); ${stability}`);
+  })()] : [];
 
   const t = report.tendencies;
   const tend = t?.games ? [
@@ -405,6 +439,7 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
     cite('F', 'habit', `scores ${pctText(f.inBook.scorePct)} inside their main lines (${f.inBook.games} games) and ${pctText(f.outOfBook.scorePct)} outside them (${f.outOfBook.games} games)`),
     cite('F', 'habit', `castling as White ${castle(f.castling.white)}, as Black ${castle(f.castling.black)}; opposite-side castling in ${pctText(f.oppositeCastlingPct)} of games`),
     cite('F', 'habit', `queens traded in ${pctText(f.queenTrade.pct)} of games${f.queenTrade.medianMove ? `, typically by move ${f.queenTrade.medianMove}` : ''}; draw rate ${pctText(f.drawRate.white)} as White, ${pctText(f.drawRate.black)} as Black`),
+    ...(f.clockByMove?.length ? [cite('F', 'pacing', `typical clock (median, their own games): ${f.clockByMove.map(c => `${Math.round(c.medianSeconds / 60)} min by move ${c.move}`).join(', ')}`)] : []),
   ] : [];
 
   const clash = (extra.clashLines || []).map(l => cite('C', 'predicted line',
@@ -412,16 +447,35 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
 
   const h2h = (extra.headToHead?.games || []).slice(0, 6).map(g => cite('H', 'head to head',
     `${g.date || 'undated'}, student as ${g.color}, ${g.result}${g.line?.length ? `, ${lineText(g.line)}` : ''}${g.accuracy != null ? `, accuracy ${g.accuracy}%` : ''}${g.moments != null ? `, ${g.moments} critical moment${g.moments === 1 ? '' : 's'}` : ''}`, `#/game/${g.gameId}`));
+  // A deviation from the predicted tree that has happened more than once
+  // against this opponent is a pattern worth a specific watch_for, not just
+  // "the prediction has held N of M times": without this, a rematch's sheet
+  // has no memory that they have already sprung this exact surprise before.
+  const recurring = (extra.headToHead?.recurringDeviations || []).map(d => cite('H', 'recurring deviation',
+    `${d.by === 'opponent' ? 'they' : 'you'} left the predicted line with ${d.san} around move ${d.moveNo} in ${d.count} of your games against them (${d.dates.join(', ') || 'undated'}): not a one-off`));
 
   const tm = report.timeManagement;
   const clock = tm ? [cite('K', 'clock', `${tm.comfortBlunders} mistakes with over 5 minutes left, ${tm.underTwoMinMoments} mistakes under 2 minutes, ${tm.fastMoments} failed snap-moves (${tm.movesWithClock} moves with clocks)`)] : [];
 
   const s = extra.student;
   const gap = s?.rating && book?.currentElo ? book.currentElo - s.rating : null;
+  // The student's own weaknesses (their personal report, not this opponent's):
+  // without this, a real head-to-head risk (the student converts poorly and
+  // this opponent specifically steers into won positions to grind, say) never
+  // surfaces, only the two facts in isolation.
+  const sw = s?.weaknesses;
+  const studentWeak = sw?.games ? [
+    ...Object.entries(sw.byCategory || {}).filter(([k, v]) => k !== 'unexplained' && v.count >= 3)
+      .sort((a, b) => b[1].weight - a[1].weight).slice(0, 3)
+      .map(([k, v]) => cite('S', 'student weakness', `${k}: ${v.count} moment${v.count === 1 ? '' : 's'} in their own games (weight ${v.weight})`)),
+    ...['opening', 'middlegame', 'endgame'].filter(ph => sw.byPhase?.[ph]?.moments >= 3)
+      .map(ph => cite('S', 'student weakness', `weakest in the ${ph}: accuracy ${pctText(sw.byPhase[ph].accuracy)}`)),
+  ] : [];
   const student = s ? [
     cite('S', 'student', `rated about ${s.rating || '?'}${gap != null ? `; ${subject} is ${Math.abs(gap)} ${gap >= 0 ? 'above' : 'below'}` : ''}`),
     ...['white', 'black'].flatMap(c => (s.repertoire || []).filter(l => l.color === c).slice(0, 4)
       .map(l => cite('S', 'student line', `plays as ${c}: ${lineText(l.line)}${l.eco ? ` (${l.eco})` : ''}, ${l.count} game${l.count === 1 ? '' : 's'}, scores ${pctText(l.scorePct)}`))),
+    ...studentWeak,
   ] : [];
 
   const body = [
@@ -430,21 +484,33 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
     section('Their errors by phase', phases),
     section('Their recurring weaknesses (named from explained moments)', pats, '- none yet'),
     section('Their repertoire in the analysed games', rep, '- unknown'),
-    ...(book ? [section('Their strength', strength), section('Their repertoire over their whole history (recent, on-strength games weighted)', bookLines)] : []),
+    ...(book ? [section('Their strength', [...strength, ...trend]), section('Their repertoire over their whole history (recent, on-strength games weighted)', bookLines)] : []),
     ...(tend.length ? [section('How the evaluation goes in their games', tend)] : []),
     ...(habits.length ? [section('Habits over their whole history', habits)] : []),
     ...(clash.length ? [section(`Predicted opening lines between the student and ${subject} (from real games; each note says why the prediction ends)`, clash)] : []),
-    ...(h2h.length ? [section(`The student's own games against ${subject}`, h2h)] : []),
+    ...(h2h.length ? [section(`The student's own games against ${subject}`, [...h2h, ...recurring])] : []),
     ...(student.length ? [section('The student', student)] : []),
     clock.length ? clock[0] : 'No clock data.',
   ].join('\n\n');
   return { body, evidence };
 }
 
-/** One-page preparation sheet for a subject, from their aggregated dossier. */
+// What the student needs from THIS specific game reweights which plan steps
+// and lines the sheet leans on: the same opponent, the same data, but a
+// must-win calls for complicating and a must-not-lose for safety, using
+// signals the dossier already carries (T conversion/hold rates, F out-of-book
+// score), not new data. 'either' (the default) asks for the balanced plan.
+const NEED_FRAMING = {
+  win: 'The student NEEDS A WIN in this specific game (a must-win round, or must catch up on tiebreak). Weight exploit_plan and openings toward complicating: prefer lines and plans that keep tension and create winning chances, using where the opponent converts or defends worst, even at some added risk to the student\'s own position.',
+  draw: 'A draw is an ACCEPTABLE OR PREFERRED result in this specific game (protecting a lead, or a must-not-lose spot). Weight exploit_plan and openings toward safety: prefer solid lines that sidestep the opponent\'s strengths, favour simplifying once ahead, and avoid needless risk.',
+};
+
+/** One-page preparation sheet for a subject, from their aggregated dossier.
+ * `extra.need`: 'win' | 'draw' | 'either' (default), see NEED_FRAMING. */
 export function prepSheetPrompt(subjectName, report, repertoire, extra = {}) {
   const subject = field(subjectName);
   const { body } = prepContext(subjectName, report, repertoire, extra);
+  const framing = NEED_FRAMING[extra.need];
   return `${prepSheetInstructions()}
 
 ---
@@ -453,7 +519,7 @@ ${body}
 
 ---
 
-Write ${subject}'s preparation sheet now, filling every field. Use only the data above; do not invent openings, lines, or tendencies that are not supported by it. Every plan step, opening row, and cue lists the evidence ids it rests on.`;
+${framing ? `${framing}\n\n` : ''}Write ${subject}'s preparation sheet now, filling every field. Use only the data above; do not invent openings, lines, or tendencies that are not supported by it. Every plan step, opening row, and cue lists the evidence ids it rests on.`;
 }
 
 /** The evidence map a generated sheet is validated against and displayed with. */

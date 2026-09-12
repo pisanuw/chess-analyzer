@@ -1,6 +1,7 @@
 // Chessground wrapper with chess.js for legal moves.
 import { Chessground } from '/vendor/chessground/chessground.min.js';
 import { Chess } from '/vendor/chess.js/chess.js';
+import { trapFocus } from './widgets.js';
 
 export function legalDests(fen) {
   const chess = new Chess(fen);
@@ -16,14 +17,15 @@ export function legalDests(fen) {
 function pickPromotion(color) {
   return new Promise(resolve => {
     const glyphs = color === 'w' ? { q: '♕', r: '♖', b: '♗', n: '♘' } : { q: '♛', r: '♜', b: '♝', n: '♞' };
+    const opener = document.activeElement;
     const div = document.createElement('div');
     div.className = 'promo-overlay';
     div.innerHTML = `<div class="promo">${['q', 'r', 'b', 'n'].map(p => `<button data-p="${p}" title="${p}">${glyphs[p]}</button>`).join('')}</div>`;
-    const done = p => { div.remove(); document.removeEventListener('keydown', onKey); resolve(p); };
-    const onKey = e => { if (e.key === 'Escape') done(null); if ('qrbn'.includes(e.key)) done(e.key); };
+    const done = p => { untrap(); div.remove(); opener?.focus?.(); resolve(p); };
+    div.addEventListener('keydown', e => { if ('qrbn'.includes(e.key)) done(e.key); });
     div.addEventListener('click', e => done(e.target.closest('button[data-p]')?.dataset.p || null));
-    document.addEventListener('keydown', onKey);
     document.body.appendChild(div);
+    const untrap = trapFocus(div, { onEscape: () => done(null) });
   });
 }
 

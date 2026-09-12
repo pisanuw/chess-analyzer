@@ -1,7 +1,7 @@
 // Scouting: a FIDE-keyed "book" dossier built instantly from an opponent's
 // whole game history (recency/rating weighted), plus the deeper engine/LLM
 // dossier for the recent subset once it has been analysed.
-import { api, esc, toast, movePrefix, busy, formatEval, session } from '../api.js';
+import { api, esc, toast, movePrefix, busy, formatEval, session, orIfOffline } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 import { Board, walkSans } from '../board.js';
 import { CATEGORY_LABEL } from '../labels.js';
@@ -12,10 +12,10 @@ const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 export async function scoutView(root) {
   const { subjects } = await api.scoutSubjects();
-  const { readonly } = await api.status().catch(() => ({}));
+  const { readonly } = await orIfOffline(api.status(), {});
   // Federation for each linked opponent comes from the players map (the scout
   // subject list carries the id but not the federation).
-  const { players = [] } = await api.players().catch(() => ({ players: [] }));
+  const { players = [] } = await orIfOffline(api.players(), { players: [] });
   const fedById = new Map(players.map(p => [p.fideId, p.federation]));
   subjects.forEach(s => { if (s.fideId) s.fed = fedById.get(s.fideId) || null; });
   if (!subjects.length) {
@@ -119,9 +119,9 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
   const [book, data, gamesRes] = await Promise.all([
     // Only subjects with a book have one to fetch (a member with a FIDE id but no
     // book used to trigger a 404 on every visit).
-    entry.fideId && entry.bookGames ? api.scoutBook(entry.fideId, entry.tc || null).catch(() => null) : Promise.resolve(null),
-    api.scout(subject, entry.color || null).catch(() => null),
-    api.games().catch(() => ({ games: [] })),
+    entry.fideId && entry.bookGames ? orIfOffline(api.scoutBook(entry.fideId, entry.tc || null), null) : Promise.resolve(null),
+    orIfOffline(api.scout(subject, entry.color || null), null),
+    orIfOffline(api.games(), { games: [] }),
   ]);
   if (!book && !data) {
     el.innerHTML = `<div class="empty">Nothing to show yet for ${esc(subject)}. Their games may still be in the analysis queue.</div>`;
@@ -227,7 +227,8 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
   const pendingNote = pendingTotal
     ? `<p class="muted" style="margin:6px 0"><small>⏳ ${pendingTotal} of ${esc(subject)}'s game${pendingTotal === 1 ? ' is' : 's are'} still being processed (${pending.toAnalyse} to analyse, ${pending.toExplain} to explain). ${prepSheet ? 'Regenerate once they finish for the full picture.' : `The sheet will be built from the ${analysedNow} already analysed.`}</small></p>`
     : '';
-  const meta = prepSheet ? `<p class="muted no-print"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}${prepSheet.evidence ? ' Hover an evidence chip for the fact behind a claim; click one to open the game.' : ''}</small>
+  const needLabel = { win: 'weighted toward a must-win (complicating)', draw: 'weighted toward a safe draw' }[prepSheet?.need] || '';
+  const meta = prepSheet ? `<p class="muted no-print"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}${needLabel ? ` Plan ${needLabel}.` : ''}${prepSheet.evidence ? ' Hover an evidence chip for the fact behind a claim; click one to open the game.' : ''}</small>
     <span class="row" style="gap:6px; margin-top:6px"><button class="small" id="prep-copy" title="Copy the sheet as markdown (for a coach, a note, or a message)">Copy as markdown</button> <button class="small" id="prep-print" title="Print just the sheet">Print</button></span></p>` : '';
   const body = prepSheet
     ? prepSheetBody(prepSheet) + meta
@@ -243,9 +244,17 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
     button = `<p class="muted"><small>Not enough games for a preparation sheet yet (needs at least ${PREP_MIN} analysed; ${analysedNow} so far).</small></p>`;
   } else if (isAdmin) {
     // The operator generates it (home machine only); on the mirror it is published.
+    // "Need" reweights the plan (complicate for a must-win, play safe for an
+    // acceptable draw) from data the dossier already has; it does not change
+    // what games or facts go into it. Defaults to no preference (a balanced plan).
+    const needSelect = `<select id="prep-need" title="What the student needs from this specific game" style="margin-right:6px">
+      <option value="">Balanced plan</option>
+      <option value="win">Need a win</option>
+      <option value="draw">Draw is OK</option>
+    </select>`;
     button = readonly
       ? (prepSheet ? '' : '<p class="muted"><small>Prep sheets are generated on the home machine and published here.</small></p>')
-      : `<button class="primary" id="gen-prep"${upToDate ? ' disabled title="No games analysed and no format change since this sheet was generated"' : ''}>${prepSheet ? regenLabel : 'Generate prep sheet (about a minute)'}</button>${upToDate && pendingTotal === 0 ? ' <small class="muted">Up to date with all analysed games.</small>' : ''}`;
+      : `${needSelect}<button class="primary" id="gen-prep"${upToDate ? ' disabled title="No games analysed and no format change since this sheet was generated"' : ''}>${prepSheet ? regenLabel : 'Generate prep sheet (about a minute)'}</button>${upToDate && pendingTotal === 0 ? ' <small class="muted">Up to date with all analysed games.</small>' : ''}`;
   } else if (!prepSheet) {
     // Members and visitors cannot generate; they ask the operator, who is emailed.
     button = `<button class="primary" id="req-prep">Request prep sheet</button> <small class="muted">Emails the coach to generate one.</small>`;
@@ -283,9 +292,10 @@ function wirePrep(el, subject, report, pending, refresh) {
   const pendingTotal = pending.toAnalyse + pending.toExplain;
   btn.onclick = async () => {
     if (pendingTotal > 0 && !confirm(`Generate the prep sheet now from ${report.games} analysed game${report.games === 1 ? '' : 's'}? ${pendingTotal} of ${subject}'s game${pendingTotal === 1 ? ' is' : 's are'} still processing; you can regenerate after they finish.`)) return;
+    const need = el.querySelector('#prep-need')?.value || null;
     const label = btn.textContent;
     btn.disabled = true; btn.textContent = 'Generating… (about a minute)';
-    try { await api.prepSheet(subject); toast('Prep sheet generated'); await refresh(); }
+    try { await api.prepSheet(subject, need); toast('Prep sheet generated'); await refresh(); }
     catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = label; }
   };
 }
@@ -466,10 +476,11 @@ function wireClash(el, fideId, boardRef, readonly, subjectColor = null) {
 async function loadClash(fideId, body, boardRef, ctx) {
   try {
     const r = await api.scoutClash(fideId);
+    if (!body.isConnected) return; // navigated away, or the dossier re-rendered, while this was in flight
     if (r.unavailable) return unavailableClash(body);
     if (r.building) return pollClash(fideId, body, boardRef, ctx);
     renderClashForest(r.clash, body, boardRef, ctx);
-  } catch (err) { body.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
+  } catch (err) { if (body.isConnected) body.innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
 }
 
 function unavailableClash(body) {
@@ -479,20 +490,27 @@ function unavailableClash(body) {
 /** Poll the job queue while the opponent index builds, then render. */
 async function pollClash(fideId, body, boardRef, ctx) {
   body.innerHTML = '<p class="muted">Building the clash tree (parsing the opponent’s games)…</p>';
+  // `body.isConnected` goes false the moment the view navigates away or the
+  // dossier re-renders (both replace this element's ancestor's innerHTML), so
+  // checking it after every await stops the loop from firing further requests
+  // into, or rendering into, a container nobody can see anymore.
   for (let i = 0; i < 200; i++) {
     await new Promise(r => setTimeout(r, 1500));
+    if (!body.isConnected) return;
     const { jobs = [] } = await api.jobs().catch(() => ({ jobs: [] }));
+    if (!body.isConnected) return;
     const job = jobs.find(j => j.gameId === 'clash:' + fideId && j.kind === 'clash');
     if (job && job.total) body.innerHTML = `<p class="muted">Building the clash tree: parsed ${job.progress} of ${job.total} games…</p>`;
     if (job && job.status === 'failed') { body.innerHTML = `<div class="empty">Could not build the clash tree: ${esc(job.error || 'unknown error')}</div>`; return; }
     if (!job || job.status === 'done' || job.status === 'cancelled') {
       const r = await api.scoutClash(fideId);
+      if (!body.isConnected) return;
       if (r.building) continue; // re-queued; keep waiting
       if (r.unavailable) return unavailableClash(body);
       return renderClashForest(r.clash, body, boardRef, ctx);
     }
   }
-  body.innerHTML = '<div class="empty">The clash build is taking longer than expected. Reload the page to check.</div>';
+  if (body.isConnected) body.innerHTML = '<div class="empty">The clash build is taking longer than expected. Reload the page to check.</div>';
 }
 
 /** A per-node marker for where a prediction runs out (coverage, not just depth). */

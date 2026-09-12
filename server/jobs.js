@@ -3,7 +3,7 @@ import { getEnginePool } from './enginepool.js';
 import { analyseGame, summarize } from './analyze.js';
 import { getGame, saveGame, getSettings, listAllGames, listScoutBooks, DEFAULT_USER } from './store.js';
 import { ensureClashIndex } from './clash.js';
-import { complete, LlmError } from './llm.js';
+import { LlmError, completeRetry } from './llm.js';
 import { flushCache } from './evalcache.js';
 import { systemPrompt, momentPrompt, momentsBatchPrompt, gameSummaryPrompt, gameSummarySystemPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutMomentsBatchPrompt, scoutGameSummaryPrompt, batchExplanationSchema, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA, CATEGORIES, timePressureOf } from './prompts.js';
 import { syncDrillsForGame } from './drills.js';
@@ -25,8 +25,16 @@ export async function playerRatingFor(game, settings) {
 
 const jobs = new Map();
 let seq = 0;
-let running = false;
-const pending = [];
+
+// Two independent lanes, each its own FIFO with its own runner, so a member's
+// own analyse/explain work is never stuck behind another member's (or an
+// admin prebuild's) long-running opponent-book parse. 'analyse' and 'explain'
+// are the interactive lane: a member is looking at the Games page waiting on
+// them. 'clash' (an opponent's whole-book index) is the bulk lane: it can take
+// much longer and nobody is watching a spinner for it specifically.
+const LANE = { analyse: 'interactive', explain: 'interactive', clash: 'bulk' };
+const pending = { interactive: [], bulk: [] };
+const running = { interactive: false, bulk: false };
 
 const isActive = j => j.status === 'queued' || j.status === 'running';
 
@@ -43,8 +51,9 @@ export function enqueue(kind, gameId) {
   if (dup) return dup;
   const job = { id: ++seq, kind, gameId, status: 'queued', progress: 0, total: 0, stage: '', error: null, createdAt: new Date().toISOString(), costUsd: 0 };
   jobs.set(job.id, job);
-  pending.push(job);
-  pump();
+  const lane = LANE[kind];
+  pending[lane].push(job);
+  pump(lane);
   return job;
 }
 
@@ -83,11 +92,12 @@ export async function resumeInterrupted() {
   if (analyse || explain) console.log(`resumed unfinished work: ${analyse} to analyse, ${explain} to explain`);
 }
 
-async function pump() {
-  if (running) return;
-  running = true;
-  while (pending.length) {
-    const job = pending.shift();
+async function pump(lane) {
+  if (running[lane]) return;
+  running[lane] = true;
+  const queue = pending[lane];
+  while (queue.length) {
+    const job = queue.shift();
     if (job.status === 'cancelled') continue;
     job.status = 'running';
     job.startedAt = new Date().toISOString();
@@ -114,7 +124,7 @@ async function pump() {
     const finished = [...jobs.values()].filter(j => !isActive(j)).sort((a, b) => a.id - b.id);
     for (const j of finished.slice(0, Math.max(0, finished.length - 200))) jobs.delete(j.id);
   }
-  running = false;
+  running[lane] = false;
 }
 
 async function runAnalyse(job) {
@@ -177,20 +187,6 @@ export function sanitizeExplanation(e, known = []) {
  * of it; chunks of this size keep each call bounded and the loss small. */
 export const BATCH_MAX = 8;
 const chunk = (xs, n) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, (i + 1) * n));
-
-/** One retry for transient CLI failures (timeout, malformed output); anything
- * else propagates. A minute-long call failing at moment 5 of 6 should not
- * fail the whole job when a second attempt would do. */
-async function completeRetry(settings, req) {
-  try { return await complete(settings, req); } catch (err) {
-    if (!(err instanceof LlmError)) throw err;
-    // Back off longer for a rate/usage limit than for a transient timeout or a
-    // one-off malformed reply, so the single retry is not wasted racing a cap.
-    const limited = /limit|rate|quota|overloaded|429|529/i.test(err.message || '');
-    await new Promise(r => setTimeout(r, limited ? 30000 : 2000));
-    return complete(settings, req);
-  }
-}
 
 async function runExplain(job) {
   const settings = await getSettings();

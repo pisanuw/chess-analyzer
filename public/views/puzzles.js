@@ -2,8 +2,8 @@
 // the move, keep a session streak. Deliberately NOT spaced repetition (that is
 // Drills): nothing is scheduled and nothing is written to the server, so this
 // view works unchanged on the read-only hosted mirror.
-import { api, esc, toast, formatEval } from '../api.js';
-import { keymap } from '../widgets.js';
+import { api, esc, toast } from '../api.js';
+import { keymap, linesList } from '../widgets.js';
 import { Board, applyMove, lineShapes } from '../board.js';
 
 const SOURCES = [
@@ -134,7 +134,7 @@ export async function puzzlesView(root, query) {
     pane.innerHTML = `<div class="guess">
       <div class="result ${state.correct ? 'good' : 'bad'}">${state.correct ? `Solved: ${esc(p.bestSan)}.${state.missed ? ' (after a miss)' : ''}` : `The move was ${esc(p.bestSan)}.`}</div>
       <p class="muted" style="margin:6px 0">${playedNote}<small class="muted">${answeredIn}</small></p>
-      <ul class="lines">${p.lines.map((l, i) => `<li class="${l.uci === p.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === p.playedUci ? '<span class="chip">played</span>' : ''}</li>`).join('')}</ul>
+      ${linesList(p.lines, p.playedUci, { mistakeClass: false })}
       <div class="row" style="margin-top: 12px"><button class="primary" id="next">Next <span class="kbd">N</span></button></div>
       ${keymap([['N', 'next'], ['Space', 'next'], ['f', 'flip board']])}
     </div>`;

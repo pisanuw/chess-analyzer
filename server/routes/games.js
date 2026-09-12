@@ -9,7 +9,7 @@ import { assocsFromHeaders, recordAssociations } from '../players.js';
 import { enqueue, listJobs, cancelJobs, knownPatterns, canonicalPattern } from '../jobs.js';
 import { findStockfish, getSparringEngine } from '../engine.js';
 import { probeHosts, remoteHostList } from '../enginepool.js';
-import { checkClaudeCli, complete } from '../llm.js';
+import { checkClaudeCli, completeRetry } from '../llm.js';
 import { scoreToCp, winProb, summarize } from '../analyze.js';
 import { removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback, clearFeedback } from '../drills.js';
 import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, reExplainSuffix, timePressureOf, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, CATEGORIES } from '../prompts.js';
@@ -142,7 +142,7 @@ export function registerGameRoutes(app) {
     }
     const settings = await getSettings();
     const ownNames = [...(owner?.playerNames || []), ...(ownerId === DEFAULT_USER ? settings.playerNames : [])];
-    const parsed = parsePgnGames(chunks);
+    const parsed = await parsePgnGames(chunks);
     const imported = [], skipped = [], failed = [], assocs = [];
     for (const r of parsed) {
       if (!r.ok) { failed.push({ error: r.error, snippet: r.snippet }); continue; }
@@ -375,7 +375,7 @@ export function registerGameRoutes(app) {
     const scout = (game.purpose || 'own') === 'scout';
     const known = await knownPatterns(game);
     const args = [game, ply, [...known.patterns], [...known.concepts]];
-    const { output, costUsd, model } = await complete(settings, {
+    const { output, costUsd, model } = await completeRetry(settings, {
       system: scout ? scoutSystemPrompt(await studentRating(req, settings)) : systemPrompt(game.playerRating || settings.playerRating),
       prompt: (scout ? scoutMomentPrompt(...args) : momentPrompt(...args)) + reExplainSuffix(prior.explanation),
       schema: scout ? SCOUT_EXPLANATION_SCHEMA : EXPLANATION_SCHEMA,

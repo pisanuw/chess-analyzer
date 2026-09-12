@@ -58,7 +58,7 @@ async function sendMagicEmail(to, link) {
 }
 
 export async function magicRequestRoute(req, res) {
-  if (!(await rateLimit(req))) return res.status(429).json({ error: 'too many attempts, try again in an hour' });
+  if (!(await rateLimit(req, 'magic-link'))) return res.status(429).json({ error: 'too many attempts, try again in an hour' });
   const email = String(req.body?.email || '').trim();
   const user = email ? await findUserByEmail(email) : null;
   // Only send to allowlisted addresses, but always return the same response so

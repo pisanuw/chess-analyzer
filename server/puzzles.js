@@ -7,7 +7,7 @@
 // acceptedLines band so "correct" means the same thing in both.
 import { listGames, loadGames, indexFingerprint, DEFAULT_USER } from './store.js';
 import { winProb } from '../public/shared.js';
-import { acceptedLines } from './drills.js';
+import { acceptedLines } from './ease.js';
 import { memo } from './memo.js';
 
 const MIN_PLY = 8;            // skip book opening moves: a puzzle is a real decision

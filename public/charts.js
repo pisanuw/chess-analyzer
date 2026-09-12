@@ -19,12 +19,18 @@ function svgEl(tag, attrs = {}, text) {
 function observeWidth(container, redraw) {
   if (typeof ResizeObserver === 'undefined') return;
   container._ro?.disconnect();
+  clearTimeout(container._roTimer);
   let last = container.clientWidth;
+  // Debounced: a dragged window edge or an opening accordion fires many
+  // ResizeObserver ticks in a row, and each one is a full SVG rebuild.
   const ro = new ResizeObserver(() => {
-    const w = container.clientWidth;
-    if (!w || Math.abs(w - last) < 8) return;
-    last = w;
-    redraw();
+    clearTimeout(container._roTimer);
+    container._roTimer = setTimeout(() => {
+      const w = container.clientWidth;
+      if (!w || Math.abs(w - last) < 8) return;
+      last = w;
+      redraw();
+    }, 120);
   });
   ro.observe(container);
   container._ro = ro;

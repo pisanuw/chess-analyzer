@@ -51,6 +51,22 @@ export async function complete(settings, { system, prompt, schema, timeoutMs }) 
   throw new LlmError(`Unknown LLM provider: ${provider}`);
 }
 
+/** One retry for transient CLI failures (timeout, malformed output); anything
+ * else propagates. A minute-long call failing at moment 5 of 6 (or any other
+ * single interactive request) should not fail outright when a second attempt
+ * would do. Every call site should go through this rather than `complete()`
+ * directly, so a transient hiccup never has to be handled ad hoc per caller. */
+export async function completeRetry(settings, req) {
+  try { return await complete(settings, req); } catch (err) {
+    if (!(err instanceof LlmError)) throw err;
+    // Back off longer for a rate/usage limit than for a transient timeout or a
+    // one-off malformed reply, so the single retry is not wasted racing a cap.
+    const limited = /limit|rate|quota|overloaded|429|529/i.test(err.message || '');
+    await new Promise(r => setTimeout(r, limited ? 30000 : 2000));
+    return complete(settings, req);
+  }
+}
+
 export async function checkClaudeCli() {
   return new Promise(resolve => {
     execFile('claude', ['--version'], { timeout: 10000 }, (err, stdout) => {

@@ -5,7 +5,7 @@ import { buildReport, buildPrepCard } from '../report.js';
 import { buildRepertoire } from '../repertoire.js';
 import { dueDrills, visitorDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, recordDecoy } from '../drills.js';
 import { buildPuzzles } from '../puzzles.js';
-import { complete } from '../llm.js';
+import { completeRetry } from '../llm.js';
 import { systemPrompt, patternSynthesisPrompt, PATTERN_SYNTH_SCHEMA } from '../prompts.js';
 import { normalizeKey } from '../../public/shared.js';
 import { currentUser } from '../auth.js';
@@ -55,7 +55,7 @@ export function registerTrainingRoutes(app) {
       if (m && e) instances.push({ label: ref.label, date: ref.date, fen: m.fenBefore, san: m.san, bestSan: m.bestSan, judgment: m.judgment, explanation: e.explanation, key_question: e.key_question });
     }
     if (instances.length < 2) return res.status(400).json({ error: 'need at least 2 explained instances' });
-    const { output, costUsd, model } = await complete(settings, {
+    const { output, costUsd, model } = await completeRetry(settings, {
       system: systemPrompt(await studentRating(req, settings)),
       prompt: patternSynthesisPrompt(pat.pattern, instances),
       schema: PATTERN_SYNTH_SCHEMA,
