@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-12 (Report sections start closed)
+
+- The Report page's collapsible sections all start closed, so a first visit reads as a table of contents instead of one long scroll. The chart-bearing sections were previously forced open because the SVG charts size from a visible container; `observeWidth` in `charts.js` already redraws a chart when its container first gets real width (added for hidden tabs and rotated phones), so an opened section's charts now size themselves on first expand. The smoke test's report assertion reads the always-visible summary text, unchanged.
+
 ## 2026-09-12 (Pattern study notes synthesize themselves)
 
 - Pattern notes no longer wait for the admin to press the button per pattern. At the end of every explain job for an own game, `syncPatternNotes` (new `server/patternnotes.js`) synthesizes a note for each of the owner's patterns that newly reached 2 explained instances and refreshes a note once its pattern has gained 2 more instances since the note was written (report moments are newest first, so new evidence actually enters the prompt; the growth threshold keeps a backlog of explain jobs from re-buying the same note after every game). Synthesis cost lands on the job's cost line; a failed synthesis is logged and never fails the explain job. Manual LLM mode skips it. The Report page button remains as the admin's force-refresh and shares the same code path (`synthesizeNote`), as does the route. Backfilled from the existing games: 3 new notes for Kai (about $0.13 each); the other members have no explained own games yet and pick theirs up automatically. Tests: `test/patternnotes.test.js` (selection thresholds, legacy notes without a count, missing instances short-circuit before any LLM call).

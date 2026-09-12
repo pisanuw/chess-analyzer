@@ -1,6 +1,7 @@
 // Weakness report across all analysed games. Long, so it is split into
-// collapsible sections; the chart-bearing sections open by default (charts need
-// a visible width to size themselves).
+// collapsible sections, all closed on arrival so the page reads as a table of
+// contents. Charts render at a fallback width while their section is closed
+// and redraw to the real width when it opens (observeWidth in charts.js).
 import { api, esc, toast, movePrefix } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 import { CATEGORY_LABEL, KIND_LABEL } from '../labels.js';
@@ -9,8 +10,8 @@ import { tendencyTiles } from '../widgets.js';
 const catLabel = c => CATEGORY_LABEL[c] || c;
 const fmtSecs = s => s == null ? '–' : s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
 
-// A collapsible section. Chart sections pass open=true so they render sized.
-const acc = (title, body, open = false) => `<details class="acc rsec"${open ? ' open' : ''}><summary><span class="acc-title">${title}</span></summary><div class="acc-body">${body}</div></details>`;
+// A collapsible section, closed until the reader opens it.
+const acc = (title, body) => `<details class="acc rsec"><summary><span class="acc-title">${title}</span></summary><div class="acc-body">${body}</div></details>`;
 
 // Render the pre-tournament card's small markdown (headings, numbered/bulleted
 // lists, bold) inline, so the one-page summary lives on the page rather than a
@@ -164,10 +165,10 @@ export async function reportView(root) {
     </div>`;
 
   root.innerHTML = overview
-    + (cardMd ? acc('Pre-tournament card', `<div class="prep-card-md">${renderCardMd(cardMd)}</div>`, true) : '')
-    + acc('Focus areas', focusBody, true)
-    + acc('Moments by error type, phase &amp; colour', chartsBody, true)
-    + acc('Accuracy by game', trendBody, true)
+    + (cardMd ? acc('Pre-tournament card', `<div class="prep-card-md">${renderCardMd(cardMd)}</div>`) : '')
+    + acc('Focus areas', focusBody)
+    + acc('Moments by error type, phase &amp; colour', chartsBody)
+    + acc('Accuracy by game', trendBody)
     + (r.tendencies?.games ? acc('Winning, losing, and turning positions', tendencyTiles(r.tendencies)) : '')
     + (catTrendBody ? acc('Are the weaknesses shrinking?', catTrendBody) : '')
     + (timeBody ? acc('Time management', timeBody) : '')
