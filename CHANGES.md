@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-12 (Docs match the code; improvement report retired)
+
+- IMPROVEMENT-REPORT.md verified item by item against the code and removed. Everything in it shipped except four deliberately deferred cleanups, now BRIEFING next step 7: the play-out refactor for `game.js`/`drills.js` (the extracted `public/playout.js` controller exists and `prep.js` uses it, but the game and drills views still carry their own copies and there is no shared `gradeGuess`), retiring manual LLM mode from the UI, ECO-based `phaseOf`, and removing the legacy password login. The de-dup measurement (8%, rejected) stays recorded in the CHANGES entry below.
+- PLAN-opening-clash.md's header no longer claims "proposed, not yet built" (the feature shipped 2026-09-10); the file stays as design rationale. README now mentions offline drill grading; `package.json` version bumped to 0.2.0 to match the README's v0.2.x. BRIEFING got a current status block, dropped the fully-done scout-card step, and renumbered the next steps 1 to 8.
+
 ## 2026-09-12 (Offline drill reviews are queued and replayed)
 
 - Grading a drill with no connection (a tournament hall) no longer loses the review. `api.reviewDrill` catches the unreachable-server failure, stores the grade in localStorage with the time it was made (keyed by user id, so a shared laptop cannot replay one member's reviews into another's ladder), and the page shows "grade saved on this device, syncs when back online" instead of the error toast. The queue replays oldest first at startup and on the browser's `online` event (`flushReviews` in `public/api.js`, wired in `app.js`); order matters because a drill missed offline comes back in the same session. A replay carries `at`, the real review time; the server keeps it in the review record when it is plausible (not future, not over a week old) and otherwise stamps apply time. An entry the server refuses outright (drill deleted while offline) is dropped so the queue can never jam; an expired session stops the flush until sign-in. "Undo last grade" removes a still-queued review from the queue instead of calling the server. Tests: `test/offlinequeue.test.js` (queue behaviour under a stubbed fetch) plus backdating clamps in `drills.test.js` and the HTTP round trip in `api.test.js`.

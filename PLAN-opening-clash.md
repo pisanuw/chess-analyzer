@@ -1,6 +1,6 @@
 # Plan: Opening Clash (predicted lines vs a scouted opponent)
 
-Status: proposed, not yet built. Owner: home machine (needs Stockfish for the optional engine phase, the claude CLI for the optional narration phase; the data-only core needs neither). This is the concrete design for "Next steps" item 2 in BRIEFING.md (repertoire clash / predicted opening).
+Status: implemented 2026-09-10 (`server/clash.js`, all four phases plus polish; see CHANGES.md). Kept as the design rationale: the weighting scheme, caps, and prep-end semantics below explain why the code is shaped the way it is. Owner: home machine (needs Stockfish for the optional engine phase, the claude CLI for the optional narration phase; the data-only core needs neither).
 
 ## The question this answers
 
