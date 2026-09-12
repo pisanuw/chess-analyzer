@@ -11,6 +11,7 @@
     "test:ui": "node test/ui/smoke.mjs",
     "lint": "eslint . && node scripts/check-prose.js",
     "check:prose": "node scripts/check-prose.js",
+    "icons": "node scripts/make-icons.js",
     "pull-data": "git -C data pull --rebase",
     "push-data": "git -C data add -A && (git -C data diff --cached --quiet || git -C data commit -m sync) && git -C data push",
     "sync": "npm run pull-data && npm start",

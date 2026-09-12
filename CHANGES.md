@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-12 (Implementing the round-2 report: PNG home-screen icons)
+
+- iOS ignores an SVG `apple-touch-icon`, so the installed app (the tournament-hall phone) got a screenshot tile, and Android's install prompt wants PNG sizes in the manifest. `scripts/make-icons.js` (`npm run icons`) renders `public/icon.svg` to `icon-180.png`, `icon-192.png`, and `icon-512.png` with the Playwright Chromium; the PNGs are committed, `index.html` points the touch icon at the 180 px one, and the manifest lists the 192 and 512 px ones ahead of the SVG.
+
 ## 2026-09-12 (Implementing the round-2 report: the Prepare page works offline)
 
 - The service worker cached only the drill deck and the startup calls, so the Prepare page (the sheet, the predicted lines, the deck) failed with no signal, exactly where it is wanted. `public/sw.js` now also caches the prep reads (`/api/prep/*`), the dossier reads (`/api/scout`, `/api/scout/*`, `/api/players`, `/api/games`), and the upcoming list, still network first, so online behaviour is unchanged and the last-viewed Prepare pages open from the cache. A deck mark made offline was silently lost; `api.prepMark` now queues it in the same per-user localStorage queue as offline drill grades (`kind: 'prep'`), replayed in order by `flushReviews`, and the page says once that progress is saved on the device. Test in `test/offlinequeue.test.js`.
