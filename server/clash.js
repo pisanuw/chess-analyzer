@@ -105,6 +105,10 @@ function expand(fen, ply, studentMoved, ctx) {
     if (!studentMoved) kept = kept.filter(m => m.count >= P.minRootGames); // ignore one-off roots at his first move
     kept = kept.slice(0, studentMoved ? P.studentBranch : P.rootStudentBranch);
     if (!kept.length) { node.studentPrepEnds = true; return node; }
+    // Engine lines stored by the student's own analysis at this position (the
+    // same for every move played from it): the answer key for a repair card.
+    const analysed = moves.find(m => m.lines?.length);
+    if (analysed) node.ownLines = analysed.lines;
     for (const m of kept) {
       node.edges.push({
         san: m.san, uci: m.uci, fenAfter: m.childFen, childKey: keyOf(m.childFen),

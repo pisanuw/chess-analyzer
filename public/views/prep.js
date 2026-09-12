@@ -143,10 +143,10 @@ export async function prepView(root, subjectEnc, query) {
 
   function load() {
     playout?.stop(); playout = null;
-    if (!items.length) { deckEl.innerHTML = `<div class="empty">No deck yet: it fills as ${esc(subject)}'s games are analysed and once they have a FIDE book.</div>${sparringList()}`; wireSparring(); return; }
+    if (!items.length) { deckEl.innerHTML = `<div class="empty">No deck yet: it fills as ${esc(subject)}'s games are analysed and once they have a FIDE book.</div>${repairList()}${sparringList()}`; wireSparring(); return; }
     if (idx >= items.length) {
       state = null;
-      deckEl.innerHTML = `<div class="card"><div class="empty">That is the whole deck. <button class="small" id="deck-again">Go through it again</button></div></div>${sparringList()}`;
+      deckEl.innerHTML = `<div class="card"><div class="empty">That is the whole deck. <button class="small" id="deck-again">Go through it again</button></div></div>${repairList()}${sparringList()}`;
       deckEl.querySelector('#deck-again').onclick = () => { idx = 0; load(); };
       wireSparring();
       return;
@@ -171,8 +171,9 @@ export async function prepView(root, subjectEnc, query) {
     state.status = 'revealed';
     state.correct = correct;
     state.text = correct
-      ? (res.uci === d.bestUci ? `${res.san}: yes, ${d.kind === 'line' ? `that is your line${d.source === 'engine' ? ' (engine-approved)' : ''}` : "the engine's first choice"}.` : `${res.san}: accepted (${d.kind === 'line' ? 'another line of yours' : `engine line ${rank + 1}`}).`)
-      : (res.uci === d.playedUci ? `${res.san}: what was played in the game, but ${d.bestSan} is stronger.` : `${res.san}: not it. ${d.kind === 'line' ? `Your line here is ${d.bestSan}.` : `The refutation is ${d.bestSan}.`}`);
+      ? (res.uci === d.bestUci ? `${res.san}: yes, ${d.repair ? "the engine's move, not the one that lost ground" : d.kind === 'line' ? `that is your line${d.source === 'engine' ? ' (engine-approved)' : ''}` : "the engine's first choice"}.` : `${res.san}: accepted (${d.kind === 'line' ? 'another line of yours' : `engine line ${rank + 1}`}).`)
+      : (d.repair && res.uci === d.repair.uci ? `${res.san}: that is what you played in your games here, and it lost ground. The engine's move is ${d.bestSan}.`
+        : res.uci === d.playedUci ? `${res.san}: what was played in the game, but ${d.bestSan} is stronger.` : `${res.san}: not it. ${d.repair ? `The engine's move here is ${d.bestSan}.` : d.kind === 'line' ? `Your line here is ${d.bestSan}.` : `The refutation is ${d.bestSan}.`}`);
     boards.deck.set(res.fen, { lastMove: res.uci, shapes: lineShapes(d.lines, d.playedUci) });
     const had = (marks[d.id]?.right || 0) > 0;
     marks[d.id] = { seen: (marks[d.id]?.seen || 0) + 1, right: (marks[d.id]?.right || 0) + (correct ? 1 : 0) };
@@ -185,11 +186,14 @@ export async function prepView(root, subjectEnc, query) {
     const d = state.d;
     const pane = deckEl.querySelector('#deck-panel');
     const side = d.sideToMove === 'white' ? 'White' : 'Black';
-    const kindChip = d.kind === 'line' ? `<span class="chip">your line</span> <small class="muted">from ${esc(d.source)}</small>` : `<span class="chip">punish</span> <span class="chip ${d.judgment}">${d.judgment}</span>`;
+    const kindChip = d.repair ? `<span class="chip warn" title="In your games your move here was flagged as a deviation; the answer is the engine's move">repair</span> <small class="muted">from your analysis</small>`
+      : d.kind === 'line' ? `<span class="chip">your line</span> <small class="muted">from ${esc(d.source)}</small>` : `<span class="chip">punish</span> <span class="chip ${d.judgment}">${d.judgment}</span>`;
     if (state.status === 'solving') {
-      const task = d.kind === 'line'
-        ? `${d.path.length ? `After ${esc(fmtLine(d.path))}: ` : ''}${side} to move. What do you play against ${esc(subject)} here?`
-        : `${esc(subject)} just played ${esc(d.mistakeSan)}. ${side} to move: find the punishment.`;
+      const task = d.repair
+        ? `${d.path.length ? `After ${esc(fmtLine(d.path))}: ` : ''}${side} to move. In your games you played ${esc(d.repair.san)} here and lost ground. What does the engine play?`
+        : d.kind === 'line'
+          ? `${d.path.length ? `After ${esc(fmtLine(d.path))}: ` : ''}${side} to move. What do you play against ${esc(subject)} here?`
+          : `${esc(subject)} just played ${esc(d.mistakeSan)}. ${side} to move: find the punishment.`;
       pane.innerHTML = `<div class="guess"><b>${task}</b>
         <p class="muted">Card ${idx + 1} of ${items.length}. ${kindChip}${marks[d.id] ? ` · seen ${marks[d.id].seen}, right ${marks[d.id].right}` : ''}</p>
         <button class="small" id="deck-show">Show answer</button></div>`;
@@ -212,6 +216,16 @@ export async function prepView(root, subjectEnc, query) {
   }
 
   // --- sparring: play a predicted position out against the engine -------------
+  // Predicted positions where every one of the student's own continuations was
+  // a flagged deviation and the analysis stored no engine lines: no card can be
+  // made, so name them rather than teach the losing move.
+  function repairList() {
+    if (!deck.repairs?.length) return '';
+    return `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Lines to repair</h3>
+      <p class="muted">In your games these predicted positions went wrong and no engine lines are stored for them, so the deck skips them. Re-analyse the games behind them, or study the position on the board.</p>
+      <ul style="padding-left:18px">${deck.repairs.map(r => `<li style="margin:4px 0"><code>${esc(r.sanLine || 'start')}</code> <small class="muted">you played ${r.played.map(esc).join(' or ')}</small> <a href="${lichessUrl(r.path)}" target="_blank" rel="noopener" title="Open on lichess">↗</a></li>`).join('')}</ul></div>`;
+  }
+
   function sparringList() {
     if (!deck.sparring.length) return '';
     // Playing out these middlegames is training against "someone their rating",

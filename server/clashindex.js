@@ -51,8 +51,14 @@ export function buildStudentIndex(studentGames, maxPly = CLASH_DEFAULTS.maxPly) 
       if (m.ply > maxPly) break;
       if (m.color !== color || !m.fenBefore || !m.fenAfter || !m.uci) continue;
       const map = index[color][posKeyOf(m.fenBefore)] ||= {};
-      const a = map[m.uci] ||= { san: m.san, uci: m.uci, childFen: m.fenAfter, count: 0, scoreSum: 0, scoredN: 0, cpSum: 0, cpN: 0, cp: null, accSum: 0, accN: 0, deviation: false };
+      const a = map[m.uci] ||= { san: m.san, uci: m.uci, childFen: m.fenAfter, count: 0, scoreSum: 0, scoredN: 0, cpSum: 0, cpN: 0, cp: null, accSum: 0, accN: 0, deviation: false, lines: null };
       a.count++;
+      // The engine's view of this position, from the student's own analysis:
+      // the answer key when the student's move here was a flagged deviation
+      // (a prep card must never rehearse the losing move as "your line").
+      if (Array.isArray(m.lines) && m.lines.length && (!a.lines || m.lines.length > a.lines.length)) {
+        a.lines = m.lines.filter(l => l.uci && l.cp != null).map(l => ({ multipv: l.multipv, cp: l.cp, mate: l.mate ?? null, uci: l.uci, san: (l.san || []).slice(0, 4) }));
+      }
       if (score != null) { a.scoreSum += score; a.scoredN++; }
       if (typeof m.evalAfter === 'number') { a.cpSum += m.evalAfter; a.cpN++; a.cp = Math.round(a.cpSum / a.cpN); }
       if (typeof m.accuracy === 'number') { a.accSum += m.accuracy; a.accN++; }

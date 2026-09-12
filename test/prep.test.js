@@ -16,7 +16,7 @@ writeGame(dir, own);
 
 const { parseGame } = await import('../server/pgn.js');
 const { buildStudentIndex, buildOpponentIndex, assembleClashForest } = await import('../server/clash.js');
-const { buildLineDrills, sparringPositions, earlyDeviationPositions } = await import('../server/prep.js');
+const { buildLineDrills, buildLineRepairs, sparringPositions, earlyDeviationPositions } = await import('../server/prep.js');
 const { syncAllDrills } = await import('../server/drills.js');
 const { app } = await import('../server/index.js');
 const server = app.listen(0, '127.0.0.1');
@@ -30,9 +30,9 @@ function pgnOf(sans, result = '1-0') {
   for (let i = 0; i < sans.length; i++) { if (i % 2 === 0) mt += `${i / 2 + 1}. `; mt += sans[i] + ' '; }
   return `[White "W"]\n[Black "B"]\n[Result "${result}"]\n\n${mt}${result}`;
 }
-function studentGame(color, sans) {
+function studentGame(color, sans, overrides = {}) {
   const { moves } = parseGame(pgnOf(sans));
-  return { playerColor: color, headers: { Result: '1-0' }, analysis: { moves: moves.map(m => ({ ...m, evalAfter: 10, accuracy: 95, loss: 0, playedRank: 1, phase: 'opening' })) } };
+  return { playerColor: color, headers: { Result: '1-0' }, analysis: { moves: moves.map(m => ({ ...m, evalAfter: 10, accuracy: 95, loss: 0, playedRank: 1, phase: 'opening', ...(overrides[m.ply] || {}) })) } };
 }
 const bookGame = (color, sans) => ({ color, date: '2026.05.01', result: '1-0', oppElo: 2000, posKey: 'std', pgn: pgnOf(sans) });
 
@@ -54,6 +54,38 @@ test('line flashcards follow the predicted lines and ask for the student\'s own 
   assert.equal(buildLineDrills(clash, 'white', 'Opp', '777').length, 0, 'no white games: no white cards');
   const spar = sparringPositions(clash, 'black');
   assert.ok(spar.length >= 1 && spar[0].fen && spar[0].sanLine.startsWith('1.e4 c6'), 'sparring starts from a predicted position');
+});
+
+test('a flagged deviation is never the answer key: the card repairs it with the stored engine lines, or the node is listed', async () => {
+  // After 1.e4 c6 2.d4 the student always played 2...Nf6?! (playedRank null, lost 12 points): a deviation.
+  // The analysis stored the engine's lines at that position (2...d5 best, 2...e6 close).
+  const dev = { 4: { playedRank: null, loss: 12, lines: [{ multipv: 1, cp: 20, uci: 'd7d5', san: ['d5', 'Nc3'] }, { multipv: 2, cp: 25, uci: 'e7e6', san: ['e6'] }, { multipv: 3, cp: 140, uci: 'g8f6', san: ['Nf6'] }] } };
+  const student = buildStudentIndex([studentGame('black', ['e4', 'c6', 'd4', 'Nf6'], dev), studentGame('black', ['e4', 'c6', 'd4', 'Nf6'], dev)]);
+  const book = { fideId: '778', name: 'Opp', importedAt: 'x', games: [bookGame('white', ['e4', 'c6', 'd4', 'Nf6']), bookGame('white', ['e4', 'c6', 'd4', 'Nf6'])] };
+  const { index, coverage } = await buildOpponentIndex(book, { scoutMaxAgeYears: 3, scoutHalfLifeDays: 540 }, { now: new Date('2026-09-01') });
+  const clash = assembleClashForest({ oppIndex: index, coverage, student, book });
+  const drills = buildLineDrills(clash, 'black', 'Opp', '778');
+  const first = drills.find(d => d.ply === 1);
+  assert.ok(first && !first.repair && first.bestSan === 'c6', 'the sound move stays a normal card');
+  const card = drills.find(d => d.ply === 3);
+  assert.ok(card, 'the deviation node still gets a card');
+  assert.ok(card.repair, 'but it is a repair card');
+  assert.equal(card.repair.san, 'Nf6');
+  assert.equal(card.bestSan, 'd5', "the engine's move from the student's own analysis is the answer");
+  assert.ok(!card.acceptedUci.includes('g8f6'), 'the losing move is never accepted');
+  assert.ok(card.acceptedUci.includes('e7e6'), 'a move within the acceptance band is');
+  assert.equal(card.source, 'engine');
+  assert.deepEqual(buildLineRepairs(clash, 'black'), [], 'with engine lines stored nothing is left to repair');
+
+  // The same deviation with no stored lines: no card, listed for repair instead.
+  const bare = { 4: { playedRank: null, loss: 12 } };
+  const student2 = buildStudentIndex([studentGame('black', ['e4', 'c6', 'd4', 'Nf6'], bare), studentGame('black', ['e4', 'c6', 'd4', 'Nf6'], bare)]);
+  const clash2 = assembleClashForest({ oppIndex: index, coverage, student: student2, book });
+  assert.ok(!buildLineDrills(clash2, 'black', 'Opp', '778').some(d => d.ply === 3), 'no card teaches the losing move');
+  const repairs = buildLineRepairs(clash2, 'black');
+  assert.equal(repairs.length, 1);
+  assert.equal(repairs[0].sanLine, '1.e4 c6 2.d4');
+  assert.deepEqual(repairs[0].played, ['Nf6']);
 });
 
 test('earlyDeviationPositions rehearses a real but less common opponent try, not just their main line', async () => {
