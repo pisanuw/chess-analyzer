@@ -20,6 +20,8 @@ import { winProb, WP_ACCEPT, fmtLine } from '../public/shared.js';
 const MAX_LINES = 6;       // principal lines the flashcards follow, per colour
 const MAX_LINE_DRILLS = 12;
 const MAX_SPARRING = 6;
+const MAX_EARLY_SPARRING = 3;
+const EARLY_PLY = 6; // "immediately" for sparring purposes: within their first few replies
 
 const nodeHash = key => crypto.createHash('sha1').update(key).digest('hex').slice(0, 10);
 
@@ -96,6 +98,38 @@ export function sparringPositions(clash, myColor, max = MAX_SPARRING) {
   return out.sort((a, b) => b.ply - a.ply).slice(0, max);
 }
 
+/** Shallow "if they deviate immediately" positions: an early branch point
+ * where the opponent has more than one real reply, so their second (or
+ * later) most common try gets rehearsed too, not only their main line (which
+ * the line flashcards already cover) and not only the deep, tree-exhausted
+ * middlegames sparringPositions finds. The likeliest early surprise against a
+ * player the student has not faced before is not a resource shortage ten
+ * moves in; it is move two or three going somewhere unexpected. */
+export function earlyDeviationPositions(clash, myColor, max = MAX_EARLY_SPARRING) {
+  const root = clash?.forests?.[myColor];
+  if (!root) return [];
+  const out = [];
+  const walk = (node, path) => {
+    if (!node || node.transposesTo || node.ply >= EARLY_PLY) return;
+    if (node.mover === 'opponent' && node.edges.length >= 2) {
+      // The first (most-weighted) edge is already the line the flashcards and
+      // deep sparring follow; the rest is the real, data-backed surprise.
+      for (const e of node.edges.slice(1)) {
+        const nextPath = [...path, e.san];
+        out.push({
+          fen: e.fenAfter, path: nextPath, sanLine: fmtLine(nextPath), side: myColor, ply: node.ply + 1,
+          reason: `a real but less common try here${e.share != null ? ` (${e.share}% of their games)` : ''}, not their main line`,
+        });
+      }
+    }
+    for (const e of node.edges) walk(e.child, [...path, e.san]);
+  };
+  walk(root, []);
+  return out.sort((a, b) => a.ply - b.ply).slice(0, max);
+}
+
+const dedupByFen = positions => { const seen = new Set(); return positions.filter(p => (seen.has(p.fen) ? false : (seen.add(p.fen), true))); };
+
 /** Everything the Prepare page needs for one opponent in one colour. */
 export async function buildPrep({ uid, subject, myColor, tc = 'all', settings, visitor = false }) {
   const oppColor = myColor === 'white' ? 'black' : 'white';
@@ -124,7 +158,7 @@ export async function buildPrep({ uid, subject, myColor, tc = 'all', settings, v
   const punish = visitor
     ? (await visitorDrills(30, undefined, { subject, color: oppColor })).due
     : (await dueDrills(30, { subject, color: oppColor, userId: uid })).due;
-  const sparring = clash ? sparringPositions(clash, myColor) : [];
+  const sparring = clash ? dedupByFen([...earlyDeviationPositions(clash, myColor), ...sparringPositions(clash, myColor)]) : [];
   const marks = visitor ? {} : (await getDrills(uid)).prep || {};
   const deckIds = [...lines, ...punish].map(d => d.id);
   const done = deckIds.filter(id => (marks[id]?.right || 0) > 0).length;

@@ -48,6 +48,29 @@ export async function subjectFideId(subject) {
   return lookupFideId(await getPlayers(), subject);
 }
 
+/** Deviations from the predicted tree that recurred across more than one game
+ * against this opponent, grouped by who left it and the move (a proxy for
+ * "the same position, the same surprise" without a full FEN comparison).
+ * Without this, a rematch's prep sheet has no memory of a deviation the
+ * opponent has already sprung more than once: it reads as new information
+ * each time instead of a pattern to specifically watch for. */
+function repeatedDeviations(games) {
+  const byKey = new Map();
+  for (const g of games) {
+    const p = g.prediction;
+    if (!p || p.held || !p.san || !p.by) continue;
+    const key = `${p.by}:${p.san}:${p.leftAtPly}`;
+    (byKey.get(key) || byKey.set(key, []).get(key)).push(g);
+  }
+  return [...byKey.entries()]
+    .filter(([, list]) => list.length >= 2)
+    .map(([key, list]) => {
+      const [by, san, leftAtPly] = key.split(':');
+      return { by, san, leftAtPly: Number(leftAtPly), moveNo: Math.ceil(Number(leftAtPly) / 2), count: list.length, dates: list.map(g => g.date).filter(Boolean) };
+    })
+    .sort((a, b) => b.count - a.count);
+}
+
 /** The viewer's own games against a subject, newest first, with the opening
  * line and how each went: the record a player wants at the top of a dossier.
  * Matches on the opponent's name, or on FIDE id when either side carries one. */
@@ -90,7 +113,7 @@ export async function headToHead(userId, subject, fideId = null) {
     leftByThem: checked.filter(g => g.prediction.by === 'opponent' && !g.prediction.held).length,
     leftByYou: checked.filter(g => g.prediction.by === 'student' && !g.prediction.held).length,
   } : null;
-  return { games, record, prediction };
+  return { games, record, prediction, recurringDeviations: repeatedDeviations(games) };
 }
 
 export async function gamesForSubject(subject) {

@@ -439,6 +439,7 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
     cite('F', 'habit', `scores ${pctText(f.inBook.scorePct)} inside their main lines (${f.inBook.games} games) and ${pctText(f.outOfBook.scorePct)} outside them (${f.outOfBook.games} games)`),
     cite('F', 'habit', `castling as White ${castle(f.castling.white)}, as Black ${castle(f.castling.black)}; opposite-side castling in ${pctText(f.oppositeCastlingPct)} of games`),
     cite('F', 'habit', `queens traded in ${pctText(f.queenTrade.pct)} of games${f.queenTrade.medianMove ? `, typically by move ${f.queenTrade.medianMove}` : ''}; draw rate ${pctText(f.drawRate.white)} as White, ${pctText(f.drawRate.black)} as Black`),
+    ...(f.clockByMove?.length ? [cite('F', 'pacing', `typical clock (median, their own games): ${f.clockByMove.map(c => `${Math.round(c.medianSeconds / 60)} min by move ${c.move}`).join(', ')}`)] : []),
   ] : [];
 
   const clash = (extra.clashLines || []).map(l => cite('C', 'predicted line',
@@ -446,6 +447,12 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
 
   const h2h = (extra.headToHead?.games || []).slice(0, 6).map(g => cite('H', 'head to head',
     `${g.date || 'undated'}, student as ${g.color}, ${g.result}${g.line?.length ? `, ${lineText(g.line)}` : ''}${g.accuracy != null ? `, accuracy ${g.accuracy}%` : ''}${g.moments != null ? `, ${g.moments} critical moment${g.moments === 1 ? '' : 's'}` : ''}`, `#/game/${g.gameId}`));
+  // A deviation from the predicted tree that has happened more than once
+  // against this opponent is a pattern worth a specific watch_for, not just
+  // "the prediction has held N of M times": without this, a rematch's sheet
+  // has no memory that they have already sprung this exact surprise before.
+  const recurring = (extra.headToHead?.recurringDeviations || []).map(d => cite('H', 'recurring deviation',
+    `${d.by === 'opponent' ? 'they' : 'you'} left the predicted line with ${d.san} around move ${d.moveNo} in ${d.count} of your games against them (${d.dates.join(', ') || 'undated'}): not a one-off`));
 
   const tm = report.timeManagement;
   const clock = tm ? [cite('K', 'clock', `${tm.comfortBlunders} mistakes with over 5 minutes left, ${tm.underTwoMinMoments} mistakes under 2 minutes, ${tm.fastMoments} failed snap-moves (${tm.movesWithClock} moves with clocks)`)] : [];
@@ -481,7 +488,7 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
     ...(tend.length ? [section('How the evaluation goes in their games', tend)] : []),
     ...(habits.length ? [section('Habits over their whole history', habits)] : []),
     ...(clash.length ? [section(`Predicted opening lines between the student and ${subject} (from real games; each note says why the prediction ends)`, clash)] : []),
-    ...(h2h.length ? [section(`The student's own games against ${subject}`, h2h)] : []),
+    ...(h2h.length ? [section(`The student's own games against ${subject}`, [...h2h, ...recurring])] : []),
     ...(student.length ? [section('The student', student)] : []),
     clock.length ? clock[0] : 'No clock data.',
   ].join('\n\n');

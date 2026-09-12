@@ -214,8 +214,16 @@ export async function prepView(root, subjectEnc, query) {
   // --- sparring: play a predicted position out against the engine -------------
   function sparringList() {
     if (!deck.sparring.length) return '';
+    // Playing out these middlegames is training against "someone their rating",
+    // not "someone who plays like them": the engine strength comes from their
+    // Elo alone, so at least name the eval-curve habit that should shape how
+    // the student handles it (press for complications, or expect a grind).
+    const t = report.tendencies;
+    const styleNote = t?.games && t.conversion.rate != null && t.hold.rate != null
+      ? ` They convert clearly winning positions ${t.conversion.rate}% of the time and hold clearly lost ones ${t.hold.rate}% of the time: complicate if you are worse against a poor defender, keep it simple if you are better against a poor converter.`
+      : '';
     return `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">Play a predicted position out</h3>
-      <p class="muted">The positions where the prediction runs out, deepest first: the middlegames you are likeliest to reach against ${esc(subject)}. Play them out against the engine at ${book?.currentElo ? `their strength (~${book.currentElo})` : 'your level'}${session.user?.role === 'visitor' || !clash ? '' : ''}.</p>
+      <p class="muted">Early ones first: a real but less common try from ${esc(subject)} in the first few moves, so a surprise early on is rehearsed too. Then the positions where the prediction runs out, deepest first: the middlegames you are likeliest to reach. Play them out against the engine at ${book?.currentElo ? `their strength (~${book.currentElo})` : 'your level'}${session.user?.role === 'visitor' || !clash ? '' : ''}.${styleNote}</p>
       <ul style="padding-left:18px">${deck.sparring.map((s, i) => `<li style="margin:4px 0"><code>${esc(s.sanLine)}</code> <small class="muted">${esc(s.reason)}</small> <button class="small" data-spar="${i}">Play it out</button></li>`).join('')}</ul>
       <div id="spar-area"></div></div>`;
   }

@@ -68,9 +68,14 @@ export function headToHeadCard(h2h, open = true) {
   </tr>`).join('');
   const p = h2h.prediction;
   const predNote = p ? `<p class="muted" style="margin:0 0 8px"><small>Opening prediction against them: held to move 6 or beyond in ${p.heldToMove6} of ${p.games} game${p.games === 1 ? '' : 's'}, median ${p.medianPlies} plies on a predicted line${p.leftByThem ? `; they left the predicted lines ${p.leftByThem} time${p.leftByThem === 1 ? '' : 's'}` : ''}${p.leftByYou ? `; you left your own lines ${p.leftByYou} time${p.leftByYou === 1 ? '' : 's'}` : ''}. Use it to judge how much to trust the predicted lines.</small></p>` : '';
+  // A deviation that has happened more than once against this exact opponent
+  // is a pattern to expect again, not a one-off from a single past game.
+  const recurring = (h2h.recurringDeviations || []).map(d => `<li>${d.by === 'opponent' ? 'They' : 'You'} left the predicted line with ${esc(d.san)} around move ${d.moveNo}, in ${d.count} of your games${d.dates.length ? ` (${d.dates.map(esc).join(', ')})` : ''}.</li>`).join('');
+  const recurringNote = recurring ? `<p class="muted" style="margin:0 0 4px"><small><b>Watch for:</b> a deviation you have seen before against them:</small></p><ul class="muted" style="margin:0 0 8px; font-size:13px">${recurring}</ul>` : '';
   return `<details class="acc"${open ? ' open' : ''}><summary><span class="acc-title">Head to head</span> <span class="muted" style="font-size:13px">${r.games} game${r.games === 1 ? '' : 's'}: ${r.wins}W ${r.draws}D ${r.losses}L${r.scorePct != null ? `, ${r.scorePct}%` : ''}</span></summary>
     <div class="acc-body">
       ${predNote}
+      ${recurringNote}
       <table><thead><tr><th>Date</th><th>You</th><th>Result</th><th>Opening</th><th class="num">Accuracy</th><th class="num">Moments</th><th>Event</th></tr></thead><tbody>${rows}</tbody></table>
       ${h2h.games.length > 10 ? `<p class="muted"><small>Showing the latest 10 of ${h2h.games.length}.</small></p>` : ''}
     </div></details>`;
@@ -111,6 +116,7 @@ export function habitTiles(f) {
     ${tile(pc(f.oppositeCastlingPct), 'Opposite-side castling')}
     ${tile(pc(f.queenTrade.pct), `Queens traded${f.queenTrade.medianMove ? `, typically by move ${f.queenTrade.medianMove}` : ''}`)}
     ${tile(f.firstCaptureMedianMove ?? '–', 'First capture (median move)')}
+    ${f.clockByMove?.length ? tile(`${Math.round(f.clockByMove[f.clockByMove.length - 1].medianSeconds / 60)} min`, `Typically left by move ${f.clockByMove[f.clockByMove.length - 1].move}`, `Median clock in their own games: ${f.clockByMove.map(c => `${Math.round(c.medianSeconds / 60)} min by move ${c.move}`).join(', ')}`) : ''}
   </div>
   <p class="muted" style="margin:6px 0 0"><small>From the game records of ${f.games} games in the recency window, no engine: every rate carries its game count.</small></p>`;
 }

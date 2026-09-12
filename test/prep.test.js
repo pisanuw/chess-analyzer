@@ -16,7 +16,7 @@ writeGame(dir, own);
 
 const { parseGame } = await import('../server/pgn.js');
 const { buildStudentIndex, buildOpponentIndex, assembleClashForest } = await import('../server/clash.js');
-const { buildLineDrills, sparringPositions } = await import('../server/prep.js');
+const { buildLineDrills, sparringPositions, earlyDeviationPositions } = await import('../server/prep.js');
 const { syncAllDrills } = await import('../server/drills.js');
 const { app } = await import('../server/index.js');
 const server = app.listen(0, '127.0.0.1');
@@ -54,6 +54,28 @@ test('line flashcards follow the predicted lines and ask for the student\'s own 
   assert.equal(buildLineDrills(clash, 'white', 'Opp', '777').length, 0, 'no white games: no white cards');
   const spar = sparringPositions(clash, 'black');
   assert.ok(spar.length >= 1 && spar[0].fen && spar[0].sanLine.startsWith('1.e4 c6'), 'sparring starts from a predicted position');
+});
+
+test('earlyDeviationPositions rehearses a real but less common opponent try, not just their main line', async () => {
+  const student = buildStudentIndex([
+    studentGame('black', ['e4', 'c6']), studentGame('black', ['e4', 'e5']),
+  ]);
+  // Opponent plays 1.e4 mostly, but 1.d4 often enough (2 of 5) to be a real,
+  // data-backed second try, not a one-off.
+  const book = {
+    fideId: '888', name: 'Opp', importedAt: 'x',
+    games: [
+      bookGame('white', ['e4', 'c6']), bookGame('white', ['e4', 'c6']), bookGame('white', ['e4', 'c6']),
+      bookGame('white', ['d4', 'd5']), bookGame('white', ['d4', 'd5']),
+    ],
+  };
+  const { index, coverage } = await buildOpponentIndex(book, { scoutMaxAgeYears: 3, scoutHalfLifeDays: 540 }, { now: new Date('2026-09-01') });
+  const clash = assembleClashForest({ oppIndex: index, coverage, student, book });
+  const early = earlyDeviationPositions(clash, 'black');
+  assert.ok(early.length >= 1, 'the less common try is surfaced');
+  assert.ok(early.every(e => e.side === 'black'), "it is the student's move at the given position");
+  assert.ok(early.some(e => e.sanLine.startsWith('1.d4')), '1.d4, not their main line 1.e4, is the surprise rehearsed');
+  assert.ok(early[0].reason.includes('less common'));
 });
 
 test('upcoming games: add, list soonest first, remove, validate', async () => {
@@ -115,9 +137,16 @@ test('the game view reports whether the opening prediction held, given a booked 
   await ensureClashIndex('424242', { now: new Date('2026-09-01') });
   // Two analysed own games as Black give the student a line; the game under test answers 1.e4 with 1...c5, off the tree.
   const mk = (id, sans) => { const g = studentGame('black', sans); return { ...makeGame({ id, color: 'black', moments: [] }), moves: g.analysis.moves, analysis: { ...g.analysis, summary: { moments: [], player: 'black', white: {}, black: {} } }, headers: { White: 'Karpov, A', Black: 'Kai Pisan', Result: '0-1', Date: '2026.04.04' } }; };
+  // Three games on the main line, so excluding any one of them (predictionFor
+  // rebuilds the index without the game under test) still leaves the other
+  // two, safely above the 2-game root-move threshold.
   writeGame(dir, mk('a1a1a1a1a101', ['e4', 'e5', 'Nf3', 'Nc6']));
   writeGame(dir, mk('a1a1a1a1a102', ['e4', 'e5', 'Nf3', 'Nc6']));
+  writeGame(dir, mk('a1a1a1a1a105', ['e4', 'e5', 'Nf3', 'Nc6']));
   writeGame(dir, mk('a1a1a1a1a103', ['e4', 'c5', 'Nf3', 'd6']));
+  // A second game with the exact same deviation (1...c5 at the same ply): a
+  // repeated pattern against this opponent, not a one-off.
+  writeGame(dir, mk('a1a1a1a1a104', ['e4', 'c5', 'Nf3', 'e6']));
   const off = await predictionFor(await (await import('../server/store.js')).getGame('a1a1a1a1a103'), 'kai', '424242');
   assert.ok(off, 'a fresh clash index gives a verdict');
   assert.equal(off.leftAtPly, 2);
@@ -128,4 +157,8 @@ test('the game view reports whether the opening prediction held, given a booked 
   const h2h = (await (await json('GET', '/api/scout/' + encodeURIComponent('Karpov, A'))).json()).headToHead;
   assert.ok(h2h.prediction && h2h.prediction.games >= 3, 'the head-to-head aggregates prediction quality');
   assert.ok(h2h.games.every(g => g.prediction), 'every head-to-head game carries its verdict');
+  assert.equal(h2h.recurringDeviations.length, 1, 'the same deviation (1...c5) across two games is a pattern');
+  assert.equal(h2h.recurringDeviations[0].san, 'c5');
+  assert.equal(h2h.recurringDeviations[0].by, 'student');
+  assert.equal(h2h.recurringDeviations[0].count, 2);
 });

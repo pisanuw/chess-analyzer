@@ -1,3 +1,10 @@
+## 2026-09-12 (Implementing the improvement report: pedagogy, part 2)
+
+- Sparring at the opponent's Elo alone trains against "someone their rating," not "someone who plays like them": the Prepare page's "Play a predicted position out" card now names their conversion and hold rates (from `report.tendencies`, already computed) so the plan (complicate, or keep it simple) matches their documented style, not just their number.
+- A new `earlyDeviationPositions` (`server/prep.js`) rehearses a real but less common opponent try in the first few moves, not only the deep, tree-exhausted middlegames `sparringPositions` finds: the likeliest surprise against someone new is move two or three going somewhere unexpected, not a resource shortage ten moves in.
+- Whole-history book features (`server/clashindex.js` `featureCollector`) now derive a median-clock-by-move pacing curve from the subject's own PGNs (they often carry `%clk` even though the compact book keeps only the opening SAN), cited in the prep-sheet prompt and shown as a habit tile, alongside the existing blunder-under-time-pressure counts (a different question: not "did a short clock cause a mistake" but "when do they typically get short at all").
+- Head-to-head deviations that recur across more than one game against the same opponent (`server/subjects.js` `repeatedDeviations`) are now their own citable fact and a head-to-head card note, so a second prep sheet for a rematch can flag "you have seen this surprise before" instead of treating it as new each time.
+
 ## 2026-09-12 (Implementing the improvement report: pedagogy, part 1)
 
 - Elo-banded the opening-clash index and book repertoire shares (`server/clashindex.js` `buildOpponentIndex`, `server/scoutbook.js` `scoutDossier`'s repertoire loop): both used to weight only by recency, so a predicted line or a repertoire share could be dominated by games from a materially different version of the opponent; now they use the same Elo-band filter scoutDossier's analysed subset already applied.

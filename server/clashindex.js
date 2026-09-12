@@ -129,6 +129,8 @@ const RATING_GAP = 50;      // "higher rated" means at least this much above the
 const MAIN_LINES = 3;       // a game is "in book" when its 8-ply position is one of the subject's top lines per colour
 const FORM_GAMES = 10;      // form: the last this-many dated games
 const RECENT_DAYS = 90;     // ...and how many games in this window
+const CLOCK_CHECKPOINTS = [10, 20, 30, 40]; // move numbers for the pacing curve
+const MIN_CLOCK_SAMPLES = 5; // a checkpoint needs at least this many games with a clock, or it is noise, not a tendency
 
 function featureCollector(games, now, maxDays, halfLife) {
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
@@ -149,6 +151,7 @@ function featureCollector(games, now, maxDays, halfLife) {
     oppositeCastling: 0, queenTrades: 0, queenTradePlies: [], firstCapturePlies: [], plies: [],
     vsHigher: tally(), vsLower: tally(), vsLevel: tally(),
     inBook: tally(), outOfBook: tally(),
+    clockByCheckpoint: new Map(CLOCK_CHECKPOINTS.map(cp => [cp, []])), // move number -> [seconds left, one per game with data]
   };
   return {
     parsed(g, pg) {
@@ -169,6 +172,18 @@ function featureCollector(games, now, maxDays, halfLife) {
       if (castle.white && castle.black && castle.white !== castle.black) f.oppositeCastling++;
       if (queenTrade != null) { f.queenTrades++; f.queenTradePlies.push(queenTrade); }
       if (firstCapture != null) f.firstCapturePlies.push(firstCapture);
+      // Pacing curve: the subject's own clock reading nearest each checkpoint
+      // move (their PGNs often carry %clk even though the compact book keeps
+      // only the opening SAN). A blunder-under-time-pressure count says how
+      // often a short clock caused a mistake; this says when they typically
+      // get short at all, so a plan can aim for a long grind or a sharp shot.
+      const ownMoves = pg.moves.filter(m => m.color === color && m.clock != null);
+      if (ownMoves.length) {
+        for (const cp of CLOCK_CHECKPOINTS) {
+          const atOrBefore = ownMoves.filter(m => m.moveNumber <= cp);
+          if (atOrBefore.length) f.clockByCheckpoint.get(cp).push(atOrBefore[atOrBefore.length - 1].clock);
+        }
+      }
       if (g.subjectElo && g.oppElo) {
         const gap = g.oppElo - g.subjectElo;
         add(gap >= RATING_GAP ? f.vsHigher : gap <= -RATING_GAP ? f.vsLower : f.vsLevel, score);
@@ -193,6 +208,10 @@ function featureCollector(games, now, maxDays, halfLife) {
         vsHigher: rate(f.vsHigher), vsLower: rate(f.vsLower), vsLevel: rate(f.vsLevel),
         inBook: rate(f.inBook), outOfBook: rate(f.outOfBook),
         form: { ...rate(form), recentGames: recent, days: RECENT_DAYS },
+        clockByMove: CLOCK_CHECKPOINTS.map(cp => {
+          const samples = f.clockByCheckpoint.get(cp);
+          return { move: cp, medianSeconds: samples.length >= MIN_CLOCK_SAMPLES ? median(samples) : null, games: samples.length };
+        }).filter(c => c.medianSeconds != null),
       };
     },
   };

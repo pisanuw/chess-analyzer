@@ -35,6 +35,10 @@ on a phone). It must be scannable in seconds, not read like an essay.
   their history is a weaker guide than usual (a large swing), say so in the
   sheet (the headline or a watch_for is the natural place): the opponent who
   shows up may play better, or worse, than the rest of the dossier suggests.
+- An H fact can name a "recurring deviation": a move that has taken a real
+  game off the predicted tree more than once against this exact opponent. If
+  one is given, it belongs in watch_fors: it is a pattern in this specific
+  matchup, not a one-off from a single past game.
 
 ## Style
 
