@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-12 (Lint, prose check, CI, docs)
+
+- `npm run lint`: a minimal eslint flat config (`eslint.config.js`: no-undef, no-unused-vars, eqeqeq, prefer-const, and a few bug catchers, nothing stylistic; browser globals for `public/`, node for the rest, service-worker for `public/sw.js`) plus `scripts/check-prose.js`, which fails on an em dash in any prose, UI, or prompt file. The first lint run found a real bug: the Drills page shadowed the imported `session` with its local session tally, so the visitor copy never showed.
+- CI (`.github/workflows/test.yml`) runs lint, the unit suite, and the browser smoke test (Playwright's Chromium is installed in the job).
+- README, CLAUDE.md, and BRIEFING.md describe the current app (Prepare flow, prediction check, ease and calibration, typed moves, viewing as, offline drills, the parsed-game cache and memo, the clock rule for time pressure, the lint step); IMPROVEMENT-REPORT.md carries a status note saying what shipped and what was left.
+
 ## 2026-09-12 (Frontend: typed moves, keyboard map, viewing as a member, charts that resize, contrast and focus, Players table, main lines only, offline drills)
 
 - Every board that takes a move (drills, puzzles, the prep deck, the game view's guess and play-out flows) has a text box under it: type a move in algebraic notation (Nf3, exd5, O-O, e8=Q) and press Enter. Faster for a strong player, keyboard-only, and the accessible alternative to dragging; an illegal move shakes the box and is flagged for screen readers. The board itself carries a label. (`Board` in `public/board.js`, option `input: true`.)

@@ -3,7 +3,7 @@
 // dossier, and prep sheets (generation and requests).
 import crypto from 'node:crypto';
 import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from '../pgn.js';
-import { getSettings, listAllGames, getGame, saveGame, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, getClashNotes, saveClashNotes, DEFAULT_USER } from '../store.js';
+import { getSettings, listAllGames, getGame, saveGame, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, getClashNotes, saveClashNotes } from '../store.js';
 import { parseFideFromFilename, buildScoutBook, scoutDossier } from '../scoutbook.js';
 import { loadStudentGames, buildStudentIndex, assembleClashForest, extendClashLeaves, clashPrincipalLines, clashNoteKey } from '../clash.js';
 import { assocsFromHeaders, recordAssociations, lookupFideId } from '../players.js';

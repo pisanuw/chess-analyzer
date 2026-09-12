@@ -9,6 +9,8 @@
     "samples": "node scripts/make-samples.js 3 > samples/sample-games.pgn",
     "test": "node --test 'test/*.test.js'",
     "test:ui": "node test/ui/smoke.mjs",
+    "lint": "eslint . && node scripts/check-prose.js",
+    "check:prose": "node scripts/check-prose.js",
     "pull-data": "git -C data pull --rebase",
     "push-data": "git -C data add -A && (git -C data diff --cached --quiet || git -C data commit -m sync) && git -C data push",
     "sync": "npm run pull-data && npm start",
@@ -43,6 +45,8 @@
     "node": ">=20"
   },
   "devDependencies": {
+    "eslint": "9.39.1",
+    "globals": "16.4.0",
     "playwright": "^1.63.0"
   }
 }

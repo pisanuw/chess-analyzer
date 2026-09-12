@@ -68,7 +68,8 @@ export function aggregateGames(games) {
   const timeline = [];
   const perGameCats = []; // per-game category weights, chronological, for the trend
   const time = { moves: 0, momentSpentTotal: 0, momentSpentN: 0, otherSpentTotal: 0, otherSpentN: 0, comfortBlunders: 0, underTwoMin: 0, fastMoments: 0 };
-  let timePressure = 0, totalMoments = 0, totalJudged = { inaccuracy: 0, mistake: 0, blunder: 0 };
+  let timePressure = 0, totalMoments = 0;
+  const totalJudged = { inaccuracy: 0, mistake: 0, blunder: 0 };
 
   for (const g of [...games].sort((a, b) => (a.headers.Date || '').localeCompare(b.headers.Date || '') || a.importedAt.localeCompare(b.importedAt))) {
     const color = g.playerColor;
