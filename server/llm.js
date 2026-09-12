@@ -5,6 +5,35 @@ import os from 'node:os';
 
 export class LlmError extends Error {}
 
+/** Turn a raw CLI failure into a message the person at the screen can act on.
+ * The common cases have known shapes: a missing binary (ENOENT), a hung call
+ * (execFile kills at timeoutMs), the subscription usage limit ("Claude AI
+ * usage limit reached|<epoch>" with the reset time), a signed-out CLI, and a
+ * transient overload. Anything unrecognised keeps the raw detail. Exported
+ * for the tests. */
+export function classifyCliFailure(detail, err, timeoutMs) {
+  const d = String(detail || '');
+  if (err?.code === 'ENOENT') {
+    return new LlmError('The claude CLI is not installed or not on PATH. Install Claude Code and sign in once, or switch the LLM provider to manual in Settings.');
+  }
+  if (err?.killed || err?.signal === 'SIGTERM') {
+    return new LlmError(`The claude CLI did not respond within ${Math.round((timeoutMs || 0) / 1000)}s and was stopped. It may be offline or busy; this call is retried once automatically, so try again in a few minutes if the error persists.`);
+  }
+  const lim = d.match(/usage limit reached\|?(\d{10,13})?/i);
+  if (lim || /rate.?limit|quota exceeded|out of extra usage/i.test(d)) {
+    const raw = lim?.[1];
+    const reset = raw ? new Date(+raw * (raw.length === 10 ? 1000 : 1)) : null;
+    return new LlmError(`Claude subscription usage limit reached${reset ? `; it resets around ${reset.toLocaleString()}` : ' (it resets on a rolling schedule, usually within a few hours)'}. Nothing is lost: retry the failed jobs or buttons after the reset.`);
+  }
+  if (/not logged in|logged out|please log ?in|invalid api key|authentication|unauthorized/i.test(d)) {
+    return new LlmError('The claude CLI is signed out. Run `claude` in a terminal, complete the sign-in, and retry.');
+  }
+  if (/overloaded|529/i.test(d)) {
+    return new LlmError('Claude is temporarily overloaded. This call is retried once automatically; try again in a few minutes if the error persists.');
+  }
+  return new LlmError(`claude CLI failed: ${d.slice(0, 500)}`);
+}
+
 /** Run `claude -p` with a system prompt and a JSON schema; returns the parsed structured output. */
 export function claudeCli({ system, prompt, schema, model, timeoutMs = 180000 }) {
   const args = [
@@ -20,11 +49,13 @@ export function claudeCli({ system, prompt, schema, model, timeoutMs = 180000 })
     execFile('claude', args, { cwd: os.tmpdir(), maxBuffer: 10 * 1024 * 1024, timeout: timeoutMs }, (err, stdout, stderr) => {
       if (err) {
         const detail = (stderr || stdout || err.message).toString().slice(0, 500);
-        return reject(new LlmError(`claude CLI failed: ${detail}`));
+        return reject(classifyCliFailure(detail, err, timeoutMs));
       }
       let data;
       try { data = JSON.parse(stdout); } catch { return reject(new LlmError('claude CLI returned non-JSON output: ' + stdout.slice(0, 300))); }
-      if (data.is_error) return reject(new LlmError('claude CLI error: ' + (data.result || '').slice(0, 300)));
+      // The usage limit usually arrives this way: exit 0, is_error true, and
+      // the reset time in the result text.
+      if (data.is_error) return reject(classifyCliFailure(data.result || 'unknown error', null, timeoutMs));
       const out = data.structured_output || tryParse(data.result);
       if (!out) return reject(new LlmError('claude CLI returned no structured output: ' + (data.result || '').slice(0, 300)));
       resolve({ output: out, costUsd: data.total_cost_usd ?? null, model: Object.keys(data.modelUsage || {}).join(',') });

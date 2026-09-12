@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-12 (Readable messages when the claude CLI fails)
+
+- A claude CLI failure used to surface as raw stderr ("claude CLI failed: Command failed: ..."). `classifyCliFailure` in `server/llm.js` now maps the known shapes to messages the person at the screen can act on: a missing binary says install or switch to manual; a call killed at the timeout says how long it waited and that one retry is automatic; the subscription usage limit ("Claude AI usage limit reached|<epoch>", whether it arrives as a non-zero exit or an `is_error` envelope) names the reset time from the epoch, or the rolling schedule when there is none, and says the failed jobs can simply be retried after; a signed-out CLI says to run `claude` and sign in; a 529 overload is named as transient. Unrecognised failures keep their raw detail. These messages flow through the existing surfaces unchanged: job-failure toasts, the jobs list, and the error a button reports.
+
 ## 2026-09-12 (One Admin card for all home-machine claude analysis)
 
 - The Admin page gains "Claude analysis (home machine)": one card listing everything the claude subscription and the engine still owe, with a run button per row. `GET /api/admin/analysis-status` (admin) reports analysed games with unexplained moments (own and scout), opening-clash narrations that are missing, format-outdated, or older than a re-imported book (one per book and member, since the clash crosses each member's own openings with the book), and pattern notes awaiting synthesis; the endpoint only reports, so nothing starts by accident. "Explain all" queues the existing jobs (progress in the header). "Extend & narrate all" walks the pending book-member pairs sequentially: the engine first fills the prep-end leaves (`?extend=1`, cache-first), then the coach narrates the key lines, with a live progress line and per-item failures logged and skipped. "Synthesize" runs the new `POST /api/admin/pattern-notes/sync` (the same sync the explain job runs, across all members). Prep sheets stay on the Players page, referenced from the card.
