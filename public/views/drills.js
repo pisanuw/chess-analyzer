@@ -31,10 +31,10 @@ export async function drillsView(root, query) {
   const canPlayout = !!status.engineOk && !status.readonly;
   let idx = 0;
   let board = null;
-  let state = null; // { drill, status, verdict, game, hintShown, startedAt, answerMs, timer, playout }
+  let state = null; // { drill, status, verdict, game, hintShown, startedAt, answerMs, timer, playout, confidence, note, explainDone, pendingRes }
   let lastGraded = null; // { id, idx, correct, missedAdded } for undo
   let patternNotes = null; // lazy cache of synthesized pattern notes
-  const session = { attempts: 0, correct: 0, missed: [], times: [], decoys: { seen: 0, right: 0 } };
+  const session = { attempts: 0, correct: 0, missed: [], times: [], decoys: { seen: 0, right: 0 }, conf: {} };
 
   const title = lightning ? 'Lightning round' : categoryRound ? 'Category round' : subjectRound ? `Prep round: ${subjectRound}` : 'Drills';
   const intro = subjectRound
@@ -45,7 +45,7 @@ export async function drillsView(root, query) {
     ? `<p class="muted">Every drill of the pattern "${esc(lightning)}", back to back. Blocked practice: passes here do not advance the spaced-repetition ladder, but a miss still resets its drill. <a href="#/drills">Back to normal drills</a>.</p>`
     : categoryRound
       ? `<p class="muted">Every drill in the category "${esc(CATEGORY_LABEL[categoryRound] || categoryRound)}", back to back. Blocked practice: the ladder is untouched, but a miss still resets its drill. <a href="#/drills">Back to normal drills</a>.</p>`
-      : `<p class="muted">Positions from your own games where you went wrong. Find the engine's move, then grade how well you knew it. Correct moves move up the ladder (1, 3, 7, 14, 30, 60 days); a miss comes back at the end of the same session. Quiet-position checks are mixed in: sometimes your game move was fine, and saying so is the right answer.</p>`;
+      : `<p class="muted">Positions from your own games where you went wrong. Find the engine's move, then grade how well you knew it. Say how sure you are before the answer shows, and on a miss write what you missed before reading the coach. Correct moves move up the ladder (1, 3, 7, 14, 30, 60 days, stretched or shortened by how easy each drill has proved for you); a miss comes back at the end of the same session. Quiet-position checks are mixed in: sometimes your game move was fine, and saying so is the right answer.</p>`;
   root.innerHTML = `
     <div class="row" style="justify-content: space-between"><h1 style="margin:0">${title}</h1>
       <span class="row" style="gap:8px"><button class="small" id="undo-last" hidden title="Revert the last grade and revisit that drill">Undo last grade</button><span class="muted" id="counts"></span></span></div>
@@ -120,6 +120,7 @@ export async function drillsView(root, query) {
       playout: playout ? { fen: drill.fen, sans: [], over: null, busy: false, startWp: winProb((drill.lines[0]?.cp ?? 0) * sign) } : null,
       verdict: null, game: null, follow: null, hintShown: false,
       startedAt: Date.now(), answerMs: null, timer: null,
+      confidence: null, note: null, explainDone: false, pendingRes: null,
       // Vary how deep the follow-ups go (max, or one shorter) so repeated reps
       // train the method, not a fixed "and then this exact move" sequence.
       followCap: Math.max(1, maxFollowFor(drill) - Math.round(Math.random())),
@@ -165,7 +166,8 @@ export async function drillsView(root, query) {
     return `<div class="card" style="margin-bottom: 12px"><h3 style="margin-top:0">Session done</h3>
       ${session.attempts ? `<p>${session.attempts} answer${session.attempts === 1 ? '' : 's'}, ${session.correct} correct (${pct}%).${avgSecs != null ? ` About ${avgSecs}s per answer.` : ''}</p>` : ''}
       ${missed ? `<p class="muted">Missed on the first try: ${missed}.</p>` : (session.attempts ? '<p class="muted">Clean session, nothing missed.</p>' : '')}
-      ${session.decoys.seen ? `<p class="muted">Quiet-position check: ${session.decoys.right} of ${session.decoys.seen} handled correctly (these were positions where your game move was fine).</p>` : ''}</div>`;
+      ${session.decoys.seen ? `<p class="muted">Quiet-position check: ${session.decoys.right} of ${session.decoys.seen} handled correctly (these were positions where your game move was fine).</p>` : ''}
+      ${Object.keys(session.conf).length ? `<p class="muted">Calibration: ${['sure', 'likely', 'guess'].filter(k => session.conf[k]).map(k => `${k} ${session.conf[k].right} of ${session.conf[k].n} right`).join(', ')}.${session.conf.sure && session.conf.sure.right < session.conf.sure.n ? ' A "sure" miss is a belief to correct: the report lists them.' : ''}</p>` : ''}</div>`;
   }
 
   function reveal(verdict) {
@@ -285,7 +287,31 @@ export async function drillsView(root, query) {
     const res = await applyMove(d.fen, orig, dest);
     if (!res) return board.set(d.fen, { movableFor: d.sideToMove }); // dismissed promotion
     clearTimer();
-    if (state.answerMs == null) state.answerMs = Date.now() - state.startedAt; // time to the FIRST answer, not to the end of follow-ups
+    if (state.answerMs == null) state.answerMs = Date.now() - state.startedAt; // time to the FIRST answer, not to the end of follow-ups (or the confidence question)
+    // Confidence is asked once, after the move is committed and before anything
+    // is revealed; the review stores it and the report compares it with the outcome.
+    if (!state.confidence) {
+      state.pendingRes = res;
+      state.status = 'confidence';
+      board.set(res.fen, { lastMove: res.uci });
+      renderPanel();
+      return;
+    }
+    return resolveGuess(res);
+  }
+
+  function setConfidence(c) {
+    if (!state || state.status !== 'confidence') return;
+    state.confidence = c;
+    state.status = 'guessing';
+    const res = state.pendingRes;
+    state.pendingRes = null;
+    resolveGuess(res);
+  }
+
+  /** Score a committed move against the drill's accepted lines and reveal. */
+  async function resolveGuess(res) {
+    const d = state.drill;
     const correct = d.acceptedUci.includes(res.uci);
     const rank = d.lines.findIndex(l => l.uci === res.uci);
     let text;
@@ -360,6 +386,16 @@ export async function drillsView(root, query) {
         board.set(d.fen, { movableFor: d.sideToMove });
         renderPanel();
       };
+      return;
+    }
+    if (state.status === 'confidence') {
+      pane.innerHTML = `<div class="guess"><b>You played ${esc(state.pendingRes.san)}. How sure are you?</b>
+        <p class="muted">Say it before the answer shows: the report compares what you said with what happened, and a "sure" miss is the first thing to study.</p>
+        <div class="row" style="gap:6px">
+          <button data-conf="sure">Sure <span class="kbd">1</span></button>
+          <button data-conf="likely">Likely <span class="kbd">2</span></button>
+          <button data-conf="guess">A guess <span class="kbd">3</span></button></div></div>`;
+      pane.querySelectorAll('button[data-conf]').forEach(b => b.onclick = () => setConfidence(b.dataset.conf));
       return;
     }
     if (state.status === 'guessing') {
@@ -442,6 +478,28 @@ export async function drillsView(root, query) {
       return;
     }
     const e = state.game?.explanations?.[d.ply];
+    // Explain-back: on a miss, one line on what was missed, typed before the
+    // coach's explanation appears (generation before feedback is what makes
+    // the correction stick). The grade waits until it is written or skipped.
+    const askBack = !state.verdict.correct && !decoy && !state.explainDone;
+    if (askBack) {
+      pane.innerHTML = `<div class="guess">
+        <div class="result bad">${esc(state.verdict.text)}</div>
+        ${state.verdict.followMiss ? `<div class="result bad">${esc(state.verdict.followMiss)}</div>` : ''}
+        <p style="margin: 6px 0">${chips}</p>
+        <ul class="lines">${d.lines.map((l, i) => `<li class="${l.uci === d.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === d.playedUci ? '<span class="chip mistake">played</span>' : ''}</li>`).join('')}</ul>
+        <div class="explanation"><p class="muted" style="margin:0 0 6px">Before the coach's answer: what did you miss, in one line?</p>
+          <div class="row" style="gap:6px"><input type="text" id="explain-back" maxlength="300" placeholder="e.g. the knight was not really pinned" style="flex:1; min-width: 200px">
+          <button class="small primary" id="eb-compare">Compare <span class="kbd">Enter</span></button> <button class="small" id="eb-skip">Skip</button></div></div>
+      </div>`;
+      const input = pane.querySelector('#explain-back');
+      const finish = () => { state.note = input.value.trim() || null; state.explainDone = true; renderPanel(); };
+      pane.querySelector('#eb-compare').onclick = finish;
+      pane.querySelector('#eb-skip').onclick = () => { state.explainDone = true; renderPanel(); };
+      input.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); finish(); } };
+      input.focus();
+      return;
+    }
     // Grading honesty: a wrong answer can only be graded Again. Decoys are
     // detection checks with no schedule: a single Continue.
     const gradeButtons = decoy
@@ -469,6 +527,7 @@ export async function drillsView(root, query) {
       ${decoyNote}
       <p style="margin: 6px 0">${chips}${answeredIn ? `<small class="muted">${answeredIn}</small>` : ''}</p>
       <ul class="lines">${d.lines.map((l, i) => `<li class="${l.uci === d.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === d.playedUci ? '<span class="chip mistake">played</span>' : ''}</li>`).join('')}</ul>
+      ${state.note ? `<div class="kq">You wrote: ${esc(state.note)}</div>` : ''}
       ${e ? `<div class="explanation"><div class="row"><span class="chip cat">${esc(e.category)}</span> <b>${esc(e.pattern)}</b></div><p>${esc(e.explanation)}</p><div class="kq">Ask yourself: ${esc(e.key_question)}</div>
         <div class="row" style="margin-top: 6px; gap: 6px"><small class="muted">Was this explanation useful?</small>
           <button class="small${feedback[`${d.gameId}:${d.ply}`]?.helpful === true ? ' primary' : ''}" data-fb="yes">Yes</button>
@@ -507,13 +566,17 @@ export async function drillsView(root, query) {
         if (state.verdict.correct) session.decoys.right++;
         api.recordDecoy(state.verdict.correct).catch(() => {});
       } else {
-        await api.reviewDrill(state.drill.id, g, state.verdict.correct, !!roundKey, state.answerMs);
+        await api.reviewDrill(state.drill.id, g, state.verdict.correct, !!roundKey, state.answerMs, { confidence: state.confidence, note: state.note });
         const missedAdded = !state.verdict.correct && !session.missed.some(x => x.id === state.drill.id);
         session.attempts++;
         if (state.verdict.correct) session.correct++;
         if (missedAdded) session.missed.push(state.drill);
         if (state.answerMs != null) session.times.push(state.answerMs);
-        lastGraded = { id: state.drill.id, idx, correct: state.verdict.correct, missedAdded, timeAdded: state.answerMs != null };
+        if (state.confidence) {
+          const c = session.conf[state.confidence] = session.conf[state.confidence] || { n: 0, right: 0 };
+          c.n++; if (state.verdict.correct) c.right++;
+        }
+        lastGraded = { id: state.drill.id, idx, correct: state.verdict.correct, missedAdded, timeAdded: state.answerMs != null, confidence: state.confidence };
         undoBtn.hidden = false;
         import('../app.js').then(m => m.updateDrillBadge());
       }
@@ -531,6 +594,7 @@ export async function drillsView(root, query) {
       if (lastGraded.correct) session.correct--;
       if (lastGraded.missedAdded) session.missed = session.missed.filter(x => x.id !== lastGraded.id);
       if (lastGraded.timeAdded) session.times.pop();
+      if (lastGraded.confidence && session.conf[lastGraded.confidence]) { const c = session.conf[lastGraded.confidence]; c.n--; if (lastGraded.correct) c.right--; if (!c.n) delete session.conf[lastGraded.confidence]; }
       idx = lastGraded.idx;
       lastGraded = null;
       undoBtn.hidden = true;
@@ -540,7 +604,13 @@ export async function drillsView(root, query) {
   };
 
   const onKey = e => {
-    if (!state || state.status !== 'revealed' || e.target.matches('input, textarea')) return;
+    if (!state || e.target.matches('input, textarea')) return;
+    if (state.status === 'confidence') {
+      const conf = { 1: 'sure', 2: 'likely', 3: 'guess' }[e.key];
+      if (conf) setConfidence(conf);
+      return;
+    }
+    if (state.status !== 'revealed' || (!state.verdict.correct && state.drill.kind !== 'decoy' && !state.explainDone)) return;
     const map = { 1: 'again', 2: 'good', 3: 'easy' };
     const g = map[e.key];
     if (g && (state.verdict.correct || g === 'again')) grade(g); // wrong answers only grade Again

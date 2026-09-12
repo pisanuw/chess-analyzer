@@ -63,6 +63,13 @@ await page.getByText('Showing Karpov, A as white', { exact: false }).first().wai
 await page.evaluate(() => { location.hash = '#/game/f1f1f1f1f101'; });
 await page.locator('.moment').first().click({ timeout: 8000 });
 await page.getByText('Find the best move', { exact: false }).first().waitFor({ timeout: 8000 });
+// Drills: giving up is a miss, so the explain-back line comes before the coach's
+// answer and the grade buttons; skipping it reaches "Continue".
+await page.evaluate(() => { location.hash = '#/drills'; });
+await page.getByText('Show answer').first().click({ timeout: 8000 });
+await page.locator('#explain-back').waitFor({ timeout: 8000 });
+await page.locator('#eb-skip').click({ timeout: 8000 });
+await page.getByText('Continue', { exact: false }).first().waitFor({ timeout: 8000 });
 
 await browser.close();
 server.kill();

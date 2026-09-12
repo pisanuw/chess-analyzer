@@ -116,16 +116,20 @@ export async function gameView(root, id, startPly) {
   // moves. Works from stored lines alone, so the read-only mirror gets it too.
   const guessGameBtn = game.analysis && player && !scout
     ? `<button class="small" data-act="guessgame" title="Replay the game predicting your own moves; each guess is scored by win-probability">Guess the move</button>` : '';
+  // Scout games train the other skill preparation needs: modelling the person.
+  // Predict what THEY played, scored by the match with their move, not the engine's.
+  const guessThemBtn = game.analysis && player && scout
+    ? `<button class="small" data-act="guessthem" title="Replay the game predicting the opponent's moves; scored by whether you matched what they actually played, not the engine">Guess their move</button>` : '';
   function renderActions() {
     actions.innerHTML = readonly ? `
       ${player ? `<span class="chip ${player}">played ${player}</span>` : ''}
-      ${guessGameBtn}
+      ${guessGameBtn}${guessThemBtn}
       <span class="chip status-${game.status}">${game.status}</span>` : `
       ${!player ? `<span>I played <button class="small" data-color="white">White</button> <button class="small" data-color="black">Black</button></span>` : `<span class="chip ${player}">played ${player}</span>`}
       ${player && !game.analysis ? `<button class="small primary" data-act="analyse">Analyse</button>` : ''}
       ${game.analysis ? `<button class="small" data-act="reanalyse" title="Re-run the engine (clears explanations)">Re-analyse</button>` : ''}
       ${game.analysis && settings.llmProvider !== 'manual' && game.analysis.summary.moments.some(p => !game.explanations?.[p]) ? `<button class="small primary" data-act="explain">Explain moments</button>` : ''}
-      ${guessGameBtn}
+      ${guessGameBtn}${guessThemBtn}
       <button class="small" data-act="names" title="Fix player names (they must match settings/scout names for detection)">✎ names</button>
       <span class="chip status-${game.status}">${game.status}</span>`;
   }
@@ -133,6 +137,7 @@ export async function gameView(root, id, startPly) {
   actions.addEventListener('click', async e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.act === 'guessgame') return startGuessGame();
+    if (b.dataset.act === 'guessthem') return startGuessThem();
     b.disabled = true; // no double-submit while a queueing/mutating call is in flight
     try {
       if (b.dataset.color) { ({ game } = await api.setPlayer(id, b.dataset.color, true)); toast('Colour set, analysis queued'); return rerender(); }
@@ -359,16 +364,31 @@ export async function gameView(root, id, startPly) {
     gtmShow();
   }
 
+  /** Guess the opponent's move: every move of the scouted subject, from their
+   * side of the board. A hit is their actual move; the engine's opinion is a
+   * side note, because the point is to predict the person. */
+  function startGuessThem() {
+    const plies = moves().filter(m => m.color === player).map(m => m.ply);
+    if (!plies.length) return toast('No opponent moves to guess', true);
+    state.moment = null;
+    state.guess = null;
+    state.gtm = { plies, i: 0, results: [], done: false, busy: false, them: true, side: player };
+    renderPanel();
+    gtmShow();
+  }
+
   function gtmShow() {
     const g = state.gtm;
     const ply = g.plies[g.i];
-    board.set(fenAt(ply - 1), { lastMove: ply >= 2 ? game.moves[ply - 2].uci : null, movableFor: seat });
-    if (seat && board.orientation !== seat) board.orient(seat);
+    const side = g.side || seat;
+    board.set(fenAt(ply - 1), { lastMove: ply >= 2 ? game.moves[ply - 2].uci : null, movableFor: side });
+    if (side && board.orientation !== side) board.orient(side);
     if (graph) graph.setPly(ply - 1);
   }
 
   function stopGtm() {
     state.gtm = null;
+    if (seat && board.orientation !== seat) board.orient(seat); // back to the student's side after guessing from theirs
     renderPanel();
     showPly(state.ply);
   }
@@ -381,6 +401,16 @@ export async function gameView(root, id, startPly) {
     const m = moves()[ply - 1];
     const res = await applyMove(m.fenBefore, orig, dest);
     if (!res) { g.busy = false; return gtmShow(); } // dismissed promotion
+    if (g.them) {
+      const rank = m.lines.findIndex(l => l.uci === res.uci);
+      g.results.push({ ply, moveNumber: m.moveNumber, color: m.color, san: res.san, gameSan: m.san, hit: res.uci === m.uci, engineBest: rank === 0, theyPlayedBest: m.playedRank === 1 });
+      g.busy = false;
+      g.i++;
+      if (g.i >= g.plies.length) { g.done = true; board.set(fenAt(game.moves.length), {}); }
+      renderPanel();
+      if (!g.done) gtmShow();
+      return;
+    }
     const sign = m.color === 'white' ? 1 : -1;
     const bestWp = winProb((m.lines[0]?.cp ?? m.evalBefore) * sign);
     const rank = m.lines.findIndex(l => l.uci === res.uci);
@@ -411,6 +441,7 @@ export async function gameView(root, id, startPly) {
   function renderGtm() {
     const g = state.gtm;
     root.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+    if (g.them) return renderGuessThem(g);
     const scored = g.results.filter(r => r.loss != null);
     const unscored = g.results.length - scored.length;
     const total = scored.reduce((s, r) => s + r.loss, 0);
@@ -431,6 +462,32 @@ export async function gameView(root, id, startPly) {
         <div class="row" style="justify-content: space-between"><b>Guess ${g.i + 1} of ${g.plies.length}: move ${m.moveNumber}, your turn.</b><button class="small" data-gtm="stop">Stop</button></div>
         <p class="muted">Play the move you would choose; the game then continues as it actually went. Running loss: ${total.toFixed(1)} win-% over ${scored.length} scored guess${scored.length === 1 ? '' : 'es'}.</p>
         ${g.busy ? '<p class="muted">Scoring with the engine…</p>' : ''}
+        ${g.results.length ? `<ul class="lines">${g.results.slice(-6).map(row).join('')}</ul>` : ''}
+      </div>`;
+    }
+    panel.querySelector('[data-gtm="stop"]').onclick = stopGtm;
+  }
+
+  function renderGuessThem(g) {
+    const name = game.subject || 'They';
+    const hits = g.results.filter(r => r.hit).length;
+    const yoursBest = g.results.filter(r => !r.hit && r.engineBest).length;
+    const theirsBest = g.results.filter(r => r.theyPlayedBest).length;
+    const pct = g.results.length ? Math.round((hits / g.results.length) * 100) : 0;
+    const row = r => `<li class="${r.hit ? '' : 'played'}"><span class="ev">${r.hit ? 'hit' : 'miss'}</span>
+      <span>${r.moveNumber}${r.color === 'white' ? '.' : '...'} ${esc(r.san)}${r.hit ? '' : ` <small class="muted">(${esc(name)} played ${esc(r.gameSan)}${r.engineBest ? ", yours was the engine's choice" : ''})</small>`}</span></li>`;
+    if (g.done) {
+      panel.innerHTML = `<div class="guess">
+        <div class="row" style="justify-content: space-between"><b>Guess their move: finished</b><button class="small" data-gtm="stop">Close</button></div>
+        <div class="result ${pct >= 50 ? 'good' : 'bad'}">You predicted ${hits} of ${g.results.length} of ${esc(name)}'s moves (${pct}%). ${yoursBest ? `${yoursBest} of your misses were the engine's first choice: you modelled the engine, not the player. ` : ''}${esc(name)} played the engine's first choice ${theirsBest} time${theirsBest === 1 ? '' : 's'} in this game.</div>
+        <p class="muted">Preparation is predicting the person. Repeat this on their other games and watch the hit rate: where it is low, their choices are worth a note in the prep sheet.</p>
+        <ul class="lines">${g.results.map(row).join('')}</ul>
+      </div>`;
+    } else {
+      const m = moves()[g.plies[g.i] - 1];
+      panel.innerHTML = `<div class="guess">
+        <div class="row" style="justify-content: space-between"><b>Guess ${g.i + 1} of ${g.plies.length}: move ${m.moveNumber}, what does ${esc(name)} play here?</b><button class="small" data-gtm="stop">Stop</button></div>
+        <p class="muted">Play the move you expect from them, not the engine's; the game then continues as it went. Matched so far: ${hits} of ${g.results.length}.</p>
         ${g.results.length ? `<ul class="lines">${g.results.slice(-6).map(row).join('')}</ul>` : ''}
       </div>`;
     }

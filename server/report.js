@@ -229,6 +229,11 @@ export function aggregateGames(games) {
 function drillSection(dstore, foreign, refByKey) {
   const drillByPhase = {}, drillByCategory = {}, drillByKind = {}, patternSpeed = new Map();
   const activityDates = new Set(); // YYYY-MM-DD the player practised, for the home-screen streak
+  // Calibration: how stated confidence (sure, likely, guess) matched the
+  // outcome, and the "sure and wrong" reviews, the highest-value study list a
+  // player can have (a confident error is a belief to correct, not a slip).
+  const calibration = {};
+  const sureAndWrong = [];
   let drillAttempts = 0, drillCorrect = 0;
   const tally = drills => {
     for (const d of drills) {
@@ -239,6 +244,10 @@ function drillSection(dstore, foreign, refByKey) {
         bump(drillByPhase, d.phase);
         bump(drillByCategory, d.category);
         bump(drillByKind, d.kind || 'find-best'); // threat / punish / opening / core: separate streams
+        if (r.confidence) {
+          bump(calibration, r.confidence);
+          if (r.confidence === 'sure' && !r.correct) sureAndWrong.push({ id: d.id, gameId: d.gameId, ply: d.ply, label: d.label, pattern: d.pattern || null, category: d.category || null, kind: d.kind || 'find-best', at: r.at || '', note: r.note || null });
+        }
         if (d.pattern && Number.isFinite(r.ms)) {
           const k = normalizeKey(d.pattern);
           const p = patternSpeed.get(k) || { pattern: d.pattern, times: [] };
@@ -278,6 +287,8 @@ function drillSection(dstore, foreign, refByKey) {
     byCategory: drillByCategory,
     byKind: drillByKind,
     speed: speed.length ? speed : null,
+    calibration: Object.keys(calibration).length ? Object.fromEntries(['sure', 'likely', 'guess'].filter(k => calibration[k]).map(k => [k, { ...calibration[k], rate: Math.round((calibration[k].correct / calibration[k].attempts) * 100) }])) : null,
+    sureAndWrong: sureAndWrong.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12),
   } : null;
 
   // Quiet-position detection: how often the player correctly recognised that

@@ -92,7 +92,8 @@ export function registerTrainingRoutes(app) {
   app.post('/api/drills/decoy', wrap(async (req, res) => { if (await visitorNoop(req, res)) return; res.json({ decoys: await recordDecoy(!!req.body?.correct, await effectiveUser(req)) }); }));
   app.post('/api/drills/:id/review', wrap(async (req, res) => {
     if (await visitorNoop(req, res)) return;
-    res.json({ drill: await reviewDrill(req.params.id, req.body?.grade || 'good', req.body?.correct, !!req.body?.practice, Number(req.body?.ms), await effectiveUser(req)) });
+    const b = req.body || {};
+    res.json({ drill: await reviewDrill(req.params.id, b.grade || 'good', b.correct, !!b.practice, Number(b.ms), await effectiveUser(req), { confidence: b.confidence, note: b.note }) });
   }));
   app.post('/api/drills/:id/suspend', wrap(async (req, res) => {
     if (await visitorNoop(req, res)) return;

@@ -167,8 +167,8 @@ export const api = {
     req('GET', `/api/puzzles?source=${encodeURIComponent(source)}&limit=${limit}`),
   drills: ({ pattern = null, category = null, subject = null, color = null, limit = null, session = false } = {}) =>
     req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}${category ? `&category=${encodeURIComponent(category)}` : ''}${subject ? `&subject=${encodeURIComponent(subject)}` : ''}${color ? `&color=${color}` : ''}${session ? '&session=1' : ''}`),
-  reviewDrill: noopForVisitor((id, grade, correct, practice = false, ms = null) =>
-    req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}) })),
+  reviewDrill: noopForVisitor((id, grade, correct, practice = false, ms = null, { confidence = null, note = null } = {}) =>
+    req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}), ...(confidence ? { confidence } : {}), ...(note ? { note } : {}) })),
   suspendDrill: noopForVisitor((id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended })),
   undoDrill: noopForVisitor(id => req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {})),
   restoreSuspended: noopForVisitor(() => req('POST', '/api/drills/restore-suspended', {})),
