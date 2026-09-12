@@ -8,6 +8,7 @@
     "dev": "node --watch server/serve.js",
     "samples": "node scripts/make-samples.js 3 > samples/sample-games.pgn",
     "test": "node --test 'test/*.test.js'",
+    "test:ui": "node test/ui/smoke.mjs",
     "pull-data": "git -C data pull --rebase",
     "push-data": "git -C data add -A && (git -C data diff --cached --quiet || git -C data commit -m sync) && git -C data push",
     "sync": "npm run pull-data && npm start",
@@ -40,5 +41,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
   }
 }

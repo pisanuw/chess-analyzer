@@ -1,5 +1,75 @@
-// Small shared render helpers for numbers that appear on more than one page.
+// Small shared render helpers for numbers and cards that appear on more than one
+// page (the Players dossier and the Prepare page).
 import { esc } from './api.js';
+import { fmtLine, lichessUrl } from './shared.js';
+
+/** The reading panel for a generated prep sheet: a headline, a fixed-row profile
+ * table (the same rows for every opponent), a numbered plan, an openings table,
+ * and cue bullets, each with its evidence chips (hover for the fact, click to
+ * open the game); an item that cites nothing is flagged. Sheets made before the
+ * structured format are free text and fall back to legacyPrepBody. */
+export function prepSheetBody(sheet) {
+  const asList = v => Array.isArray(v) ? v : (v ? [v] : []);
+  const isStructured = sheet.headline || sheet.profile || Array.isArray(sheet.openings);
+  if (!isStructured) return legacyPrepBody(sheet);
+  const p = sheet.profile || {};
+  const rows = [
+    ['Style', p.style], ['Strongest phase', p.strongest_phase], ['Weakest phase', p.weakest_phase],
+    ['Main errors', p.main_errors], ['Time trouble', p.time_trouble],
+  ].filter(([, v]) => v);
+  const plan = asList(sheet.exploit_plan), openings = asList(sheet.openings), watch = asList(sheet.watch_fors);
+  const ev = sheet.evidence || {};
+  const chips = item => {
+    if (typeof item === 'string') return '';
+    const ids = item.evidence || [];
+    if (!ids.length) return ' <span class="chip warn" title="The coach model cited no evidence for this: treat it as an opinion">unsupported</span>';
+    return ' ' + ids.map(id => ev[id]
+      ? (ev[id].link ? `<a class="chip ev" href="${esc(ev[id].link)}" title="${esc(ev[id].text)}">${esc(id)}</a>` : `<span class="chip ev" title="${esc(ev[id].text)}">${esc(id)}</span>`)
+      : '').join('');
+  };
+  const text = (item, key) => esc(typeof item === 'string' ? item : item[key]);
+  return `<div class="prep-sheet">
+    ${sheet.headline ? `<p class="prep-headline">${esc(sheet.headline)}</p>` : ''}
+    ${rows.length ? `<h3>Profile</h3><table class="prep-table"><tbody>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${plan.length ? `<h3>Game plan</h3><ol>${plan.map(s => `<li>${text(s, 'step')}${chips(s)}</li>`).join('')}</ol>` : ''}
+    ${openings.length ? `<h3>Openings</h3><table class="prep-table"><thead><tr><th>When</th><th>You play</th><th>Why</th></tr></thead><tbody>${openings.map(o => `<tr><td>${esc(o.when)}</td><td>${esc(o.play)}</td><td>${esc(o.why)}${chips(o)}</td></tr>`).join('')}</tbody></table>` : ''}
+    ${watch.length ? `<h3>Watch for</h3><ul>${watch.map(w => `<li>${text(w, 'cue')}${chips(w)}</li>`).join('')}</ul>` : ''}
+  </div>`;
+}
+
+/** Older free-text sheets (overview / exploit_plan / openings_advice as prose). */
+export function legacyPrepBody(sheet) {
+  const watch = Array.isArray(sheet.watch_fors)
+    ? `<ul>${sheet.watch_fors.map(w => `<li>${esc(w)}</li>`).join('')}</ul>`
+    : `<p>${esc(sheet.watch_fors)}</p>`;
+  return `<div class="prep-sheet">
+    <h3>Overview</h3><p>${esc(sheet.overview)}</p>
+    <h3>Game plan</h3><p>${esc(sheet.exploit_plan)}</p>
+    <h3>Openings</h3><p>${esc(sheet.openings_advice)}</p>
+    <h3>Watch for</h3>${watch}
+  </div>`;
+}
+
+/** Your own record against this opponent: the first thing a player wants to
+ * see, above everything derived from the opponent's other games. */
+export function headToHeadCard(h2h, open = true) {
+  if (!h2h?.games?.length) return '';
+  const r = h2h.record;
+  const rows = h2h.games.slice(0, 10).map(g => `<tr>
+    <td><a href="#/game/${g.gameId}">${esc(g.date || '?')}</a></td>
+    <td><span class="chip ${g.color}">${g.color}</span></td>
+    <td>${esc(g.result)}</td>
+    <td>${esc(fmtLine(g.line))}${g.line.length ? ` <a href="${lichessUrl(g.line)}" target="_blank" rel="noopener" title="Open on lichess">↗</a>` : ''}${g.prediction ? ` <span class="chip" title="${esc(g.prediction.text)}">${g.prediction.leftAtPly ? `predicted to move ${Math.ceil(g.prediction.leftAtPly / 2)}` : 'off the predicted lines'}</span>` : ''}</td>
+    <td class="num">${g.accuracy != null ? g.accuracy + '%' : '–'}</td>
+    <td class="num">${g.moments ?? '–'}</td>
+    <td><small class="muted">${esc(g.event || '')}</small></td>
+  </tr>`).join('');
+  return `<details class="acc"${open ? ' open' : ''}><summary><span class="acc-title">Head to head</span> <span class="muted" style="font-size:13px">${r.games} game${r.games === 1 ? '' : 's'}: ${r.wins}W ${r.draws}D ${r.losses}L${r.scorePct != null ? `, ${r.scorePct}%` : ''}</span></summary>
+    <div class="acc-body">
+      <table><thead><tr><th>Date</th><th>You</th><th>Result</th><th>Opening</th><th class="num">Accuracy</th><th class="num">Moments</th><th>Event</th></tr></thead><tbody>${rows}</tbody></table>
+      ${h2h.games.length > 10 ? `<p class="muted"><small>Showing the latest 10 of ${h2h.games.length}.</small></p>` : ''}
+    </div></details>`;
+}
 
 const pc = v => (v == null ? '–' : v + '%');
 const tile = (v, l, title = '') => `<div class="tile"${title ? ` title="${esc(title)}"` : ''}><div class="v">${v}</div><div class="l">${l}</div></div>`;

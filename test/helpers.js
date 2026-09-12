@@ -28,6 +28,7 @@ export function makeGame({ id = 'aaaaaaaaaaaa', color = 'white', moments = [{ pl
       fenBefore: START, fenAfter: START,
       clock: clocks ? (clocks[ply - 1] ?? null) : null,
       evalBefore: 0, evalAfter: mom ? -100 : 0,
+      wpBefore: 50, wpAfter: mom ? 50 - mom.loss : 50, // mover's perspective, like analyze.js stores it
       loss: mom ? mom.loss : 0,
       cpLoss: mom ? mom.loss * 10 : 0,
       accuracy: mom ? 60 : 95,

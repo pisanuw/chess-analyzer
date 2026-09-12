@@ -10,6 +10,7 @@ import { puzzlesView } from './views/puzzles.js';
 import { settingsView } from './views/settings.js';
 import { logView } from './views/log.js';
 import { adminView } from './views/admin.js';
+import { prepView } from './views/prep.js';
 
 const app = document.getElementById('app');
 let current = null; // { name, destroy }
@@ -21,6 +22,7 @@ const routes = [
   { re: /^#\/report$/, name: 'report', view: reviewView },
   { re: /^#\/repertoire$/, name: 'report', view: reviewView }, // repertoire now lives in the Report page accordion
   { re: /^#\/scout(?:\/(.*))?$/, name: 'scout', view: scoutView },
+  { re: /^#\/prep\/([^?]+)(?:\?(.*))?$/, name: 'scout', view: prepView }, // prepare for a game: one opponent, one colour
   { re: /^#\/drills(?:\?(.*))?$/, name: 'puzzles', view: drillsView }, // drills live under Puzzles now; highlight that tab
   { re: /^#\/puzzles(?:\?(.*))?$/, name: 'puzzles', view: puzzlesView }, // optional query: ?source=tactics|moments|missed
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
@@ -45,19 +47,23 @@ async function route() {
   if (current?.destroy) current.destroy();
   current = null;
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === r.name));
-  app.innerHTML = '<div class="empty">Loading…</div>';
+  // Each view renders into its own element: a slow view that resolves after the
+  // user has moved on writes into a detached node, never over the newer page.
+  const host = document.createElement('div');
+  host.innerHTML = '<div class="empty">Loading…</div>';
+  app.replaceChildren(host);
   try {
-    const view = await r.view(app, ...params) || {};
+    const view = await r.view(host, ...params) || {};
     if (token !== nav) { view.destroy?.(); return; }
     current = view;
   } catch (err) {
     if (token !== nav) return;
     if (err.handled) return; // e.g. a 401 already raised the login overlay
     if (err.offline) {
-      app.innerHTML = `<div class="card"><b>Cannot reach the server.</b> ${esc(err.message)} <button class="small" id="retry-route">Retry</button></div>`;
-      app.querySelector('#retry-route').onclick = () => route();
+      host.innerHTML = `<div class="card"><b>Cannot reach the server.</b> ${esc(err.message)} <button class="small" id="retry-route">Retry</button></div>`;
+      host.querySelector('#retry-route').onclick = () => route();
     } else {
-      app.innerHTML = `<div class="card"><b>Error:</b> ${esc(err.message)}</div>`;
+      host.innerHTML = `<div class="card"><b>Error:</b> ${esc(err.message)}</div>`;
     }
     console.error(err);
   }

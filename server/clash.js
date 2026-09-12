@@ -340,7 +340,11 @@ function countNodes(node) {
 
 // --- principal lines (for the optional LLM narration) ---------------------------
 
-function endReasonOf(node) {
+// Narration is about the student's own lines, so it is keyed per member; a bare
+// fideId key is a note from before multi-user and belongs to the primary member.
+export const clashNoteKey = (fideId, uid) => (uid === DEFAULT_USER ? fideId : `${uid}:${fideId}`);
+
+export function endReasonOf(node) {
   if (node.studentPrepEnds) return 'you have no games continuing here';
   if (node.oppPrepEnds) return node.oppPrepEndsReason === 'nodata' ? 'the opponent has never faced this position' : 'the opponent has too few games here to trust';
   if (node.leaf) return 'the opponent has too few games here to continue';

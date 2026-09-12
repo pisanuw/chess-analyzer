@@ -1,6 +1,6 @@
 // Small SVG charts: horizontal bars, a single-series line, and the game eval graph. No dependencies.
 import { esc, formatEval, movePrefix } from './api.js';
-import { spentPerMove } from './shared.js';
+import { spentPerMove, winProb } from './shared.js';
 
 const flaggedJudgment = j => j === 'inaccuracy' || j === 'mistake' || j === 'blunder';
 
@@ -114,7 +114,9 @@ export function evalGraph(container, moves, { currentPly = 0, onSelect = null, t
   const W = Math.max(300, container.clientWidth || 520), pad = 4;
   const evalH = 110, timeH = hasTime ? 30 : 0, H = evalH + timeH;
   const xs = ply => pad + (ply / n) * (W - 2 * pad);
-  const wpWhite = m => (m.color === 'white' ? m.wpAfter : 100 - m.wpAfter); // white perspective after the move
+  // White's win probability after the move: the stored mover-perspective value,
+  // or derived from the White-POV eval for a record that lacks it.
+  const wpWhite = m => (m.wpAfter != null ? (m.color === 'white' ? m.wpAfter : 100 - m.wpAfter) : winProb(m.evalAfter ?? 0));
   const ys = wp => pad + (1 - wp / 100) * (evalH - 2 * pad);
   const flagged = moves.filter(m => m.isPlayer && flaggedJudgment(m.judgment)).length;
   const label = `Evaluation graph across ${n} move${n === 1 ? '' : 's'}, White win probability; ${flagged} flagged player moment${flagged === 1 ? '' : 's'}`;

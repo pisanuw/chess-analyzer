@@ -427,6 +427,26 @@ export function recordDecoy(correct, userId = DEFAULT_USER) {
   });
 }
 
+/** A prep-deck attempt (a line flashcard or a punish drill worked from the
+ * Prepare page): a per-drill seen/right tally outside the ladder, so the page
+ * can show how much of the deck has been done before the game. */
+export function markPrep(id, correct, userId = DEFAULT_USER) {
+  return locked(async () => {
+    const store = await getDrills(userId);
+    store.prep = store.prep || {};
+    const m = store.prep[id] || { seen: 0, right: 0 };
+    m.seen++;
+    if (correct) m.right++;
+    m.lastAt = new Date().toISOString();
+    store.prep[id] = m;
+    // Keep the map bounded: the oldest marks fall out past a generous cap.
+    const ids = Object.keys(store.prep);
+    if (ids.length > 2000) for (const k of ids.sort((a, b) => (store.prep[a].lastAt || '').localeCompare(store.prep[b].lastAt || '')).slice(0, ids.length - 2000)) delete store.prep[k];
+    await saveDrills(store, userId);
+    return m;
+  });
+}
+
 /** Drop the vote on a moment (it was re-explained: the new text starts unrated). */
 export function clearFeedback(gameId, ply, userId = DEFAULT_USER) {
   return locked(async () => {

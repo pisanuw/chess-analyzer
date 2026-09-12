@@ -6,7 +6,7 @@ import { barChart, lineChart } from '../charts.js';
 import { Board, walkSans } from '../board.js';
 import { CATEGORY_LABEL } from '../labels.js';
 import { fmtLine, lichessUrl as lichess } from '../shared.js';
-import { tendencyTiles, habitTiles } from '../widgets.js';
+import { tendencyTiles, habitTiles, prepSheetBody, headToHeadCard } from '../widgets.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -121,7 +121,7 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
     : `<div id="engine-dossier">${book ? engineHint(book, readonly) : ''}</div>`;
   el.innerHTML = subjectHeader(entry)
     + colourCut(entry)
-    + (data?.headToHead ? headToHeadCard(data.headToHead, subject) : '')
+    + headToHeadCard(data?.headToHead)
     + (data ? prepSheetCard(subject, data.report, data.prepSheet, pending, readonly, data.prepSheetVersion) : '')
     + (linkable ? fideLinkCard(subject) : '')
     + (book ? bookSection(book.dossier, readonly, book.promote, entry.color, book.features, entry.tc) : '')
@@ -151,27 +151,6 @@ function colourCut(entry) {
     <span class="muted"><small>Their games:</small></span>${btn('', 'All')}${btn('white', 'As White')}${btn('black', 'As Black')}
     ${entry.color ? `<small class="muted">Showing ${esc(entry.subject)} as ${entry.color}: what you meet when you have ${entry.color === 'white' ? 'Black' : 'White'}.</small>` : ''}
   </div>`;
-}
-
-/** Your own record against this opponent: the first thing a player wants to
- * see, above everything derived from the opponent's other games. */
-function headToHeadCard(h2h, subject) {
-  if (!h2h.games.length) return '';
-  const r = h2h.record;
-  const rows = h2h.games.slice(0, 10).map(g => `<tr>
-    <td><a href="#/game/${g.gameId}">${esc(g.date || '?')}</a></td>
-    <td><span class="chip ${g.color}">${g.color}</span></td>
-    <td>${esc(g.result)}</td>
-    <td>${esc(fmtLine(g.line))}${g.line.length ? ` <a href="${lichess(g.line)}" target="_blank" rel="noopener" title="Open on lichess">↗</a>` : ''}</td>
-    <td class="num">${g.accuracy != null ? g.accuracy + '%' : '–'}</td>
-    <td class="num">${g.moments ?? '–'}</td>
-    <td><small class="muted">${esc(g.event || '')}</small></td>
-  </tr>`).join('');
-  return `<details class="acc" open><summary><span class="acc-title">Head to head</span> <span class="muted" style="font-size:13px">${r.games} game${r.games === 1 ? '' : 's'}: ${r.wins}W ${r.draws}D ${r.losses}L${r.scorePct != null ? `, ${r.scorePct}%` : ''}</span></summary>
-    <div class="acc-body">
-      <table><thead><tr><th>Date</th><th>You</th><th>Result</th><th>Opening</th><th class="num">Accuracy</th><th class="num">Moments</th><th>Event</th></tr></thead><tbody>${rows}</tbody></table>
-      ${h2h.games.length > 10 ? `<p class="muted"><small>Showing the latest 10 of ${h2h.games.length}.</small></p>` : ''}
-    </div></details>`;
 }
 
 /** Run `fn` the first time a <details> is opened (or now, if already open). Lets
@@ -209,55 +188,6 @@ function subjectGameStats(games, subject, fideId) {
     toAnalyse: rel.filter(g => g.status === 'imported' || g.status === 'analysing').length,
     toExplain: rel.filter(g => g.status === 'analysed' && (g.moments || 0) > (g.explained || 0)).length,
   };
-}
-
-/** The reading panel for a generated sheet. The sheet is read at the board, so
- * it is broken into a headline, a fixed-row profile table (same rows for every
- * opponent, so players compare at a glance), a numbered plan, an openings table,
- * and cue bullets, all in a calm high-legibility panel. Sheets made before the
- * structured format are free-text (overview / openings_advice), so fall back. */
-function prepSheetBody(sheet) {
-  const asList = v => Array.isArray(v) ? v : (v ? [v] : []);
-  const isStructured = sheet.headline || sheet.profile || Array.isArray(sheet.openings);
-  if (!isStructured) return legacyPrepBody(sheet);
-  const p = sheet.profile || {};
-  const rows = [
-    ['Style', p.style], ['Strongest phase', p.strongest_phase], ['Weakest phase', p.weakest_phase],
-    ['Main errors', p.main_errors], ['Time trouble', p.time_trouble],
-  ].filter(([, v]) => v);
-  const plan = asList(sheet.exploit_plan), openings = asList(sheet.openings), watch = asList(sheet.watch_fors);
-  // Evidence chips: each id links back to the games (or lines) behind the claim;
-  // an item that cites nothing is flagged so it reads as opinion, not fact.
-  const ev = sheet.evidence || {};
-  const chips = item => {
-    if (typeof item === 'string') return '';
-    const ids = item.evidence || [];
-    if (!ids.length) return ' <span class="chip warn" title="The coach model cited no evidence for this: treat it as an opinion">unsupported</span>';
-    return ' ' + ids.map(id => ev[id]
-      ? (ev[id].link ? `<a class="chip ev" href="${esc(ev[id].link)}" title="${esc(ev[id].text)}">${esc(id)}</a>` : `<span class="chip ev" title="${esc(ev[id].text)}">${esc(id)}</span>`)
-      : '').join('');
-  };
-  const text = (item, key) => esc(typeof item === 'string' ? item : item[key]);
-  return `<div class="prep-sheet">
-    ${sheet.headline ? `<p class="prep-headline">${esc(sheet.headline)}</p>` : ''}
-    ${rows.length ? `<h3>Profile</h3><table class="prep-table"><tbody>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
-    ${plan.length ? `<h3>Game plan</h3><ol>${plan.map(s => `<li>${text(s, 'step')}${chips(s)}</li>`).join('')}</ol>` : ''}
-    ${openings.length ? `<h3>Openings</h3><table class="prep-table"><thead><tr><th>When</th><th>You play</th><th>Why</th></tr></thead><tbody>${openings.map(o => `<tr><td>${esc(o.when)}</td><td>${esc(o.play)}</td><td>${esc(o.why)}${chips(o)}</td></tr>`).join('')}</tbody></table>` : ''}
-    ${watch.length ? `<h3>Watch for</h3><ul>${watch.map(w => `<li>${text(w, 'cue')}${chips(w)}</li>`).join('')}</ul>` : ''}
-  </div>`;
-}
-
-/** Older free-text sheets (overview / exploit_plan / openings_advice as prose). */
-function legacyPrepBody(sheet) {
-  const watch = Array.isArray(sheet.watch_fors)
-    ? `<ul>${sheet.watch_fors.map(w => `<li>${esc(w)}</li>`).join('')}</ul>`
-    : `<p>${esc(sheet.watch_fors)}</p>`;
-  return `<div class="prep-sheet">
-    <h3>Overview</h3><p>${esc(sheet.overview)}</p>
-    <h3>Game plan</h3><p>${esc(sheet.exploit_plan)}</p>
-    <h3>Openings</h3><p>${esc(sheet.openings_advice)}</p>
-    <h3>Watch for</h3>${watch}
-  </div>`;
 }
 
 /** The prep sheet, surfaced high on the page because it must be generated on
@@ -348,9 +278,10 @@ function subjectHeader(entry) {
     ? `FIDE <a href="https://ratings.fide.com/profile/${esc(id)}" target="_blank" rel="noopener">${esc(id)}</a>${entry.fed ? ` · ${esc(entry.fed)}` : ''}`
     : '<span class="muted">no FIDE id linked</span>';
   const aliases = (entry.aliases || []).filter(a => a !== entry.subject);
+  const prep = c => `<a class="btn small" href="#/prep/${encodeURIComponent(entry.subject)}?color=${c}" title="One page for this game: sheet, record, their ${c === 'white' ? 'Black' : 'White'} lines, the predicted lines, and a prep deck">Prepare as ${c === 'white' ? 'White' : 'Black'}</a>`;
   return `<div class="row" style="justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px">
       <h2 style="margin:0">${esc(entry.subject)}</h2>
-      <div style="font-size:14px">${idHtml}</div>
+      <div class="row" style="gap:8px; align-items:baseline"><span style="font-size:14px">${idHtml}</span>${prep('white')}${prep('black')}</div>
     </div>${aliases.length ? `<p class="muted" style="margin:2px 0 10px"><small>also seen as: ${aliases.map(esc).join(', ')}</small></p>` : '<div style="margin-bottom:10px"></div>'}`;
 }
 
@@ -662,7 +593,7 @@ function renderClashLichess(root, orient) {
   return html + '</tbody></table>';
 }
 
-function renderClashForest(clash, container, boardRef = { board: null }, ctx = {}) {
+export function renderClashForest(clash, container, boardRef = { board: null }, ctx = {}) {
   boardRef.board?.destroy(); boardRef.board = null; // a fresh build replaces the board div
   const forest = color => {
     const root = clash.forests[color];

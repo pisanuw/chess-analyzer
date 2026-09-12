@@ -10,6 +10,7 @@ import { registerGameRoutes } from './routes/games.js';
 import { registerTrainingRoutes } from './routes/training.js';
 import { registerScoutRoutes } from './routes/scout.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerPrepRoutes } from './routes/prep.js';
 
 // Repo root = the working directory for every supported entry (npm start via
 // server/serve.js, tests, and the bundled Netlify function). Using cwd keeps
@@ -27,7 +28,7 @@ registerAuthRoutes(app); // before the read-only gate: sign-in and access reques
 
 // Read-only mirror (hosted copy): game data is managed on the analysing machine
 // and published; only training state (drill reviews, guesses) is writable.
-const RO_ALLOW = [/^\/api\/login$/, /^\/api\/drills\/decoy$/, /^\/api\/drills\/restore-suspended$/, /^\/api\/drills\/[^/]+\/(review|suspend|undo)$/, /^\/api\/games\/[a-f0-9]{12}\/moments\/\d+\/(guess|eval|feedback)$/];
+const RO_ALLOW = [/^\/api\/login$/, /^\/api\/drills\/decoy$/, /^\/api\/drills\/restore-suspended$/, /^\/api\/drills\/[^/]+\/(review|suspend|undo)$/, /^\/api\/games\/[a-f0-9]{12}\/moments\/\d+\/(guess|eval|feedback)$/, /^\/api\/prep\/mark$/, /^\/api\/upcoming(\/[^/]+)?$/];
 app.use((req, res, next) => {
   if (!READONLY || req.method === 'GET' || RO_ALLOW.some(re => re.test(req.path))) return next();
   res.status(405).json({ error: 'read-only mirror: manage games on the analysing machine, then publish' });
@@ -41,6 +42,7 @@ app.use(express.static(path.join(ROOT, 'public')));
 registerGameRoutes(app);
 registerTrainingRoutes(app);
 registerScoutRoutes(app);
+registerPrepRoutes(app);
 registerAdminRoutes(app);
 
 app.get(/^\/(?!api|vendor).*/, (req, res) => res.sendFile(path.join(ROOT, 'public/index.html')));

@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { parsePgnGames, parseGame, splitPgn, detectPlayerColor } from '../pgn.js';
 import { getSettings, listAllGames, getGame, saveGame, getPrepSheets, savePrepSheets, getScoutBook, saveScoutBook, listScoutBooks, getPlayers, getClashStore, getClashNotes, saveClashNotes, DEFAULT_USER } from '../store.js';
 import { parseFideFromFilename, buildScoutBook, scoutDossier } from '../scoutbook.js';
-import { loadStudentGames, buildStudentIndex, assembleClashForest, extendClashLeaves, clashPrincipalLines } from '../clash.js';
+import { loadStudentGames, buildStudentIndex, assembleClashForest, extendClashLeaves, clashPrincipalLines, clashNoteKey } from '../clash.js';
 import { assocsFromHeaders, recordAssociations, lookupFideId } from '../players.js';
 import { searchFide, fideProfileName } from '../fide.js';
 import { enqueue } from '../jobs.js';
@@ -27,10 +27,6 @@ const SCOUT_MAX_GAMES = 2000; // book tier: no per-game jobs, but bound the one-
 // Seeded own-game ids are namespaced by member, so a game the shared scouting
 // library already holds as a scout copy is never overwritten (both coexist).
 const seededOwnGameId = (memberId, gameId) => crypto.createHash('sha1').update(`${memberId}:${gameId}`).digest('hex').slice(0, 12);
-
-// Narration is about the student's own lines, so it is keyed per member; a bare
-// fideId key is a note from before multi-user and belongs to the primary member.
-const clashNoteKey = (fideId, uid) => (uid === DEFAULT_USER ? fideId : `${uid}:${fideId}`);
 
 // Everything beyond the analysed subset that grounds a prep sheet: the
 // whole-history book and its habits, the predicted clash lines for this
