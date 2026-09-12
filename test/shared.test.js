@@ -1,6 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { winProb, formatEval, parseTimeControl, spentPerMove, WP_ACCEPT } from '../public/shared.js';
+import { winProb, formatEval, parseTimeControl, spentPerMove, pgnDateKey, WP_ACCEPT } from '../public/shared.js';
+
+test('pgnDateKey orders unpadded, padded, and partial PGN dates', () => {
+  assert.equal(pgnDateKey('2026.7.29'), 20260729);
+  assert.equal(pgnDateKey('2026-07-29'), 20260729);
+  assert.ok(pgnDateKey('2026.7.29') < pgnDateKey('2026.10.01'), 'July before October, unlike a string sort');
+  assert.equal(pgnDateKey('2026.??.??'), 20260000);
+  assert.equal(pgnDateKey(''), 0);
+  assert.equal(pgnDateKey(undefined), 0);
+});
 
 test('formatEval renders pawns, mates, and null', () => {
   assert.equal(formatEval(42), '+0.42');

@@ -8,7 +8,7 @@ import { getGameCached, listGames, listAllGames, listScoutBooks, getPlayers, get
 import { memberByName } from './users.js';
 import { summarize } from './analyze.js';
 import { lookupFideId } from './players.js';
-import { resultScore } from '../public/shared.js';
+import { resultScore, pgnDateKey } from '../public/shared.js';
 import { getScoutBook, getClashStore } from './store.js';
 import { loadStudentGames, buildStudentIndex, assembleClashForest, walkPrediction } from './clash.js';
 
@@ -93,7 +93,7 @@ export async function headToHead(userId, subject, fideId = null) {
       prediction: await predictionFor(g, userId, fideId),
     });
   }
-  games.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  games.sort((a, b) => pgnDateKey(b.date) - pgnDateKey(a.date));
   const scored = games.filter(g => g.score != null);
   const record = {
     games: games.length,

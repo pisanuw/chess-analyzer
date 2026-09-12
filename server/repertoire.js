@@ -3,7 +3,7 @@ import { DEFAULT_USER } from './store.js';
 import { gamesForSubject } from './subjects.js';
 import { analysedOwnGames, gamesKey } from './report.js';
 import { memo } from './memo.js';
-import { resultScore, posKeyOf } from '../public/shared.js';
+import { resultScore, posKeyOf, pgnDateKey } from '../public/shared.js';
 
 const LINE_PLIES = 8;
 
@@ -52,6 +52,6 @@ export function repertoireOf(games) {
     scorePct: l.scored ? Math.round((l.score / l.scored) * 100) : null,
     accuracy: +(l.acc / l.games.length).toFixed(1),
     prepEndsPly: l.prepEnds.length ? Math.min(...l.prepEnds) : null,
-    games: l.games.sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+    games: l.games.sort((a, b) => pgnDateKey(b.date) - pgnDateKey(a.date)),
   })).sort((a, b) => a.color.localeCompare(b.color) || b.count - a.count);
 }

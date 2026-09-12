@@ -2,7 +2,7 @@
 import { listGames, listAllGames, loadGames, indexFingerprint, getDrills, getForeignDrillStores, getSettings, DEFAULT_USER } from './store.js';
 import { gamesForSubject } from './subjects.js';
 import { memo } from './memo.js';
-import { parseTimeControl, spentPerMove, resultScore, normalizeKey } from '../public/shared.js';
+import { parseTimeControl, spentPerMove, resultScore, normalizeKey, pgnDateKey } from '../public/shared.js';
 import { CATEGORIES } from './prompts.js';
 import { curveTendencies } from './tendencies.js';
 
@@ -71,7 +71,9 @@ export function aggregateGames(games) {
   let timePressure = 0, totalMoments = 0;
   const totalJudged = { inaccuracy: 0, mistake: 0, blunder: 0 };
 
-  for (const g of [...games].sort((a, b) => (a.headers.Date || '').localeCompare(b.headers.Date || '') || a.importedAt.localeCompare(b.importedAt))) {
+  // Chronological by parsed date (PGN dates are often unpadded, so a string
+  // sort would put July after October and skew the recent-versus-earlier trend).
+  for (const g of [...games].sort((a, b) => pgnDateKey(a.headers.Date) - pgnDateKey(b.headers.Date) || a.importedAt.localeCompare(b.importedAt))) {
     const color = g.playerColor;
     const p = g.analysis.summary[color];
     const score = resultScore(g.headers.Result, color);

@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fideIdFromHeaders } from './pgn.js';
+import { pgnDateKey } from '../public/shared.js';
 
 // The repo root. Every supported entry point (npm start, tests, and the bundled
 // Netlify function) runs with the working directory at the repo root, so cwd is
@@ -210,7 +211,7 @@ export async function listGames(userId = DEFAULT_USER) {
   }));
   return games.filter(Boolean)
     .filter(e => ownsGame(e, userId))
-    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt));
+    .sort((a, b) => pgnDateKey(b.date) - pgnDateKey(a.date) || b.importedAt.localeCompare(a.importedAt));
 }
 
 /** A short hash of which game files are in a list and which version of each:

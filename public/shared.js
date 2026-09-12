@@ -50,6 +50,17 @@ export function lichessUrl(sans) {
   return `https://lichess.org/analysis/pgn/${encodeURIComponent(fmtLine(sans))}`;
 }
 
+/** A sortable number for a PGN date, padded or not ("2026.7.29", "2026-07-29",
+ * "2026.??.??"): YYYYMMDD, with missing parts as zero, 0 when there is no year.
+ * String order ranks "2026.7.29" after "2026.10.01"; this does not. */
+export function pgnDateKey(s) {
+  const str = String(s || '');
+  const m = str.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
+  if (m) return (+m[1]) * 10000 + (+m[2]) * 100 + (+m[3]);
+  const y = str.match(/^(\d{4})/);
+  return y ? (+y[1]) * 10000 : 0;
+}
+
 /** Parse a PGN TimeControl header like "5400+30" or "600" into { base, inc } seconds. */
 export function parseTimeControl(tc) {
   const m = (tc || '').match(/^(\d+)(?:\+(\d+))?$/);

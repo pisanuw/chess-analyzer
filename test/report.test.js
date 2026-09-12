@@ -176,6 +176,17 @@ test('drill stats break down by kind, and quiet-position detection is reported',
   assert.equal(r.decoys.falsePositiveRate, 33); // 1 of 3 quiet positions mis-called
 });
 
+test('unpadded PGN dates sort chronologically in the timeline and the games list', async () => {
+  const { listGames } = await import('../server/store.js');
+  writeGame(dir, makeGame({ id: 'ffffffffff01', date: '2026.7.29', moments: [], plies: 2 }));
+  writeGame(dir, makeGame({ id: 'ffffffffff02', date: '2026.10.01', moments: [], plies: 2 }));
+  const r = await buildReport();
+  const at = id => r.timeline.findIndex(t => t.gameId === id);
+  assert.ok(at('ffffffffff01') < at('ffffffffff02'), 'July comes before October in the timeline');
+  const list = await listGames();
+  assert.ok(list.findIndex(g => g.id === 'ffffffffff02') < list.findIndex(g => g.id === 'ffffffffff01'), 'newest first in the list');
+});
+
 test('prep card renders focus areas, rules, and the clock line', async () => {
   const r = await buildReport();
   const notes = { 'hanging piece': { pattern: 'Hanging piece', count: 3, rule: 'Check every capture.', triggers: 'Loose pieces on open lines.', advice: 'Scan checks and captures before moving.' } };

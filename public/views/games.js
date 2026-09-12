@@ -1,6 +1,7 @@
 // Games list and PGN import.
 import { api, esc, toast, busy, session, orIfOffline } from '../api.js';
 import { makePager } from '../widgets.js';
+import { pgnDateKey } from '../shared.js';
 
 export async function gamesView(root) {
   const { settings } = await api.settings();
@@ -65,15 +66,9 @@ export async function gamesView(root) {
   const pg = makePager('gamesPageSize'); // 10 a page until the reader picks another size
 
   const matchesQuery = g => !query || [g.white, g.black, g.event, g.subject].some(s => (s || '').toLowerCase().includes(query));
-  // PGN dates are often not zero-padded ("2026.7.29"); sort on a numeric key so
-  // Sept does not rank above Oct.
-  const dnum = d => {
-    const s = String(d || '');
-    const m = s.match(/(\d{4})\D+(\d{1,2})\D+(\d{1,2})/);
-    if (m) return (+m[1]) * 10000 + (+m[2]) * 100 + (+m[3]);
-    const y = s.match(/^(\d{4})/);
-    return y ? (+y[1]) * 10000 : 0;
-  };
+  // PGN dates are often not zero-padded ("2026.7.29"); the shared numeric key
+  // (also the server's list order) keeps Sept from ranking above Oct.
+  const dnum = g => pgnDateKey(g);
   const sortVal = {
     date: g => dnum(g.date),
     white: g => (g.white || '').toLowerCase(),

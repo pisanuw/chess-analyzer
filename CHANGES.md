@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-12 (Implementing the round-2 report: one PGN date key everywhere)
+
+- PGN dates are often unpadded ("2026.7.29"), and a string sort ranks July after October. `scoutbook.js` and the Games page had each fixed this privately while `store.js` (the games list), `report.js` (the chronological order behind the timeline, the accuracy trend, and the recent-versus-earlier category trend), `repertoire.js`, and `subjects.js` (head to head) still string-sorted. One `pgnDateKey` in `public/shared.js` (YYYYMMDD, partial dates padded with zeros) now orders all of them and the Games page. Tests in `test/shared.test.js` and `test/report.test.js`.
+
 ## 2026-09-12 (Implementing the round-2 report: drill sync follows the game's owner)
 
 - `PUT /api/settings` re-scored every member's games after a threshold change but rebuilt only the primary member's drill ladder (`syncAllDrills()` with no user); it now loops every member, as the startup sync does. The colour-fix and name-fix routes (`POST /api/games/:id/player`, `/names`) synced the game's drills into the primary member's store regardless of `game.owner`, so another member's fixed game left their own ladder stale and polluted kai's; both now pass the owner (the analyse job already did). Test in `test/session.test.js`.
