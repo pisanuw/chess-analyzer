@@ -1,0 +1,27 @@
+#!/usr/bin/env node
+// A stand-in for the `claude` CLI binary, so llm.test.js can exercise the
+// real claudeCli() parsing logic (structured_output, the code-fence result
+// fallback, is_error, non-JSON stdout, a non-zero exit) without depending on
+// the actual CLI being installed or spending a real request. Selected by
+// prepending this file's directory to PATH before the child, and by name:
+// execFile('claude', ...) resolves whichever "claude" comes first on PATH.
+// The `-p <prompt>` argument picks the scripted response.
+const args = process.argv.slice(2);
+const prompt = args[args.indexOf('-p') + 1] || '';
+
+function reply(obj) { process.stdout.write(JSON.stringify(obj)); }
+
+if (prompt === 'FAIL_NONZERO') {
+  process.stderr.write('claude: rate limit exceeded (429)\n');
+  process.exit(1);
+} else if (prompt === 'FAIL_BADJSON') {
+  process.stdout.write('not json at all');
+} else if (prompt === 'FAIL_IS_ERROR') {
+  reply({ is_error: true, result: 'the model refused this request' });
+} else if (prompt === 'FAIL_NO_OUTPUT') {
+  reply({ is_error: false, result: 'just some prose, no JSON here' });
+} else if (prompt === 'FALLBACK_FENCED_JSON') {
+  reply({ is_error: false, result: '```json\n{"pattern":"fenced"}\n```', total_cost_usd: 0.01, modelUsage: { 'claude-x': {} } });
+} else {
+  reply({ is_error: false, structured_output: { pattern: 'ok', ply: 3 }, total_cost_usd: 0.02, modelUsage: { 'claude-x': {} } });
+}

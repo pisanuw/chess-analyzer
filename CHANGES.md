@@ -2,6 +2,13 @@
 
 Newest first.
 
+## 2026-09-12 (Implementing the improvement report: backend robustness, part 2)
+
+- Job queue (`server/jobs.js`) now runs two independent lanes, interactive (analyse/explain) and bulk (clash), each its own FIFO with its own runner, so one member's opponent-book parse can no longer starve another member's analysis or explanations.
+- New unit tests for three previously-untested foundational modules: `test/engine.test.js` drives the real `Engine` class (UCI line parsing, command queueing, timeout, stop) against a small fake UCI binary (`test/fixtures/fake-stockfish.mjs`); `test/llm.test.js` drives the real `claudeCli`/`complete`/`completeRetry` against a fake `claude` binary (`test/fixtures/claude`); `test/memo.test.js` covers `memo.js`'s LRU eviction and namespace isolation directly. None need Stockfish or the claude CLI installed.
+- `server/drills.js` (was ~650 lines) split: ease/interval math and the accepted-move band moved to `server/ease.js`, the quiet-position decoy heuristic to `server/decoys.js`, both re-exported from `drills.js` unchanged, so BRIEFING's "needs tuning from use" pieces can be iterated without touching the store-locking and review CRUD code. `server/clash.js` (was ~495 lines) split the same way: building the two source indexes (the expensive, book-parsing step) moved to `server/clashindex.js`, leaving `clash.js` as forest assembly, prediction-check, engine-extension, and narration, the trickiest and most likely to change piece, now on its own.
+- Attempted a directory-mtime cache for `store.js`'s `listGames` (to cut the per-request readdir-plus-stat-per-file cost) and reverted it: an in-place content overwrite of an existing game file (an editor, or `git pull` depending on how git writes it) does not change the containing directory's own mtime, only add/remove/rename does, so the cache could serve stale data after exactly the kind of external write `data/` is designed around. Not implemented; the report's other suggested fix (per-owner subdirectories) would also contradict the documented "ownership is a field, not a directory" decision.
+
 ## 2026-09-12 (Implementing the improvement report: backend robustness, part 1)
 
 - `completeRetry` (one retry for a transient CLI hiccup) moved to `llm.js` and is now used by every interactive LLM call site, not just the batch/explain job path: re-explain, prep-sheet generation, clash narration, and pattern synthesis.
