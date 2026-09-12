@@ -1,3 +1,12 @@
+# CHANGES
+
+Newest first.
+
+## 2026-09-12 (Pattern study notes synthesize themselves)
+
+- Pattern notes no longer wait for the admin to press the button per pattern. At the end of every explain job for an own game, `syncPatternNotes` (new `server/patternnotes.js`) synthesizes a note for each of the owner's patterns that newly reached 2 explained instances and refreshes a note once its pattern has gained 2 more instances since the note was written (report moments are newest first, so new evidence actually enters the prompt; the growth threshold keeps a backlog of explain jobs from re-buying the same note after every game). Synthesis cost lands on the job's cost line; a failed synthesis is logged and never fails the explain job. Manual LLM mode skips it. The Report page button remains as the admin's force-refresh and shares the same code path (`synthesizeNote`), as does the route. Backfilled from the existing games: 3 new notes for Kai (about $0.13 each); the other members have no explained own games yet and pick theirs up automatically. Tests: `test/patternnotes.test.js` (selection thresholds, legacy notes without a count, missing instances short-circuit before any LLM call).
+- Fixed `test/engine.test.js`'s `findStockfish` assertion, which expected `null` for a missing configured path: the function falls through to the machine's candidate list (the test's own name says so), so on any machine with stockfish installed (the dev Mac) it correctly returns that binary and the test failed. It now asserts the missing path is never returned, which holds everywhere.
+
 ## 2026-09-12 (Implementing the improvement report: pedagogy, part 3, and closing it out)
 
 - Prep sheets can now be generated with a "need" for this specific game (a must-win, or a safe draw is acceptable), reweighting `exploit_plan` and `openings` toward complicating or toward safety, from data the dossier already has (T conversion/hold rates, F out-of-book score), not new facts. A selector sits next to Generate/Regenerate on the Players dossier (`public/views/scout.js`); the choice is stored on the sheet and shown wherever it renders (`public/widgets.js`).

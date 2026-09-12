@@ -1,12 +1,11 @@
 // A member's private training surface: the weakness report and its card, the
 // repertoire, pattern study notes, puzzles, and the drill deck.
-import { getGame, getSettings, getPatternNotes, savePatternNotes } from '../store.js';
+import { getSettings, getPatternNotes } from '../store.js';
 import { buildReport, buildPrepCard } from '../report.js';
 import { buildRepertoire } from '../repertoire.js';
 import { dueDrills, visitorDrills, reviewDrill, undoReview, suspendDrill, restoreSuspended, recordDecoy } from '../drills.js';
 import { buildPuzzles } from '../puzzles.js';
-import { completeRetry } from '../llm.js';
-import { systemPrompt, patternSynthesisPrompt, PATTERN_SYNTH_SCHEMA } from '../prompts.js';
+import { synthesizeNote } from '../patternnotes.js';
 import { normalizeKey } from '../../public/shared.js';
 import { currentUser } from '../auth.js';
 import { isVisitor } from '../users.js';
@@ -47,23 +46,11 @@ export function registerTrainingRoutes(app) {
     const key = normalizeKey(name);
     const pat = report.patterns.find(p => normalizeKey(p.pattern) === key);
     if (!pat) return res.status(404).json({ error: 'pattern not found' });
-    const instances = [];
-    for (const ref of pat.moments.slice(0, 8)) {
-      const g = await getGame(ref.gameId);
-      const m = g?.analysis?.moves[ref.ply - 1];
-      const e = g?.explanations?.[ref.ply];
-      if (m && e) instances.push({ label: ref.label, date: ref.date, fen: m.fenBefore, san: m.san, bestSan: m.bestSan, judgment: m.judgment, explanation: e.explanation, key_question: e.key_question });
-    }
-    if (instances.length < 2) return res.status(400).json({ error: 'need at least 2 explained instances' });
-    const { output, costUsd, model } = await completeRetry(settings, {
-      system: systemPrompt(await studentRating(req, settings)),
-      prompt: patternSynthesisPrompt(pat.pattern, instances),
-      schema: PATTERN_SYNTH_SCHEMA,
-    });
-    const notes = await getPatternNotes(uid);
-    notes[key] = { pattern: pat.pattern, ...output, count: pat.count, model, costUsd, createdAt: new Date().toISOString() };
-    await savePatternNotes(notes, uid);
-    res.json({ note: notes[key] });
+    // The button always re-synthesizes, even when the automatic pass after an
+    // explain job would consider the note fresh; it is the admin's force-refresh.
+    const note = await synthesizeNote(pat, uid, settings, await studentRating(req, settings));
+    if (!note) return res.status(400).json({ error: 'need at least 2 explained instances' });
+    res.json({ note });
   }));
 
   // Free-solve puzzles derived from analysed games (no schedule). GET, so it also

@@ -18,7 +18,9 @@ function fakeEngine(extraArgs = []) {
 
 test('findStockfish resolves a configured path only if it exists, else falls through', () => {
   const missing = path.join(os.tmpdir(), 'not-a-real-stockfish-binary-xyz');
-  assert.equal(findStockfish(missing), null);
+  // Falls through to the machine's candidate list: a real stockfish on a dev
+  // Mac, null in CI. Either way the missing configured path is never returned.
+  assert.notEqual(findStockfish(missing), missing);
   const real = path.join(os.tmpdir(), `fake-stockfish-exists-${process.pid}`);
   writeFileSync(real, '#!/bin/sh\necho ok\n');
   chmodSync(real, 0o755);

@@ -7,6 +7,7 @@ import { LlmError, completeRetry } from './llm.js';
 import { flushCache } from './evalcache.js';
 import { systemPrompt, momentPrompt, momentsBatchPrompt, gameSummaryPrompt, gameSummarySystemPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutMomentsBatchPrompt, scoutGameSummaryPrompt, batchExplanationSchema, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA, CATEGORIES, timePressureOf } from './prompts.js';
 import { syncDrillsForGame } from './drills.js';
+import { syncPatternNotes } from './patternnotes.js';
 import { getUser } from './users.js';
 import { normalizeKey } from '../public/shared.js';
 
@@ -281,6 +282,22 @@ async function runExplain(job) {
   job.progress = job.total;
   const done = await updateGame(job.gameId, g => { g.status = 'explained'; });
   await syncDrillsForGame(done, settings, done.owner || DEFAULT_USER); // copy fresh categories/patterns onto the owner's drills
+  // Pattern study notes follow the explanations: synthesize any of the owner's
+  // patterns that newly reached two instances and refresh notes whose pattern
+  // has grown since (scout explanations feed the opponent's dossier, not the
+  // member's own study notes). A synthesis failure never fails the explain
+  // job: the game IS explained, and the next job or the Report page button
+  // catches the note up.
+  if (!scout) {
+    try {
+      job.stage = 'patterns';
+      const r = await syncPatternNotes(done.owner || DEFAULT_USER, { cancelled: () => job.cancelled });
+      job.costUsd += r.costUsd;
+      if (r.synthesized || r.failed) console.log(`[job ${job.id}] pattern notes: ${r.synthesized} synthesized${r.failed ? `, ${r.failed} failed` : ''} ($${r.costUsd.toFixed(2)})`);
+    } catch (err) {
+      console.error(`[job ${job.id}] pattern note sync failed: ${err.message}`);
+    }
+  }
 }
 
 /** Build one opponent's clash index (the synthetic gameId "clash:<fideId>" keys
