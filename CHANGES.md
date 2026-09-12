@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-12 (One Admin card for all home-machine claude analysis)
+
+- The Admin page gains "Claude analysis (home machine)": one card listing everything the claude subscription and the engine still owe, with a run button per row. `GET /api/admin/analysis-status` (admin) reports analysed games with unexplained moments (own and scout), opening-clash narrations that are missing, format-outdated, or older than a re-imported book (one per book and member, since the clash crosses each member's own openings with the book), and pattern notes awaiting synthesis; the endpoint only reports, so nothing starts by accident. "Explain all" queues the existing jobs (progress in the header). "Extend & narrate all" walks the pending book-member pairs sequentially: the engine first fills the prep-end leaves (`?extend=1`, cache-first), then the coach narrates the key lines, with a live progress line and per-item failures logged and skipped. "Synthesize" runs the new `POST /api/admin/pattern-notes/sync` (the same sync the explain job runs, across all members). Prep sheets stay on the Players page, referenced from the card.
+- `api.scoutClash`/`api.narrateClash` accept an explicit target member, and `req()` no longer appends the viewing-as `?user=` when a call already names its target.
+
 ## 2026-09-12 (Paging everywhere, visitors on the Admin page)
 
 - One pager for every long table (`makePager` in `public/widgets.js`): page buttons with first/last-plus-window ellipses, and a "Show 10/25/50/100/All" pull-down, the choice remembered per table in localStorage. The Games list moves from 50 a page to 10, the Players list from a "show all" collapse at 15 to the same 10-a-page pager (the opponent whose dossier is open below stays visible even when their row falls on another page), and the Activity log pages at 50. Sorting, filtering, or searching resets to page one; the bar hides entirely when the table fits the smallest size.

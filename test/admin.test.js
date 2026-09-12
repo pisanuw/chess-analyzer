@@ -80,3 +80,21 @@ test('request-access is public and validates the email', async () => {
   assert.equal((await ok.json()).ok, true);
   assert.equal((await post('/api/auth/request-access', { 'content-type': 'application/json' }, { email: 'bad', reason: 'x' })).status, 400);
 });
+
+test('GET /api/admin/analysis-status reports pending claude work; admin only', async () => {
+  assert.equal((await fetch(base + '/api/admin/analysis-status', { headers: member })).status, 403);
+  const res = await fetch(base + '/api/admin/analysis-status', { headers: admin });
+  assert.equal(res.status, 200);
+  const s = await res.json();
+  assert.deepEqual(Object.keys(s).sort(), ['explain', 'narrations', 'patternNotes']);
+  assert.equal(typeof s.explain.own, 'number');
+  assert.equal(typeof s.explain.scout, 'number');
+  assert.ok(Array.isArray(s.narrations) && Array.isArray(s.patternNotes));
+});
+
+test('POST /api/admin/pattern-notes/sync is admin only and reports per member', async () => {
+  assert.equal((await post('/api/admin/pattern-notes/sync', member, {})).status, 403);
+  const res = await post('/api/admin/pattern-notes/sync', admin, {});
+  assert.equal(res.status, 200);
+  assert.ok(Array.isArray((await res.json()).results)); // empty data dir: nothing pending, no LLM call
+});

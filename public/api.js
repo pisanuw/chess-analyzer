@@ -2,8 +2,9 @@
 async function req(method, url, body) {
   // An admin "viewing as" a member: every GET under /api carries ?user=<id> so
   // the server scopes reports, drills, and prep to that member. Writes never
-  // carry it: looking as someone must not act as them.
-  if (method === 'GET' && session.viewAs && url.startsWith('/api/') && !url.startsWith('/api/auth') && !url.startsWith('/api/users')) {
+  // carry it: looking as someone must not act as them. A call that already
+  // names its target user (the Admin page's bulk per-member runs) wins.
+  if (method === 'GET' && session.viewAs && url.startsWith('/api/') && !url.startsWith('/api/auth') && !url.startsWith('/api/users') && !/[?&]user=/.test(url)) {
     url += (url.includes('?') ? '&' : '?') + 'user=' + encodeURIComponent(session.viewAs);
   }
   let res;
@@ -208,8 +209,15 @@ export const api = {
   scoutImport: ({ pgn, fideId, name, filename }) => req('POST', '/api/scout/import', { pgn, fideId, name, filename }),
   scoutBook: (fideId, tc = null) => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}${tc && tc !== 'all' ? `?tc=${tc}` : ''}`),
   promoteScout: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/promote`, {}),
-  scoutClash: (fideId, opts = {}) => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}/clash${opts.extend ? '?extend=1' : ''}`),
-  narrateClash: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/clash/narrate`, {}),
+  // opts.user: the member whose openings the clash crosses (admin only; the
+  // Admin page's bulk extend/narrate runs once per member).
+  scoutClash: (fideId, opts = {}) => {
+    const q = [opts.extend ? 'extend=1' : '', opts.user ? `user=${encodeURIComponent(opts.user)}` : ''].filter(Boolean).join('&');
+    return req('GET', `/api/scout/book/${encodeURIComponent(fideId)}/clash${q ? `?${q}` : ''}`);
+  },
+  narrateClash: (fideId, user = null) => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/clash/narrate${user ? `?user=${encodeURIComponent(user)}` : ''}`, {}),
+  adminAnalysisStatus: () => req('GET', '/api/admin/analysis-status'),
+  syncPatternNotes: () => req('POST', '/api/admin/pattern-notes/sync', {}),
   players: () => req('GET', '/api/players'),
   prep: (subject, color = 'white', tc = null) => req('GET', `/api/prep/${encodeURIComponent(subject)}?color=${color}${tc && tc !== 'all' ? `&tc=${tc}` : ''}`),
   prepMark: noopForVisitor((id, correct) => req('POST', '/api/prep/mark', { id, correct })),

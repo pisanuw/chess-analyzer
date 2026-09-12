@@ -53,9 +53,15 @@ export async function adminView(root) {
     <details class="acc" open><summary><span class="acc-title">Roster (${users.length})</span></summary><div class="acc-body">
       <table><thead><tr><th>Name</th><th>Role</th><th>FIDE</th><th>Emails</th><th></th></tr></thead>
       <tbody id="roster-body">${users.map(row).join('')}</tbody></table>
+    </div></details>
+
+    <details class="acc" open><summary><span class="acc-title">Claude analysis (home machine)</span></summary><div class="acc-body">
+      <p class="muted" style="margin-top:0">Everything the claude subscription and the engine still owe, in one place. Explanations run through the job queue (progress in the header); the clash and pattern-note runs happen right here and report as they go.</p>
+      <div id="llm-work"><span class="muted">Checking…</span></div>
     </div></details>`;
 
   const reload = () => adminView(root);
+  renderLlmWork(root.querySelector('#llm-work'));
 
   root.querySelector('#add-visitor').onclick = () => busy(root.querySelector('#add-visitor'), async () => {
     const email = root.querySelector('#v-email').value.trim();
@@ -78,5 +84,70 @@ export async function adminView(root) {
     if (!confirm('Remove this user from the allowlist?')) return;
     try { await api.removeUser(b.dataset.remove); toast('Removed'); reload(); }
     catch (err) { toast(err.message || 'Could not remove', true); }
+  }));
+}
+
+/** The pending home-machine work, one row per kind with a run button. Bulk
+ * runs go sequentially (one CLI call at a time, like the job queue) with a
+ * live progress line; a failed item is reported and skipped, not fatal. */
+async function renderLlmWork(el) {
+  let status;
+  try { status = await api.adminAnalysisStatus(); }
+  catch (err) { el.innerHTML = `<span class="muted">Could not check: ${esc(err.message)}</span>`; return; }
+  const narrTotal = status.narrations.reduce((n, b) => n + b.pending.length, 0);
+  const patTotal = status.patternNotes.reduce((n, m) => n + m.pending, 0);
+  const explainTotal = status.explain.own + status.explain.scout;
+  const rows = [];
+  rows.push(explainTotal
+    ? `<tr><td>Explanations</td><td>${explainTotal} analysed game${explainTotal === 1 ? '' : 's'} with unexplained moments (${status.explain.own} own, ${status.explain.scout} scout)</td>
+       <td><button class="small primary" id="llm-explain">Explain all</button></td></tr>`
+    : '<tr><td>Explanations</td><td class="muted">every analysed game is explained</td><td></td></tr>');
+  rows.push(narrTotal
+    ? `<tr><td>Opening clash</td><td>${narrTotal} narration${narrTotal === 1 ? '' : 's'} missing or outdated across ${status.narrations.length} opponent book${status.narrations.length === 1 ? '' : 's'} (one per member: their openings, their lines)</td>
+       <td><button class="small primary" id="llm-narrate" title="For each book and member: extend the prep-end leaves with the engine, then have the coach explain the key lines">Extend &amp; narrate all</button></td></tr>`
+    : '<tr><td>Opening clash</td><td class="muted">every book has a current narration for every member</td><td></td></tr>');
+  rows.push(patTotal
+    ? `<tr><td>Pattern notes</td><td>${patTotal} pattern${patTotal === 1 ? '' : 's'} ready to synthesize (${status.patternNotes.map(m => `${esc(m.user)}: ${m.pending}`).join(', ')})</td>
+       <td><button class="small primary" id="llm-patterns" title="About a minute per note">Synthesize</button></td></tr>`
+    : '<tr><td>Pattern notes</td><td class="muted">every recurring pattern has a current note</td><td></td></tr>');
+  rows.push('<tr><td>Prep sheets</td><td class="muted">generated and refreshed per opponent from the <a href="#/scout">Players</a> page (the dots show which are ready, to do, or stale)</td><td></td></tr>');
+  el.innerHTML = `<table><thead><tr><th>Work</th><th>Pending</th><th></th></tr></thead><tbody>${rows.join('')}</tbody></table>
+    <p class="muted" id="llm-progress" hidden></p>`;
+  const progress = el.querySelector('#llm-progress');
+  const say = msg => { progress.hidden = false; progress.textContent = msg; };
+
+  el.querySelector('#llm-explain')?.addEventListener('click', e => busy(e.currentTarget, async () => {
+    try {
+      const r = await api.analyseAll({ explain: true });
+      toast(`${r.queued.length} job${r.queued.length === 1 ? '' : 's'} queued; progress shows in the header`);
+    } catch (err) { toast(err.message, true); }
+  }));
+
+  el.querySelector('#llm-narrate')?.addEventListener('click', e => busy(e.currentTarget, async () => {
+    const work = status.narrations.flatMap(b => b.pending.map(p => ({ fideId: b.fideId, name: b.name, user: p.user })));
+    let done = 0, failed = 0;
+    for (const w of work) {
+      say(`Opening clash ${done + failed + 1}/${work.length}: ${w.name} for ${w.user} (extending leaves, then narrating)…`);
+      try {
+        await api.scoutClash(w.fideId, { extend: true, user: w.user }); // engine fills the prep-end leaves (cache-first)
+        await api.narrateClash(w.fideId, w.user);                       // the coach explains the key lines
+        done++;
+      } catch (err) {
+        failed++;
+        console.error(`narration failed for ${w.name}/${w.user}: ${err.message}`);
+      }
+    }
+    say(`Opening clash: ${done} narrated${failed ? `, ${failed} failed (see the browser console)` : ''}.`);
+    renderLlmWork(el);
+  }));
+
+  el.querySelector('#llm-patterns')?.addEventListener('click', e => busy(e.currentTarget, async () => {
+    say(`Synthesizing ${patTotal} pattern note${patTotal === 1 ? '' : 's'} (about a minute each)…`);
+    try {
+      const { results } = await api.syncPatternNotes();
+      const made = results.reduce((n, r) => n + r.synthesized, 0);
+      say(`Pattern notes: ${made} synthesized.`);
+    } catch (err) { say(`Pattern notes failed: ${err.message}`); }
+    renderLlmWork(el);
   }));
 }
