@@ -10,7 +10,7 @@ import { assocsFromHeaders, recordAssociations, lookupFideId } from '../players.
 import { searchFide, fideProfileName } from '../fide.js';
 import { enqueue } from '../jobs.js';
 import { getEnginePool } from '../enginepool.js';
-import { complete } from '../llm.js';
+import { completeRetry } from '../llm.js';
 import { buildReport } from '../report.js';
 import { buildRepertoire } from '../repertoire.js';
 import { subjectFideId, headToHead } from '../subjects.js';
@@ -176,7 +176,7 @@ export function registerScoutRoutes(app) {
     if (!/^\d{3,}$/.test(fideId)) return res.status(400).json({ error: 'a numeric FIDE id is required (from the filename, e.g. _FIDE30958130_)' });
     const chunks = splitPgn(pgn);
     if (chunks.length > SCOUT_MAX_GAMES) return res.status(413).json({ error: `too many games in one file (${chunks.length}); the book tier caps at ${SCOUT_MAX_GAMES}` });
-    const parsed = parsePgnGames(chunks);
+    const parsed = await parsePgnGames(chunks);
     const ok = parsed.filter(r => r.ok && r.game.moves.length).map(r => r.game);
     const failed = parsed.length - ok.length;
     // Subject name: explicit, else the player present in the most games (a clean
@@ -327,7 +327,7 @@ export function registerScoutRoutes(app) {
     const lines = clashPrincipalLines(clash);
     if (!lines.length) return res.status(400).json({ error: 'no predicted lines to narrate yet' });
     const settings = await getSettings();
-    const { output, costUsd, model } = await complete(settings, {
+    const { output, costUsd, model } = await completeRetry(settings, {
       system: scoutSystemPrompt(await studentRating(req, settings)),
       prompt: clashLinePrompt(book.name, lines),
       schema: CLASH_NARRATION_SCHEMA,
@@ -387,7 +387,7 @@ export function registerScoutRoutes(app) {
     const uid = await effectiveUser(req);
     const fideId = await subjectFideId(subject);
     const extra = await prepExtra(req, uid, subject, fideId, settings);
-    const { output, costUsd, model } = await complete(settings, {
+    const { output, costUsd, model } = await completeRetry(settings, {
       system: scoutSystemPrompt(extra.student.rating),
       prompt: prepSheetPrompt(subject, report, repertoire, extra),
       schema: PREP_SHEET_SCHEMA,
@@ -404,7 +404,7 @@ export function registerScoutRoutes(app) {
   // admin rather than running the LLM (generation stays on the home machine). Not
   // admin-gated (anyone signed in may request); rate-limited to prevent spam.
   app.post('/api/scout/:subject/prepsheet/request', wrap(async (req, res) => {
-    if (!(await rateLimit(req))) return res.status(429).json({ error: 'too many requests, try again later' });
+    if (!(await rateLimit(req, 'prep-request'))) return res.status(429).json({ error: 'too many requests, try again later' });
     const to = adminEmail();
     if (!to) return res.status(503).json({ error: 'prep-sheet requests are not configured (no admin email)' });
     const subject = req.params.subject;
@@ -424,7 +424,7 @@ export function registerScoutRoutes(app) {
   // Free-form prep-sheet request by FIDE id: the person need not be scouted yet.
   // Emails the admin so they can look the player up, scout them, and build it.
   app.post('/api/prep-request', wrap(async (req, res) => {
-    if (!(await rateLimit(req))) return res.status(429).json({ error: 'too many requests, try again later' });
+    if (!(await rateLimit(req, 'prep-request'))) return res.status(429).json({ error: 'too many requests, try again later' });
     const to = adminEmail();
     if (!to) return res.status(503).json({ error: 'prep-sheet requests are not configured (no admin email)' });
     const fideId = String(req.body?.fideId || '').trim();

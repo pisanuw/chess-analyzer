@@ -38,7 +38,7 @@ export function registerAuthRoutes(app) {
   // (under /api/auth/, so exempt from the auth gate) and registered before the
   // read-only gate so it works on the hosted mirror, where such requests happen.
   app.post('/api/auth/request-access', (req, res) => (async () => {
-    if (!(await rateLimit(req))) return res.status(429).json({ error: 'too many requests, try again later' });
+    if (!(await rateLimit(req, 'access-request'))) return res.status(429).json({ error: 'too many requests, try again later' });
     const to = adminEmail();
     if (!to) return res.status(503).json({ error: 'access requests are not configured' });
     const email = String(req.body?.email || '').trim();

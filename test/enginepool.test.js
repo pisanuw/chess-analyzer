@@ -95,7 +95,7 @@ test('poolAnalyse: an onDone error (cancellation) stops dispatch and propagates'
 
 test('analyseGame accepts a bare engine and a multi-engine pool with identical results', async () => {
   const pgn = `[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0`;
-  const game = { ...parsePgnFile(pgn)[0].game, playerColor: 'white' };
+  const game = { ...(await parsePgnFile(pgn))[0].game, playerColor: 'white' };
   const settings = { engineDepth: 10, engineMultiPv: 1, momentThreshold: 12 };
   const single = await analyseGame(fakeEngine('solo'), game, settings, null);
   const pooled = await analyseGame(makePool([fakeEngine('x', { delay: 2 }), fakeEngine('y')]), game, settings, null);
@@ -111,7 +111,7 @@ test('analyseGame accepts a bare engine and a multi-engine pool with identical r
 
 test('analyseGame reports progress as completed positions and honours cancellation', async () => {
   const pgn = `[White "A"]\n[Black "B"]\n\n1. d4 d5 2. c4 e6 3. Nc3 Nf6 *`;
-  const game = { ...parsePgnFile(pgn)[0].game, playerColor: 'white' };
+  const game = { ...(await parsePgnFile(pgn))[0].game, playerColor: 'white' };
   const settings = { engineDepth: 10, engineMultiPv: 1 };
   const seen = [];
   await analyseGame(makePool([fakeEngine('p'), fakeEngine('q')]), game, settings, (done, total, depth) => {
@@ -141,7 +141,7 @@ function droppyEngine(label, { alwaysEmpty = false } = {}) {
 
 test('analyseGame retries once when the engine returns no score lines, never storing cp 0', async () => {
   const pgn = `[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0`;
-  const game = { ...parsePgnFile(pgn)[0].game, playerColor: 'white' };
+  const game = { ...(await parsePgnFile(pgn))[0].game, playerColor: 'white' };
   const { moves } = await analyseGame(droppyEngine('flaky'), game, { engineDepth: 10, engineMultiPv: 1, momentThreshold: 12 }, null);
   assert.equal(moves.length, 6);
   // The retry supplied cp 20 (which becomes +/-20 in White's perspective per
@@ -151,7 +151,7 @@ test('analyseGame retries once when the engine returns no score lines, never sto
 
 test('analyseGame fails loudly when a position yields no evaluation even on retry', async () => {
   const pgn = `[White "A"]\n[Black "B"]\n[Result "1-0"]\n\n1. e4 e5 2. Nf3 Nc6 1-0`;
-  const game = { ...parsePgnFile(pgn)[0].game, playerColor: 'white' };
+  const game = { ...(await parsePgnFile(pgn))[0].game, playerColor: 'white' };
   await assert.rejects(
     analyseGame(droppyEngine('dead', { alwaysEmpty: true }), game, { engineDepth: 10, engineMultiPv: 1 }, null),
     /no evaluation/);

@@ -2,6 +2,15 @@
 
 Newest first.
 
+## 2026-09-12 (Implementing the improvement report: backend robustness, part 1)
+
+- `completeRetry` (one retry for a transient CLI hiccup) moved to `llm.js` and is now used by every interactive LLM call site, not just the batch/explain job path: re-explain, prep-sheet generation, clash narration, and pattern synthesis.
+- `http.js`'s `wrap()` now returns a generic "Internal server error" for an uncaught 500 whose error carries a Node system `err.code` (fs/network internals with a path or host), while leaving every deliberately thrown, developer-written message (still the large majority of thrown errors, e.g. "Stockfish not found...") untouched.
+- An admin using `?user=<id>` to view another member's report/drills/games now gets one audit-log entry per admin/target pair per 15 minutes (`server/http.js`), instead of leaving no trace at all; unthrottled would have drowned the mutation log in routine polling traffic.
+- Sign-in rate limiting (`server/auth.js`) is now scoped per action (password login, magic-link request, prep-sheet email request, access request) instead of one shared per-IP bucket, so heavy legitimate use of one no longer locks a client out of another.
+- PGN parsing (`server/pgn.js` `parsePgnGames`) yields to the event loop every 20 games instead of running as one long synchronous stretch, for both ordinary imports and scout-book imports (the latter already flagged as blocking the event loop for ~5s on a large book).
+- `sweepTmpFiles` (`server/store.js`) now walks the whole `data/` tree recursively (games/, scouts/, users/<id>/, ...) instead of only the top level and games/, so a crash-stranded `.tmp` file anywhere gets cleaned up; it still never descends into a nested `data/.git`.
+
 ## 2026-09-12 (Implementing the improvement report: frontend fixes and a11y)
 
 - Shared `linesList` helper in `widgets.js` replaces the five copy-pasted engine-lines blocks in puzzles/drills/prep/game views (the game view's clickable, move-numbered variant included via options).

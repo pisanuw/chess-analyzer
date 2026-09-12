@@ -25,43 +25,52 @@ function clientIp(req) {
   return String(req.headers['x-nf-client-connection-ip'] || req.ip || '?').trim();
 }
 
-const throttleKey = ip => `login-throttle:${ip}`;
+// Each action class gets its own bucket per client: heavy legitimate use of
+// one (prep-sheet requests from a shared office IP, say) must not lock out a
+// login attempt from the same IP. `scope` names the action; unscoped callers
+// (none left below) would have shared the 'login' bucket, kept as the default
+// for that reason.
+const throttleKey = (ip, scope) => `login-throttle:${scope}:${ip}`;
 
-/** Count this attempt against the per-client window and report whether it is
- * allowed. On the hosted copy the counter lives in Supabase so it binds across
- * the (otherwise memory-isolated) serverless instances; locally, and whenever
- * the store is unreachable, an in-process Map is used so a storage hiccup can
- * never lock a legitimate user out. */
-async function allowAttempt(ip, now) {
+/** Count this attempt against the per-client, per-scope window and report
+ * whether it is allowed. On the hosted copy the counter lives in Supabase so
+ * it binds across the (otherwise memory-isolated) serverless instances;
+ * locally, and whenever the store is unreachable, an in-process Map is used
+ * so a storage hiccup can never lock a legitimate user out. */
+async function allowAttempt(ip, now, scope = 'login') {
+  const key = throttleKey(ip, scope);
   if (kvEnabled()) {
     try {
-      const cur = await kvGet(throttleKey(ip));
+      const cur = await kvGet(key);
       let n = cur?.n || 0;
       let resetAt = cur?.resetAt || now + WINDOW_MS;
       if (now > resetAt) { n = 0; resetAt = now + WINDOW_MS; }
       if (n >= MAX_ATTEMPTS) return false;
-      await kvPut(throttleKey(ip), { n: n + 1, resetAt });
+      await kvPut(key, { n: n + 1, resetAt });
       return true;
     } catch { /* store down: fall through to the in-memory limiter */ }
   }
-  const a = attempts.get(ip) || { n: 0, resetAt: now + WINDOW_MS };
+  const a = attempts.get(key) || { n: 0, resetAt: now + WINDOW_MS };
   if (now > a.resetAt) { a.n = 0; a.resetAt = now + WINDOW_MS; }
   if (a.n >= MAX_ATTEMPTS) return false;
   a.n++;
-  attempts.set(ip, a);
+  attempts.set(key, a);
   return true;
 }
 
 /** Reset a client's window after a successful login. */
-async function clearAttempts(ip) {
-  attempts.delete(ip);
-  if (kvEnabled()) { try { await kvPut(throttleKey(ip), { n: 0, resetAt: Date.now() + WINDOW_MS }); } catch {} }
+async function clearAttempts(ip, scope = 'login') {
+  attempts.delete(throttleKey(ip, scope));
+  if (kvEnabled()) { try { await kvPut(throttleKey(ip, scope), { n: 0, resetAt: Date.now() + WINDOW_MS }); } catch {} }
 }
 
-/** Per-client sign-in rate limit, shared by password login and magic-link
- * requests: counts this attempt against the hourly window; false when over. */
-export async function rateLimit(req) {
-  return allowAttempt(clientIp(req), Date.now());
+/** Per-client rate limit, scoped per action class (password login has its own
+ * call below; magic-link requests, prep-sheet email requests, and the
+ * request-access form each pass their own `scope`) so one action's heavy use
+ * cannot lock a client out of another. Counts this attempt against the hourly
+ * window; false when over. */
+export async function rateLimit(req, scope = 'login') {
+  return allowAttempt(clientIp(req), Date.now(), scope);
 }
 
 const secret = () => crypto.createHash('sha256').update('cookie:' + password()).digest();
@@ -195,9 +204,9 @@ export function logoutRoute(req, res) {
 
 export async function loginRoute(req, res) {
   const ip = clientIp(req);
-  if (!(await allowAttempt(ip, Date.now()))) return res.status(429).json({ error: 'too many attempts, try again in an hour' });
+  if (!(await allowAttempt(ip, Date.now(), 'password'))) return res.status(429).json({ error: 'too many attempts, try again in an hour' });
   if (!passwordOk(req.body?.password)) return res.status(401).json({ error: 'wrong password' });
-  await clearAttempts(ip);
+  await clearAttempts(ip, 'password');
   logEvent({ action: 'login', detail: 'password', userId: 'admin', ip });
   const exp = Date.now() + COOKIE_DAYS * DAY_S * 1000;
   res.setHeader('Set-Cookie', `auth=${sign(exp)}; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=${COOKIE_DAYS * DAY_S}`);

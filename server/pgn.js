@@ -98,16 +98,25 @@ export function fideIdFromHeaders(headers, color) {
   return null;
 }
 
+// How many games to parse before yielding to the event loop: an import of the
+// capped MAX_IMPORT_GAMES size runs as one long synchronous stretch otherwise,
+// blocking every other request (including other users' page loads) until it
+// finishes; this keeps each stretch short enough that a request slotted in
+// between chunks is not stuck behind the whole import.
+const YIELD_EVERY = 20;
+
 /** Parse already-split game chunks (see splitPgn). Callers that want to bound
  * the game count split first, check the length, then parse only if under the
- * cap, so a huge paste is rejected before the synchronous parse runs. */
-export function parsePgnGames(chunks) {
+ * cap, so a huge paste is rejected before the parse runs. Async so it can
+ * yield periodically; a small chunk resolves in the same tick either way. */
+export async function parsePgnGames(chunks) {
   const results = [];
-  for (const g of chunks) {
+  for (let i = 0; i < chunks.length; i++) {
+    if (i > 0 && i % YIELD_EVERY === 0) await new Promise(r => setImmediate(r));
     try {
-      results.push({ ok: true, game: parseGame(g) });
+      results.push({ ok: true, game: parseGame(chunks[i]) });
     } catch (err) {
-      results.push({ ok: false, error: err.message, snippet: g.slice(0, 200) });
+      results.push({ ok: false, error: err.message, snippet: chunks[i].slice(0, 200) });
     }
   }
   return results;

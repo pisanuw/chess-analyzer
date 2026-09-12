@@ -3,7 +3,7 @@ import { getEnginePool } from './enginepool.js';
 import { analyseGame, summarize } from './analyze.js';
 import { getGame, saveGame, getSettings, listAllGames, listScoutBooks, DEFAULT_USER } from './store.js';
 import { ensureClashIndex } from './clash.js';
-import { complete, LlmError } from './llm.js';
+import { LlmError, completeRetry } from './llm.js';
 import { flushCache } from './evalcache.js';
 import { systemPrompt, momentPrompt, momentsBatchPrompt, gameSummaryPrompt, gameSummarySystemPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutMomentsBatchPrompt, scoutGameSummaryPrompt, batchExplanationSchema, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA, CATEGORIES, timePressureOf } from './prompts.js';
 import { syncDrillsForGame } from './drills.js';
@@ -177,20 +177,6 @@ export function sanitizeExplanation(e, known = []) {
  * of it; chunks of this size keep each call bounded and the loss small. */
 export const BATCH_MAX = 8;
 const chunk = (xs, n) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, (i + 1) * n));
-
-/** One retry for transient CLI failures (timeout, malformed output); anything
- * else propagates. A minute-long call failing at moment 5 of 6 should not
- * fail the whole job when a second attempt would do. */
-async function completeRetry(settings, req) {
-  try { return await complete(settings, req); } catch (err) {
-    if (!(err instanceof LlmError)) throw err;
-    // Back off longer for a rate/usage limit than for a transient timeout or a
-    // one-off malformed reply, so the single retry is not wasted racing a cap.
-    const limited = /limit|rate|quota|overloaded|429|529/i.test(err.message || '');
-    await new Promise(r => setTimeout(r, limited ? 30000 : 2000));
-    return complete(settings, req);
-  }
-}
 
 async function runExplain(job) {
   const settings = await getSettings();
