@@ -495,10 +495,22 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
   return { body, evidence };
 }
 
-/** One-page preparation sheet for a subject, from their aggregated dossier. */
+// What the student needs from THIS specific game reweights which plan steps
+// and lines the sheet leans on: the same opponent, the same data, but a
+// must-win calls for complicating and a must-not-lose for safety, using
+// signals the dossier already carries (T conversion/hold rates, F out-of-book
+// score), not new data. 'either' (the default) asks for the balanced plan.
+const NEED_FRAMING = {
+  win: 'The student NEEDS A WIN in this specific game (a must-win round, or must catch up on tiebreak). Weight exploit_plan and openings toward complicating: prefer lines and plans that keep tension and create winning chances, using where the opponent converts or defends worst, even at some added risk to the student\'s own position.',
+  draw: 'A draw is an ACCEPTABLE OR PREFERRED result in this specific game (protecting a lead, or a must-not-lose spot). Weight exploit_plan and openings toward safety: prefer solid lines that sidestep the opponent\'s strengths, favour simplifying once ahead, and avoid needless risk.',
+};
+
+/** One-page preparation sheet for a subject, from their aggregated dossier.
+ * `extra.need`: 'win' | 'draw' | 'either' (default), see NEED_FRAMING. */
 export function prepSheetPrompt(subjectName, report, repertoire, extra = {}) {
   const subject = field(subjectName);
   const { body } = prepContext(subjectName, report, repertoire, extra);
+  const framing = NEED_FRAMING[extra.need];
   return `${prepSheetInstructions()}
 
 ---
@@ -507,7 +519,7 @@ ${body}
 
 ---
 
-Write ${subject}'s preparation sheet now, filling every field. Use only the data above; do not invent openings, lines, or tendencies that are not supported by it. Every plan step, opening row, and cue lists the evidence ids it rests on.`;
+${framing ? `${framing}\n\n` : ''}Write ${subject}'s preparation sheet now, filling every field. Use only the data above; do not invent openings, lines, or tendencies that are not supported by it. Every plan step, opening row, and cue lists the evidence ids it rests on.`;
 }
 
 /** The evidence map a generated sheet is validated against and displayed with. */

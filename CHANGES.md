@@ -1,4 +1,7 @@
-## 2026-09-12 (Implementing the improvement report: pedagogy, part 2)
+## 2026-09-12 (Implementing the improvement report: pedagogy, part 3, and closing it out)
+
+- Prep sheets can now be generated with a "need" for this specific game (a must-win, or a safe draw is acceptable), reweighting `exploit_plan` and `openings` toward complicating or toward safety, from data the dossier already has (T conversion/hold rates, F out-of-book score), not new facts. A selector sits next to Generate/Regenerate on the Players dossier (`public/views/scout.js`); the choice is stored on the sheet and shown wherever it renders (`public/widgets.js`).
+- This closes out every item in IMPROVEMENT-REPORT.md: 27 of 28 implemented across three sessions (frontend, backend, pedagogy); the one exception (a directory-mtime cache for `listGames`) was attempted, found to break external-write detection, and reverted, recorded above.
 
 - Sparring at the opponent's Elo alone trains against "someone their rating," not "someone who plays like them": the Prepare page's "Play a predicted position out" card now names their conversion and hold rates (from `report.tendencies`, already computed) so the plan (complicate, or keep it simple) matches their documented style, not just their number.
 - A new `earlyDeviationPositions` (`server/prep.js`) rehearses a real but less common opponent try in the first few moves, not only the deep, tree-exhausted middlegames `sparringPositions` finds: the likeliest surprise against someone new is move two or three going somewhere unexpected, not a resource shortage ten moves in.

@@ -390,7 +390,12 @@ export function registerScoutRoutes(app) {
     const settings = await getSettings();
     const uid = await effectiveUser(req);
     const fideId = await subjectFideId(subject);
+    // What the student needs from this specific game (a must-win round, a
+    // must-not-lose spot, or no preference): reweights the plan the model
+    // writes, using dossier data that is already there, not a new fact.
+    const need = ['win', 'draw'].includes(req.body?.need) ? req.body.need : null;
     const extra = await prepExtra(req, uid, subject, fideId, settings);
+    if (need) extra.need = need;
     const { output, costUsd, model } = await completeRetry(settings, {
       system: scoutSystemPrompt(extra.student.rating),
       prompt: prepSheetPrompt(subject, report, repertoire, extra),
@@ -399,7 +404,7 @@ export function registerScoutRoutes(app) {
     const evidence = prepSheetEvidence(subject, report, repertoire, extra);
     const sheets = await getPrepSheets();
     const key = sheetKey(uid, subject);
-    sheets[key] = { ...validateSheet(output, evidence), evidence, student: uid, games: report.games, version: prepSheetVersion(), model, costUsd, createdAt: new Date().toISOString() };
+    sheets[key] = { ...validateSheet(output, evidence), evidence, student: uid, games: report.games, version: prepSheetVersion(), need, model, costUsd, createdAt: new Date().toISOString() };
     await savePrepSheets(sheets);
     res.json({ prepSheet: sheets[key] });
   }));

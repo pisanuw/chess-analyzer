@@ -50,6 +50,15 @@ on a phone). It must be scannable in seconds, not read like an essay.
   compared side by side. Keep each value to a few words.
 - Plain punctuation: commas, colons, parentheses. Never use em dashes.
 
+## What the student needs from this game
+
+The request can say the student needs a win, is fine with (or prefers) a
+draw, or either. When given, this reweights exploit_plan and openings toward
+complicating (a must-win) or toward safety (a draw is acceptable), using
+data already in the dossier (T conversion/hold rates, F out-of-book score);
+it does not add or invent anything new. With no preference stated, write the
+balanced plan as before.
+
 ## Structure (fill every field, except structures which is omitted when there is no whole-history habit data)
 
 - **headline**: one short sentence, the single most useful thing to know before

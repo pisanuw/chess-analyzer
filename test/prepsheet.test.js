@@ -70,6 +70,16 @@ test('prepSheetPrompt still works with only the analysed subset, and the schema 
   assert.ok(ev.E1 && !ev.L1);
 });
 
+test('prepSheetPrompt reweights the plan toward complicating or safety when the student has a specific need', () => {
+  const balanced = prepSheetPrompt('Karpov, A', report, repertoire);
+  assert.ok(!balanced.includes('NEEDS A WIN') && !balanced.includes('ACCEPTABLE OR PREFERRED'), 'no preference: no framing added');
+  const win = prepSheetPrompt('Karpov, A', report, repertoire, { need: 'win' });
+  assert.ok(win.includes('NEEDS A WIN') && win.includes('complicating'));
+  const draw = prepSheetPrompt('Karpov, A', report, repertoire, { need: 'draw' });
+  assert.ok(draw.includes('ACCEPTABLE OR PREFERRED') && draw.includes('safety'));
+  assert.ok(!prepSheetPrompt('Karpov, A', report, repertoire, { need: 'nonsense' }).includes('NEEDS A WIN'), 'an unrecognised need is ignored, not treated as a preference');
+});
+
 test('validateSheet keeps only issued ids, flags uncited items, and tolerates plain strings', () => {
   const evidence = { E1: { text: 'x' }, P1: { text: 'y' }, F1: { text: 'z' }, S1: { text: 'w' } };
   const out = validateSheet({

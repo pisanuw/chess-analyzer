@@ -28,7 +28,9 @@ export function prepSheetBody(sheet) {
       : '').join('');
   };
   const text = (item, key) => esc(typeof item === 'string' ? item : item[key]);
+  const needLabel = { win: 'Plan weighted toward a must-win: complicate.', draw: 'Plan weighted toward a safe draw.' }[sheet.need] || '';
   return `<div class="prep-sheet">
+    ${needLabel ? `<p class="muted"><small>${needLabel}</small></p>` : ''}
     ${sheet.headline ? `<p class="prep-headline">${esc(sheet.headline)}</p>` : ''}
     ${rows.length ? `<h3>Profile</h3><table class="prep-table"><tbody>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
     ${plan.length ? `<h3>Game plan</h3><ol>${plan.map(s => `<li>${text(s, 'step')}${chips(s)}</li>`).join('')}</ol>` : ''}

@@ -227,7 +227,8 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
   const pendingNote = pendingTotal
     ? `<p class="muted" style="margin:6px 0"><small>⏳ ${pendingTotal} of ${esc(subject)}'s game${pendingTotal === 1 ? ' is' : 's are'} still being processed (${pending.toAnalyse} to analyse, ${pending.toExplain} to explain). ${prepSheet ? 'Regenerate once they finish for the full picture.' : `The sheet will be built from the ${analysedNow} already analysed.`}</small></p>`
     : '';
-  const meta = prepSheet ? `<p class="muted no-print"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}${prepSheet.evidence ? ' Hover an evidence chip for the fact behind a claim; click one to open the game.' : ''}</small>
+  const needLabel = { win: 'weighted toward a must-win (complicating)', draw: 'weighted toward a safe draw' }[prepSheet?.need] || '';
+  const meta = prepSheet ? `<p class="muted no-print"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}${needLabel ? ` Plan ${needLabel}.` : ''}${prepSheet.evidence ? ' Hover an evidence chip for the fact behind a claim; click one to open the game.' : ''}</small>
     <span class="row" style="gap:6px; margin-top:6px"><button class="small" id="prep-copy" title="Copy the sheet as markdown (for a coach, a note, or a message)">Copy as markdown</button> <button class="small" id="prep-print" title="Print just the sheet">Print</button></span></p>` : '';
   const body = prepSheet
     ? prepSheetBody(prepSheet) + meta
@@ -243,9 +244,17 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
     button = `<p class="muted"><small>Not enough games for a preparation sheet yet (needs at least ${PREP_MIN} analysed; ${analysedNow} so far).</small></p>`;
   } else if (isAdmin) {
     // The operator generates it (home machine only); on the mirror it is published.
+    // "Need" reweights the plan (complicate for a must-win, play safe for an
+    // acceptable draw) from data the dossier already has; it does not change
+    // what games or facts go into it. Defaults to no preference (a balanced plan).
+    const needSelect = `<select id="prep-need" title="What the student needs from this specific game" style="margin-right:6px">
+      <option value="">Balanced plan</option>
+      <option value="win">Need a win</option>
+      <option value="draw">Draw is OK</option>
+    </select>`;
     button = readonly
       ? (prepSheet ? '' : '<p class="muted"><small>Prep sheets are generated on the home machine and published here.</small></p>')
-      : `<button class="primary" id="gen-prep"${upToDate ? ' disabled title="No games analysed and no format change since this sheet was generated"' : ''}>${prepSheet ? regenLabel : 'Generate prep sheet (about a minute)'}</button>${upToDate && pendingTotal === 0 ? ' <small class="muted">Up to date with all analysed games.</small>' : ''}`;
+      : `${needSelect}<button class="primary" id="gen-prep"${upToDate ? ' disabled title="No games analysed and no format change since this sheet was generated"' : ''}>${prepSheet ? regenLabel : 'Generate prep sheet (about a minute)'}</button>${upToDate && pendingTotal === 0 ? ' <small class="muted">Up to date with all analysed games.</small>' : ''}`;
   } else if (!prepSheet) {
     // Members and visitors cannot generate; they ask the operator, who is emailed.
     button = `<button class="primary" id="req-prep">Request prep sheet</button> <small class="muted">Emails the coach to generate one.</small>`;
@@ -283,9 +292,10 @@ function wirePrep(el, subject, report, pending, refresh) {
   const pendingTotal = pending.toAnalyse + pending.toExplain;
   btn.onclick = async () => {
     if (pendingTotal > 0 && !confirm(`Generate the prep sheet now from ${report.games} analysed game${report.games === 1 ? '' : 's'}? ${pendingTotal} of ${subject}'s game${pendingTotal === 1 ? ' is' : 's are'} still processing; you can regenerate after they finish.`)) return;
+    const need = el.querySelector('#prep-need')?.value || null;
     const label = btn.textContent;
     btn.disabled = true; btn.textContent = 'Generating… (about a minute)';
-    try { await api.prepSheet(subject); toast('Prep sheet generated'); await refresh(); }
+    try { await api.prepSheet(subject, need); toast('Prep sheet generated'); await refresh(); }
     catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = label; }
   };
 }
