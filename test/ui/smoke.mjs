@@ -22,7 +22,10 @@ const PAGES = [
   ['#/home', 'Next game'],
   ['#/games', 'Import PGN'],
   ['#/game/f1f1f1f1f101', 'Critical moments'],
-  ['#/report', 'Focus areas'],
+  // Not "Focus areas": the pre-tournament card's markdown repeats that heading
+  // inside its (closed) accordion, and getByText().first() would wait on the
+  // hidden copy. This title exists once, on an always-visible summary.
+  ['#/report', 'Accuracy by game'],
   ['#/scout', 'Players'],
   ['#/scout/' + encodeURIComponent('Karpov, A'), 'Head to head'],
   ['#/prep/' + encodeURIComponent('Karpov, A') + '?color=black', 'Prep deck'],

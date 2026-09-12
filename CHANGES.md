@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-12 (Paging everywhere, visitors on the Admin page)
+
+- One pager for every long table (`makePager` in `public/widgets.js`): page buttons with first/last-plus-window ellipses, and a "Show 10/25/50/100/All" pull-down, the choice remembered per table in localStorage. The Games list moves from 50 a page to 10, the Players list from a "show all" collapse at 15 to the same 10-a-page pager (the opponent whose dossier is open below stays visible even when their row falls on another page), and the Activity log pages at 50. Sorting, filtering, or searching resets to page one; the bar hides entirely when the table fits the smallest size.
+- The Admin page's roster now actually lists the allowed visitors on the Mac: `AUTH_VISITOR_EMAILS` (and the rest of `.env`) was only ever read on Netlify because nothing loaded the file locally. `server/serve.js` now loads `.env` from the repo root at startup (`process.loadEnvFile`; shell-exported variables win; tests and the Netlify function are untouched since both import `index.js`). With the local `.env` carrying no `SESSION_SECRET`, a bare `npm start` stays open exactly as before, it just sees the allowlist, admin email, and provider keys that were already written down.
+- Smoke-test fix that the closed report sections exposed: the `#/report` assertion waited on "Focus areas", which also appears as a heading inside the pre-tournament card's markdown; with the card accordion no longer open by default, `getByText().first()` waited on that hidden copy. The assertion now uses a title that exists once, on an always-visible summary.
+
 ## 2026-09-12 (Report sections start closed)
 
 - The Report page's collapsible sections all start closed, so a first visit reads as a table of contents instead of one long scroll. The chart-bearing sections were previously forced open because the SVG charts size from a visible container; `observeWidth` in `charts.js` already redraws a chart when its container first gets real width (added for hidden tabs and rotated phones), so an opened section's charts now size themselves on first expand. The smoke test's report assertion reads the always-visible summary text, unchanged.

@@ -31,7 +31,7 @@ npm install
 npm start          # http://localhost:3210
 ```
 
-`PORT`, `DATA_DIR`, and `STOCKFISH_PATH` environment variables override the defaults. The server binds to localhost only.
+`PORT`, `DATA_DIR`, and `STOCKFISH_PATH` environment variables override the defaults. The server binds to localhost only. `npm start` also loads `.env` from the repo root if present (see `.env.example`) for the optional login, allowlist, and email settings; variables exported in the shell win over the file.
 
 First run: open Settings, set the player's name as it appears in tournament PGNs (surname is enough), check the engine path, save. Then import a PGN on the Games page. Analysis runs in the background; the header shows progress.
 

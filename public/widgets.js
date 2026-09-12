@@ -166,3 +166,83 @@ export function trapFocus(container, { onEscape } = {}) {
 export function keymap(items) {
   return `<p class="keymap"><small>Keys: ${items.map(([k, what]) => `<span class="kbd">${esc(k)}</span> ${esc(what)}`).join(' · ')}</small></p>`;
 }
+
+/** Table paging shared by the Games and Players lists: page buttons plus a
+ * "Show 10/25/50/100/All" size choice, remembered per table in localStorage.
+ * Usage: const pg = makePager('gamesPageSize'); rows = pg.slice(allRows);
+ * html += pg.bar(allRows.length); and in the click handler,
+ * if (pg.handle(e.target)) return render(). Call pg.reset() when a sort or
+ * filter changes what the pages hold. */
+export function makePager(storageKey, { sizes = [10, 25, 50, 100, 'all'], defaultSize = 10 } = {}) {
+  let size = defaultSize;
+  let page = 0;
+  try {
+    const s = localStorage.getItem(storageKey);
+    if (s === 'all') size = 'all';
+    else if (sizes.includes(+s)) size = +s;
+  } catch { /* private mode: session-only */ }
+  const pageCount = total => size === 'all' ? 1 : Math.max(1, Math.ceil(total / size));
+
+  // Page numbers to show: always first and last, a window of one either side of
+  // the current page, ellipses for the gaps. Keeps the bar short with many pages.
+  const pageWindow = (cur, count) => {
+    const want = [...new Set([0, cur - 1, cur, cur + 1, count - 1])].filter(n => n >= 0 && n < count).sort((a, b) => a - b);
+    const out = [];
+    let prev = -1;
+    for (const n of want) { if (n - prev > 1) out.push('gap'); out.push(n); prev = n; }
+    return out;
+  };
+  const btn = (label, attr, { on = false, off = false } = {}) =>
+    `<button class="small${on ? ' primary' : ''}" ${attr}${off ? ' disabled' : ''}>${label}</button>`;
+
+  return {
+    reset() { page = 0; },
+    /** The rows on screen now: the current page of `rows` (clamped after a
+     * filter shrinks the set), or all of them when the size is "all". */
+    slice(rows) {
+      if (size === 'all') return rows;
+      const count = pageCount(rows.length);
+      if (page >= count) page = count - 1;
+      return rows.slice(page * size, page * size + size);
+    },
+    /** The bar under the table. Empty when the whole set fits the smallest size. */
+    bar(total) {
+      if (total <= sizes[0]) return '';
+      const count = pageCount(total);
+      const from = size === 'all' ? 1 : page * size + 1;
+      const to = size === 'all' ? total : Math.min(total, page * size + size);
+      const nums = count <= 1 ? '' : `${btn('‹', 'data-pg="prev"', { off: page === 0 })} ${pageWindow(page, count)
+        .map(n => n === 'gap' ? '<span class="muted"><small>…</small></span>' : btn(n + 1, `data-pg="${n}"`, { on: n === page })).join(' ')} ${btn('›', 'data-pg="next"', { off: page >= count - 1 })} <span class="muted">·</span> `;
+      const sizer = `<label class="muted"><small>Show</small> <select data-ps aria-label="Rows per page">${sizes.map(s =>
+        `<option value="${s}"${s === size ? ' selected' : ''}>${s === 'all' ? 'All' : s}</option>`).join('')}</select></label>`;
+      return `<div class="row" style="padding:10px; gap:6px; justify-content:center; align-items:center; flex-wrap:wrap">
+        <span class="muted"><small>Showing ${from}–${to} of ${total}</small></span> ${nums}${sizer}
+      </div>`;
+    },
+    /** Absorb an event on the bar's controls: a click on a page button, or a
+     * change of the size select. True means state changed, re-render. */
+    handle(target) {
+      const sel = target.closest('select[data-ps]');
+      if (sel) {
+        size = sel.value === 'all' ? 'all' : +sel.value;
+        page = 0;
+        try { localStorage.setItem(storageKey, String(size)); } catch { /* private mode */ }
+        return true;
+      }
+      const b = target.closest('button[data-pg]');
+      if (!b) return false;
+      if (b.dataset.pg === 'prev') page = Math.max(0, page - 1);
+      else if (b.dataset.pg === 'next') page += 1; // clamped in slice()
+      else page = +b.dataset.pg;
+      return true;
+    },
+    /** Attach handlers after a render: page-button clicks and the size select's
+     * change, both re-rendering through `rerender`. For views that delegate
+     * events instead (the Games list), call handle() from those listeners. */
+    wire(el, rerender) {
+      el.querySelectorAll('button[data-pg]').forEach(b => { b.onclick = () => { this.handle(b); rerender(); }; });
+      const sel = el.querySelector('select[data-ps]');
+      if (sel) sel.onchange = () => { this.handle(sel); rerender(); };
+    },
+  };
+}

@@ -6,7 +6,7 @@ import { barChart, lineChart } from '../charts.js';
 import { Board, walkSans } from '../board.js';
 import { CATEGORY_LABEL } from '../labels.js';
 import { fmtLine, lichessUrl as lichess } from '../shared.js';
-import { tendencyTiles, habitTiles, prepSheetBody, headToHeadCard } from '../widgets.js';
+import { tendencyTiles, habitTiles, prepSheetBody, headToHeadCard, makePager } from '../widgets.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
@@ -36,8 +36,7 @@ export async function scoutView(root) {
     </div>
     <div id="dossier"></div>`;
   const listEl = root.querySelector('#subject-list');
-  const COLLAPSE_AT = 15;
-  let showAll = false;
+  const pg = makePager('playersPageSize'); // 10 a page until the reader picks another size
   // Prep-sheet readiness: green = a sheet exists and no newer games since; yellow
   // = a scout target (has a book, or once had a sheet) whose sheet is missing or
   // stale; blank = an incidental opponent with nothing to prep.
@@ -72,25 +71,24 @@ export async function scoutView(root) {
     const matched = subjects.filter(s => !needle || s.subject.toLowerCase().includes(needle));
     if (!matched.length) { listEl.innerHTML = '<span class="muted">No opponents match.</span>'; return; }
     matched.sort((a, b) => { const x = sortVal(a), y = sortVal(b); const c = typeof x === 'string' ? x.localeCompare(y) : x - y; return (sort.asc ? c : -c) || a.subject.localeCompare(b.subject); });
-    const collapsed = !needle && !showAll && matched.length > COLLAPSE_AT;
-    const shown = collapsed ? matched.slice(0, COLLAPSE_AT) : matched;
-    if (collapsed && !shown.some(s => s.subject === current)) { const cur = matched.find(s => s.subject === current); if (cur) shown.push(cur); }
-    const toggle = collapsed ? `<button class="small mt-2" id="subj-more">Show all ${matched.length}</button>`
-      : (!needle && matched.length > COLLAPSE_AT ? '<button class="small mt-2" id="subj-fewer">Show fewer</button>' : '');
+    const shown = pg.slice(matched);
+    // Keep the opponent whose dossier is open below visible even when their row
+    // falls on another page.
+    if (!shown.some(s => s.subject === current)) { const cur = matched.find(s => s.subject === current); if (cur) shown.push(cur); }
     const th = (key, label, num = false) => `<th data-sort="${key}" class="${num ? 'num ' : ''}${sort.key === key ? `sorted${sort.asc ? ' asc' : ''}` : ''}" title="Sort by ${label.toLowerCase()}">${label}</th>`;
     listEl.innerHTML = `<div style="overflow-x:auto"><table class="players-table"><thead><tr>${th('name', 'Opponent')}${th('fed', 'Federation')}${th('games', 'Games', true)}${th('analysed', 'Analysed', true)}${th('prep', 'Prep sheet')}<th>Prepare</th></tr></thead>
-      <tbody>${shown.map(rowHtml).join('')}</tbody></table></div>${toggle}`;
-    listEl.querySelector('#subj-more')?.addEventListener('click', () => { showAll = true; renderSubjects(q); });
-    listEl.querySelector('#subj-fewer')?.addEventListener('click', () => { showAll = false; renderSubjects(q); });
+      <tbody>${shown.map(rowHtml).join('')}</tbody></table></div>${pg.bar(matched.length)}`;
+    pg.wire(listEl, () => renderSubjects(q));
     listEl.querySelectorAll('th[data-sort]').forEach(h => h.onclick = () => {
       sort = { key: h.dataset.sort, asc: sort.key === h.dataset.sort ? !sort.asc : h.dataset.sort === 'name' || h.dataset.sort === 'fed' };
       try { localStorage.setItem('playersSort', JSON.stringify(sort)); } catch { /* private mode */ }
+      pg.reset(); // reordering changes what each page holds
       renderSubjects(q);
     });
     listEl.querySelectorAll('tr[data-subject]').forEach(tr => tr.onclick = e => { if (e.target.closest('a')) return; location.hash = `#/scout/${encodeURIComponent(tr.dataset.subject)}`; });
   };
   renderSubjects('');
-  root.querySelector('#subject-search').addEventListener('input', e => renderSubjects(e.target.value));
+  root.querySelector('#subject-search').addEventListener('input', e => { pg.reset(); renderSubjects(e.target.value); });
 
   // Request a prep sheet for someone not yet in the list, by FIDE id: emails the admin.
   const fideInput = root.querySelector('#prep-fide');
