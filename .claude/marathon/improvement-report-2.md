@@ -14,7 +14,7 @@
 
 ### Phase A: confirmed bugs
 - [x] P1 deviation flashcards: repair cards from `ownLines` (student analysis) at a flagged node, `buildLineRepairs` list on the Prepare page; test.
-- [ ] B1+B2 drill sync owner: `PUT /api/settings` loops members; colour and name routes pass `game.owner`; multiuser tests.
+- [x] B1+B2 drill sync owner: `PUT /api/settings` loops members; colour and name routes pass `game.owner`; test in session.test.js.
 - [ ] B3 date key: `pgnDateKey` in `public/shared.js`, used by store.js, report.js, repertoire.js, subjects.js, games.js; test with unpadded dates.
 
 ### Phase B: small frontend

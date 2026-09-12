@@ -113,7 +113,11 @@ export function registerGameRoutes(app) {
     // pending" or the next startup resume.
     let recomputed = 0;
     if (settings.momentThreshold !== before.momentThreshold) recomputed = await resummarizeGames(settings);
-    if (recomputed || settings.drillThreshold !== before.drillThreshold) await syncAllDrills();
+    // Every member's ladder re-derives from the re-scored games, not only the
+    // primary member's (the startup sync in serve.js loops the same way).
+    if (recomputed || settings.drillThreshold !== before.drillThreshold) {
+      for (const m of await listMembers()) await syncAllDrills(m.id);
+    }
     res.json({ settings, recomputed });
   }));
 
@@ -210,8 +214,9 @@ export function registerGameRoutes(app) {
       game.analysis.summary = { ...game.analysis.summary, ...summarize(game.analysis.moves, color, settings.momentThreshold) };
       clearExplanations(game);
       game.status = 'analysed';
-      await removeDrillsForGame(game.id);
-      await syncDrillsForGame(game, settings);
+      const owner = game.owner || DEFAULT_USER; // the drills belong to the game's owner, not the operator
+      await removeDrillsForGame(game.id, owner);
+      await syncDrillsForGame(game, settings, owner);
     }
     await saveGame(game);
     if (req.body?.analyse && !game.analysis) enqueue('analyse', game.id);
@@ -235,7 +240,7 @@ export function registerGameRoutes(app) {
       game.subject = subject;
     }
     await saveGame(game);
-    if (game.analysis) await syncDrillsForGame(game, await getSettings()); // refresh drill labels
+    if (game.analysis) await syncDrillsForGame(game, await getSettings(), game.owner || DEFAULT_USER); // refresh the owner's drill labels
     res.json({ game });
   }));
 

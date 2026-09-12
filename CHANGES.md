@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-12 (Implementing the round-2 report: drill sync follows the game's owner)
+
+- `PUT /api/settings` re-scored every member's games after a threshold change but rebuilt only the primary member's drill ladder (`syncAllDrills()` with no user); it now loops every member, as the startup sync does. The colour-fix and name-fix routes (`POST /api/games/:id/player`, `/names`) synced the game's drills into the primary member's store regardless of `game.owner`, so another member's fixed game left their own ladder stale and polluted kai's; both now pass the owner (the analyse job already did). Test in `test/session.test.js`.
+
 ## 2026-09-12 (Implementing the round-2 report: prep cards never rehearse a deviation)
 
 - A prep line flashcard used the student's own continuation as its answer key even when that move was flagged as a deviation (it left the engine's lines or lost 10+ win-probability points in the opening), so the card could mark the losing move as "your line" and correct. `buildStudentIndex` now keeps the engine lines the student's own analysis stored at each position, the forest exposes them on student nodes (`ownLines`), and `buildLineDrills` (`server/prep.js`) answers such a node with the engine-approved moves instead: a "repair" card (chip, task text "in your games you played X here and lost ground, what does the engine play?", and a reveal that names the losing move if it is tried). A flagged node with no stored lines gets no card at all and is listed under "Lines to repair" on the Prepare page (`buildLineRepairs`, `deck.repairs`). Tests in `test/prep.test.js`.

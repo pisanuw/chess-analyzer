@@ -120,6 +120,27 @@ test('/api/members lists members with PGN names and without emails', async () =>
   assert.ok(!members.some(m => m.role !== 'member'));
 });
 
+test("a colour or name fix on a member's game syncs that member's drills, and a threshold change re-syncs every member", async () => {
+  const { getDrills } = await import('../server/store.js');
+  const admin = sessCookie('yusuf');
+  // nikash's fixture game has a moment at ply 1 (White). Re-affirming White
+  // keeps the moment and must write the drill into nikash's store, not kai's.
+  assert.equal((await postJson('/api/games/ababababab01/player', admin, { color: 'white', analyse: false })).status, 200);
+  const nik = (await getDrills('nikash')).drills.map(d => d.id);
+  assert.ok(nik.includes('ababababab01:1'), "the drill lands in the owner's store");
+  assert.ok(!(await getDrills('kai')).drills.some(d => d.gameId === 'ababababab01'), 'and not in the default member\'s');
+  assert.equal((await postJson('/api/games/ababababab01/names', admin, { white: 'Vemparala, Nikash', black: 'Opp' })).status, 200);
+  assert.ok((await getDrills('nikash')).drills.some(d => d.id === 'ababababab01:1' && d.label.startsWith('Vemparala, Nikash')), 'the name fix refreshes the owner\'s drill label');
+  assert.ok(!(await getDrills('kai')).drills.some(d => d.gameId === 'ababababab01'));
+  // The fixture moment lost 25 points: core at the default threshold of 20,
+  // a sharpener at 30. Raising the threshold must re-tier nikash's drill too.
+  assert.equal((await getDrills('nikash')).drills.find(d => d.id === 'ababababab01:1').tier, 'core');
+  const r = await fetch(base + '/api/settings', { method: 'PUT', headers: { ...admin, 'content-type': 'application/json' }, body: JSON.stringify({ drillThreshold: 30 }) });
+  assert.equal(r.status, 200);
+  assert.equal((await getDrills('nikash')).drills.find(d => d.id === 'ababababab01:1').tier, 'sharpen');
+  await fetch(base + '/api/settings', { method: 'PUT', headers: { ...admin, 'content-type': 'application/json' }, body: JSON.stringify({ drillThreshold: 20 }) });
+});
+
 test('management routes are admin only', async () => {
   assert.equal((await req('POST', '/api/games/import', { headers: sessCookie('kai') })).status, 403);
   assert.equal((await req('PUT', '/api/settings', { headers: sessCookie('kai') })).status, 403);
