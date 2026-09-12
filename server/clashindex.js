@@ -25,8 +25,8 @@ export const CLASH_DEFAULTS = {
 };
 
 /** scoutDossier's own recency weight, so the clash numbers reconcile with the
- * repertoire book. No Elo-band filter here (scoutDossier does not apply one in
- * its repertoire loop either). */
+ * repertoire book. The Elo band is applied separately, in buildOpponentIndex,
+ * the same way scoutDossier's repertoire loop applies it. */
 export const weightOf = (dateStr, now, maxDays, halfLifeDays) => recencyWeight(ageDays(dateStr, now), maxDays, halfLifeDays);
 
 /** The student's analysed own games (one full read each), the only source deep
@@ -83,7 +83,6 @@ export async function buildOpponentIndex(book, settings, { onProgress, cancelled
   const colorCounts = { white: 0, black: 0 };
   let parsed = 0, skipped = 0;
   const games = book.games || [];
-  const features = featureCollector(games, now, maxDays, halfLife);
   // Current strength and an Elo-band filter, the same calculation scoutDossier
   // uses for its analysed subset (server/scoutbook.js): without it, a
   // predicted line here could be dominated by games from a materially
@@ -93,6 +92,10 @@ export async function buildOpponentIndex(book, settings, { onProgress, cancelled
   const recentRated = dated.filter(({ g, age }) => g.subjectElo && (age == null || age <= maxDays)).slice(0, 12).map(({ g }) => g.subjectElo);
   const currentElo = recentRated.length ? median(recentRated) : (dated.find(({ g }) => g.subjectElo)?.g.subjectElo || null);
   const withinElo = g => !currentElo || !g.subjectElo || Math.abs(g.subjectElo - currentElo) <= eloBand;
+  // The habits see exactly the games the index sees (recency window and Elo
+  // band), so "in their main lines" is measured against lines defined on the
+  // same set.
+  const features = featureCollector(games, now, maxDays, halfLife, withinElo);
   for (let i = 0; i < games.length; i++) {
     if (cancelled?.()) break;
     if (onProgress && i % 25 === 0) { onProgress(i, games.length); await new Promise(r => setImmediate(r)); }
@@ -138,13 +141,14 @@ const RECENT_DAYS = 90;     // ...and how many games in this window
 const CLOCK_CHECKPOINTS = [10, 20, 30, 40]; // move numbers for the pacing curve
 const MIN_CLOCK_SAMPLES = 5; // a checkpoint needs at least this many games with a clock, or it is noise, not a tendency
 
-function featureCollector(games, now, maxDays, halfLife) {
+function featureCollector(games, now, maxDays, halfLife, withinElo = () => true) {
   const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
   const tally = () => ({ games: 0, scored: 0, score: 0 });
   const add = (t, score) => { t.games++; if (score != null) { t.scored++; t.score += score; } };
   const rate = t => ({ games: t.games, scorePct: pct(t.score, t.scored) });
-  // Main lines per colour from the stored 8-ply posKeys (no parse needed).
-  const inWindow = games.filter(g => g.posKey && (g.color === 'white' || g.color === 'black') && weightOf(g.date, now, maxDays, halfLife) > 0);
+  // Main lines per colour from the stored 8-ply posKeys (no parse needed), over
+  // the same recency-and-Elo subset the parsed games come from.
+  const inWindow = games.filter(g => g.posKey && (g.color === 'white' || g.color === 'black') && weightOf(g.date, now, maxDays, halfLife) > 0 && withinElo(g));
   const mainLines = { white: new Set(), black: new Set() };
   for (const color of ['white', 'black']) {
     const counts = new Map();

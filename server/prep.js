@@ -6,7 +6,8 @@
 // that colour, and the predicted positions to spar from. Everything here is
 // data- or engine-grounded; no model call.
 import crypto from 'node:crypto';
-import { getScoutBook, getClashStore, getClashNotes, getPrepSheets, getDrills } from './store.js';
+import { getScoutBook, getClashStore, getClashNotes, getPrepSheets } from './store.js';
+import { getPrepMarks } from './prepmarks.js';
 import { buildReport } from './report.js';
 import { buildRepertoire } from './repertoire.js';
 import { subjectFideId, headToHead } from './subjects.js';
@@ -205,7 +206,7 @@ export async function buildPrep({ uid, subject, myColor, tc = 'all', settings, v
     ? (await visitorDrills(30, undefined, { subject, color: oppColor })).due
     : (await dueDrills(30, { subject, color: oppColor, userId: uid })).due;
   const sparring = clash ? dedupByFen([...earlyDeviationPositions(clash, myColor), ...sparringPositions(clash, myColor)]) : [];
-  const marks = visitor ? {} : (await getDrills(uid)).prep || {};
+  const marks = visitor ? {} : await getPrepMarks(uid);
   const deckIds = [...lines, ...punish].map(d => d.id);
   const done = deckIds.filter(id => (marks[id]?.right || 0) > 0).length;
   return {

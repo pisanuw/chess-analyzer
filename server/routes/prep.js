@@ -3,7 +3,7 @@
 import { getSettings } from '../store.js';
 import { buildPrep } from '../prep.js';
 import { listUpcoming, addUpcoming, removeUpcoming } from '../upcoming.js';
-import { markPrep } from '../drills.js';
+import { markPrep } from '../prepmarks.js';
 import { currentUser } from '../auth.js';
 import { isVisitor } from '../users.js';
 import { wrap, effectiveUser, blockVisitor, visitorNoop } from '../http.js';

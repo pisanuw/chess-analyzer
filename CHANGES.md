@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-12 (Implementing the round-2 report: cheaper predictions, prep marks in their own store, clash-index subset)
+
+- `predictionFor` rebuilt the student index and the whole clash forest for every own game against a booked opponent, and the head-to-head asks for one verdict per game on every dossier, Prepare, and game view. The forest (everything but the walk) is now memoised per member, opponent, book version, and set of other games (`server/memo.js`), and `getClashStore` parses `data/clash.json` once per file version instead of on every read.
+- Prep-deck marks moved out of the drill store into their own small per-member store (`server/prepmarks.js`: `data/users/<id>/prep.json` locally, `prep:<id>` on the mirror), so a deck answer from a phone is a row-sized write instead of a rewrite of the whole drill row with its compare-and-swap race. Marks that already live inside a drill store are read from there until the first new mark copies them over. Test in `test/prep.test.js`.
+- The clash index's habits (`featureCollector`) defined the opponent's main lines on the recency window alone while scoring only the Elo-banded games against them; both now use the same recency-and-Elo subset, and the stale "no Elo-band filter here" comment is gone.
+
 ## 2026-09-12 (Implementing the round-2 report: chart tooltips on touch)
 
 - The bar chart, the line chart, and the eval graph (`public/charts.js`) showed their tooltips on `mousemove` only, so a phone got no detail at all (the game behind an accuracy point, the count behind a bar). They now use pointer events: hover as before, and on touch the first tap on a spot pins the tooltip (and the cursor), a second tap on the same spot runs the click action (open the game, list the moments, jump to the ply), and a tap anywhere else hides it.

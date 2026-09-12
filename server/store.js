@@ -490,12 +490,23 @@ export async function savePrepSheets(sheets) {
 // data repo (like the eval cache and the book blobs): it is derived from a
 // non-syncing book and cheap to rebuild, and a synced copy could point at a book
 // the other machine lacks.
+// The store holds every opponent's full index, so it is parsed once per file
+// version rather than on every dossier, prep, or game view (each of which
+// reads it, the head-to-head once per game). Our own save evicts the entry.
+let clashCache = null; // { rev, store }
 export async function getClashStore() {
-  return readJson(path.join(DATA_DIR, 'clash.json'), {});
+  const file = path.join(DATA_DIR, 'clash.json');
+  let rev = null;
+  try { const st = await fs.stat(file); rev = `${st.mtimeMs}:${st.size}`; } catch { /* missing: an empty store */ }
+  if (clashCache && clashCache.rev === rev) return clashCache.store;
+  const store = await readJson(file, {});
+  clashCache = { rev, store };
+  return store;
 }
 
 export async function saveClashStore(store) {
   await writeJson(path.join(DATA_DIR, 'clash.json'), store);
+  clashCache = null;
   return store;
 }
 

@@ -149,6 +149,21 @@ test('the prep payload composes the colour-cut dossier, head to head, and a puni
   assert.equal(again.progress.done, 1);
   assert.equal(again.progress.marks[id].right, 1);
   assert.equal((await json('POST', '/api/prep/mark', { id: 'evil', correct: true })).status, 400);
+  // Marks live in their own small store, not in the drill row: the drill store
+  // is untouched by a mark, and a legacy mark inside it is still read.
+  const { getDrills, saveDrills } = await import('../server/store.js');
+  const { getPrepMarks } = await import('../server/prepmarks.js');
+  assert.equal((await getDrills('kai')).prep, undefined, 'the drill store carries no prep marks');
+  assert.equal((await getPrepMarks('kai'))[id].seen, 2);
+  const legacy = await getDrills('nikash');
+  legacy.prep = { 'line:1:old': { seen: 3, right: 1 } };
+  await saveDrills(legacy, 'nikash');
+  assert.equal((await getPrepMarks('nikash'))['line:1:old'].seen, 3, 'legacy marks inside the drill store are read until the first write');
+  const { markPrep } = await import('../server/prepmarks.js');
+  await markPrep('line:1:new', true, 'nikash');
+  const nik = await getPrepMarks('nikash');
+  assert.equal(nik['line:1:old'].seen, 3, 'the first write carries the legacy marks over');
+  assert.equal(nik['line:1:new'].right, 1);
 
   // The other colour: Karpov never played Black in the fixtures, so the dossier is empty but the page still opens.
   const white = (await (await json('GET', '/api/prep/' + encodeURIComponent('Karpov, A') + '?color=white')).json()).prep;

@@ -4,13 +4,14 @@
 // no engine work is needed. Own games contribute engine data only: explanations
 // exist for the player's moments, not the opponent's, so categories stay
 // "unexplained" unless the subject's other games are imported as scout games.
-import { getGameCached, listGames, listAllGames, listScoutBooks, getPlayers, getSettings } from './store.js';
+import { getGameCached, listGames, listAllGames, loadGames, indexFingerprint, listScoutBooks, getPlayers, getSettings } from './store.js';
 import { memberByName } from './users.js';
 import { summarize } from './analyze.js';
 import { lookupFideId } from './players.js';
+import { memo } from './memo.js';
 import { resultScore, pgnDateKey } from '../public/shared.js';
 import { getScoutBook, getClashStore } from './store.js';
-import { loadStudentGames, buildStudentIndex, assembleClashForest, walkPrediction } from './clash.js';
+import { buildStudentIndex, assembleClashForest, walkPrediction } from './clash.js';
 
 /** The prediction check for one own game against a booked opponent: how far
  * the game followed the opening clash the student would have seen before it,
@@ -18,15 +19,19 @@ import { loadStudentGames, buildStudentIndex, assembleClashForest, walkPredictio
  * clash index (no book, or the index is stale). The forest is assembled from
  * the student's games as they are now, which includes this game once analysed:
  * a line that appears only in this one game is not "predicted", so the walk
- * ignores single-game student edges. */
+ * ignores single-game student edges. The forest (everything but the walk) is
+ * memoised per member, opponent, book version, and set of other games, since
+ * the head-to-head asks for one verdict per game against the opponent. */
 export async function predictionFor(game, userId, fideId) {
   if (!fideId || !game?.playerColor || !game.moves?.length) return null;
   const book = await getScoutBook(fideId);
   const entry = book && (await getClashStore())[fideId];
   if (!entry || entry.bookImportedAt !== book.importedAt) return null;
-  const others = (await loadStudentGames(userId)).filter(g => g.id !== game.id);
-  const student = buildStudentIndex(others);
-  const forest = assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, student, book });
+  const others = (await listGames(userId)).filter(e => (e.status === 'analysed' || e.status === 'explained') && e.purpose === 'own' && e.id !== game.id);
+  const forest = await memo('prediction', `${userId}|${fideId}|${entry.bookImportedAt}|${indexFingerprint(others)}`, async () => {
+    const student = buildStudentIndex((await loadGames(others)).filter(g => g.playerColor && g.analysis?.moves));
+    return assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, student, book });
+  }, { max: 64 });
   const w = walkPrediction(forest, game.moves, game.playerColor);
   if (!w) return null;
   const moveNo = w.leftAtPly ? Math.ceil(w.leftAtPly / 2) : null;

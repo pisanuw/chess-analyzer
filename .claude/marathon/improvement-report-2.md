@@ -27,9 +27,9 @@
 - [x] F4 pointer-event tooltips with tap-to-pin in charts.js.
 
 ### Phase C: backend
-- [ ] B10 clash index: fix stale comment; mainLines on the same recency+Elo filter.
-- [ ] B6 memoise the "others" forest in predictionFor.
-- [ ] B7 prep marks in their own KV key / file (`prep:<id>`), not the drills row.
+- [x] B10 clash index: fixed comment; mainLines on the same recency+Elo filter.
+- [x] B6 memoise the "others" forest in predictionFor; getClashStore parsed once per file version.
+- [x] B7 prep marks in server/prepmarks.js (`prep.json` / `prep:<id>`), legacy marks read from the drill store.
 - [ ] B8 route hygiene: jobs filtered/gated, dataDir admin-only, playout rate-limited, one-time magic links.
 - [ ] B9 sparring engine: a second process for quick evals (pool of two).
 - [ ] B5 startup resume only for interrupted work (explainStartedAt), not the whole backlog.
