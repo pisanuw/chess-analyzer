@@ -39,10 +39,33 @@ function observeWidth(container, redraw) {
 function tooltip(container) {
   let tip = container.querySelector('.tip');
   if (!tip) { tip = document.createElement('div'); tip.className = 'tip'; container.appendChild(tip); }
+  // A tooltip pinned by a tap closes on a tap anywhere outside the chart (one
+  // document listener per container, looking up the live tip each time since
+  // a redraw replaces it).
+  if (!container._tipOutside) {
+    container._tipOutside = e => { if (!container.contains(e.target)) { const t = container.querySelector('.tip'); if (t) t.style.display = 'none'; } };
+    document.addEventListener('pointerdown', container._tipOutside, { passive: true });
+  }
   return {
     show(x, y, html) { tip.innerHTML = html; tip.style.left = x + 'px'; tip.style.top = y + 'px'; tip.style.display = 'block'; },
     hide() { tip.style.display = 'none'; },
   };
+}
+
+/** Hover shows the tooltip and leaving hides it. Touch has no hover, so there
+ * the first tap on a spot shows (pins) the tooltip, a second tap on the same
+ * spot runs the click action, and a tap elsewhere on the page hides it. */
+function pointerTip(hit, { show, hide, keyOf = () => 0, activate = null }) {
+  let touch = false, pinned = null;
+  hit.addEventListener('pointerdown', e => { touch = e.pointerType === 'touch'; }, { passive: true });
+  hit.addEventListener('pointermove', e => { if (e.pointerType !== 'touch') show(e); });
+  hit.addEventListener('pointerleave', () => { if (!touch) hide(); });
+  hit.addEventListener('click', e => {
+    const key = keyOf(e);
+    if (touch && pinned !== key) { pinned = key; show(e); return; }
+    pinned = null;
+    if (activate) activate(e);
+  });
 }
 
 /** Horizontal bar chart. items: [{ label, value, sub }] sorted by caller. */
@@ -71,12 +94,14 @@ function drawBarChart(container, items, { format = v => String(v), maxValue = nu
     if (w > 0) svg.appendChild(svgEl('rect', { x: labelW + Math.max(0, w - 4), y: y + 4, width: Math.min(4, w), height: rowH - 10, rx: 2, class: 'bar' + (it.dim ? ' dim' : '') }));
     svg.appendChild(svgEl('text', { x: labelW + w + 6, y: y + 16 }, format(it.value)));
     const hit = svgEl('rect', { x: 0, y, width: W, height: rowH, class: 'hit' });
-    hit.addEventListener('mousemove', e => {
-      const r = container.getBoundingClientRect();
-      tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${esc(it.label)}</b> ${esc(format(it.value))}${it.sub ? '<br>' + esc(it.sub) : ''}`);
+    pointerTip(hit, {
+      show: e => {
+        const r = container.getBoundingClientRect();
+        tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${esc(it.label)}</b> ${esc(format(it.value))}${it.sub ? '<br>' + esc(it.sub) : ''}`);
+      },
+      hide: () => tip.hide(),
+      activate: onClick ? () => onClick(it) : null,
     });
-    hit.addEventListener('mouseleave', () => tip.hide());
-    if (onClick) hit.addEventListener('click', () => onClick(it));
     svg.appendChild(hit);
   });
   svg.appendChild(svgEl('line', { x1: labelW, y1: 0, x2: labelW, y2: H, class: 'base' }));
@@ -121,15 +146,18 @@ function drawLineChart(container, points, { yMin = 0, yMax = 100, format = v => 
     const px = ((e.clientX - r.left) / r.width) * W;
     return Math.max(0, Math.min(points.length - 1, Math.round(((px - padL) / plotW) * (points.length - 1))));
   };
-  hit.addEventListener('mousemove', e => {
-    const i = idxAt(e);
-    const p = points[i];
-    cursor.setAttribute('x1', xs(i)); cursor.setAttribute('x2', xs(i)); cursor.setAttribute('visibility', 'visible');
-    const r = container.getBoundingClientRect();
-    tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${esc(p.x)}</b> ${esc(format(p.y))}${p.sub ? '<br>' + esc(p.sub) : ''}`);
+  pointerTip(hit, {
+    show: e => {
+      const i = idxAt(e);
+      const p = points[i];
+      cursor.setAttribute('x1', xs(i)); cursor.setAttribute('x2', xs(i)); cursor.setAttribute('visibility', 'visible');
+      const r = container.getBoundingClientRect();
+      tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${esc(p.x)}</b> ${esc(format(p.y))}${p.sub ? '<br>' + esc(p.sub) : ''}`);
+    },
+    hide: () => { tip.hide(); cursor.setAttribute('visibility', 'hidden'); },
+    keyOf: idxAt,
+    activate: onClick ? e => onClick(points[idxAt(e)]) : null,
   });
-  hit.addEventListener('mouseleave', () => { tip.hide(); cursor.setAttribute('visibility', 'hidden'); });
-  if (onClick) hit.addEventListener('click', e => onClick(points[idxAt(e)]));
   svg.appendChild(hit);
   container.appendChild(svg);
 }
@@ -195,15 +223,18 @@ function drawEvalGraph(container, moves, { currentPly = 0, onSelect = null, time
     const r = svg.getBoundingClientRect();
     return Math.max(1, Math.min(n, Math.round(((e.clientX - r.left) / r.width) * n)));
   };
-  hit.addEventListener('mousemove', e => {
-    const ply = plyAt(e);
-    const m = moves[ply - 1];
-    const r = container.getBoundingClientRect();
-    const think = spents[ply - 1] != null ? ` · ${fmtSpent(spents[ply - 1])} think` : '';
-    tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${movePrefix(m)} ${esc(m.san)}</b> ${esc(formatEval(m.evalAfter))}${flaggedJudgment(m.judgment) ? ' (' + m.judgment + ')' : ''}${think}`);
+  pointerTip(hit, {
+    show: e => {
+      const ply = plyAt(e);
+      const m = moves[ply - 1];
+      const r = container.getBoundingClientRect();
+      const think = spents[ply - 1] != null ? ` · ${fmtSpent(spents[ply - 1])} think` : '';
+      tip.show(e.clientX - r.left, e.clientY - r.top, `<b>${movePrefix(m)} ${esc(m.san)}</b> ${esc(formatEval(m.evalAfter))}${flaggedJudgment(m.judgment) ? ' (' + m.judgment + ')' : ''}${think}`);
+    },
+    hide: () => tip.hide(),
+    keyOf: plyAt,
+    activate: onSelect ? e => onSelect(plyAt(e)) : null,
   });
-  hit.addEventListener('mouseleave', () => tip.hide());
-  if (onSelect) hit.addEventListener('click', e => onSelect(plyAt(e)));
   svg.appendChild(hit);
   container.appendChild(svg);
   return { setPly(ply) { cursor.setAttribute('x1', xs(ply)); cursor.setAttribute('x2', xs(ply)); } };
