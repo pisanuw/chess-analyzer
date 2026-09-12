@@ -368,9 +368,19 @@ export function reviewDrill(id, grade, correct, practice = false, ms = null, use
   return locked(() => reviewUnlocked(id, grade, correct, practice, ms, userId, extra));
 }
 
+/** A review made offline and replayed later carries the time it was really
+ * made, so the history stays honest. Anything unparseable, in the future, or
+ * over a week old (a wrong clock) falls back to apply time. */
+function reviewTime(v) {
+  const t = v ? Date.parse(v) : NaN;
+  return Number.isFinite(t) && t <= Date.now() && t >= Date.now() - 7 * DAY ? new Date(t).toISOString() : null;
+}
+
 /** `extra.confidence` is what the player said before the reveal (sure, likely,
  * guess); `extra.note` is their one-line explain-back on a miss, typed before
- * the coach's answer appeared. Both go into the review record. */
+ * the coach's answer appeared. Both go into the review record. `extra.at` is
+ * the backdated review time of an offline replay; the ladder's `due` still
+ * counts from now, which at day granularity is close enough. */
 async function reviewUnlocked(id, grade, correct, practice, ms, userId = DEFAULT_USER, extra = {}) {
   const store = await getDrills(userId);
   const d = store.drills.find(x => x.id === id);
@@ -394,7 +404,7 @@ async function reviewUnlocked(id, grade, correct, practice, ms, userId = DEFAULT
     d.due = new Date(Date.now() + intervalDays(d.step, d.ease) * DAY).toISOString();
   }
   d.reviews.push({
-    at: new Date().toISOString(), grade, correct: !!correct, ...prev,
+    at: reviewTime(extra.at) || new Date().toISOString(), grade, correct: !!correct, ...prev,
     ...(practice ? { practice: true } : {}),
     ...(Number.isFinite(ms) && ms >= 0 ? { ms: Math.round(ms) } : {}),
     ...(confidence ? { confidence } : {}),

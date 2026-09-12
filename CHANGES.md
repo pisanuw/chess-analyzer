@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-12 (Offline drill reviews are queued and replayed)
+
+- Grading a drill with no connection (a tournament hall) no longer loses the review. `api.reviewDrill` catches the unreachable-server failure, stores the grade in localStorage with the time it was made (keyed by user id, so a shared laptop cannot replay one member's reviews into another's ladder), and the page shows "grade saved on this device, syncs when back online" instead of the error toast. The queue replays oldest first at startup and on the browser's `online` event (`flushReviews` in `public/api.js`, wired in `app.js`); order matters because a drill missed offline comes back in the same session. A replay carries `at`, the real review time; the server keeps it in the review record when it is plausible (not future, not over a week old) and otherwise stamps apply time. An entry the server refuses outright (drill deleted while offline) is dropped so the queue can never jam; an expired session stops the flush until sign-in. "Undo last grade" removes a still-queued review from the queue instead of calling the server. Tests: `test/offlinequeue.test.js` (queue behaviour under a stubbed fetch) plus backdating clamps in `drills.test.js` and the HTTP round trip in `api.test.js`.
+
 ## 2026-09-12 (Measured and rejected the analysis.moves de-duplication)
 
 - Measured the improvement report's claim that dropping the repeated `san/uci/fenBefore/fenAfter` from `analysis.moves[]` would roughly halve game files. On the live data (289 games, 51.2 MB) those fields are 4.3 MB, 8% of raw bytes, so the migration is not worth touching every reader of `analysis.moves`. The real byte sinks: pretty-printing whitespace 49% (compact JSON would be 25.9 MB), `analysis.moves` 37% (engine `lines[]` 15 points), `game.moves` 11%. Left the format alone (indented files diff line-by-line in the data repo and git packing absorbs the whitespace); updated IMPROVEMENT-REPORT.md 2.3 with the numbers and removed the item from BRIEFING.md step 9. No code changed.

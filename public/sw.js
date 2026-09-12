@@ -4,7 +4,7 @@
 // version of the app is picked up on the next load; the cache is only the
 // fallback. Only the drill deck and the three small startup calls are cached
 // from the API; every other API response is never stored. Reviews made offline
-// are not queued: the page reports the failed save.
+// are queued in localStorage by api.js and replayed in order on reconnect.
 const CACHE = 'chess-analyzer-v1';
 const OFFLINE_API = new Set(['/api/drills', '/api/auth/me', '/api/status', '/api/settings']);
 

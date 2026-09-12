@@ -119,6 +119,51 @@ export async function showLogin() {
 // the server (the server guards them too). session.user is set at startup.
 const noopForVisitor = fn => (...args) => (session.user?.role === 'visitor' ? Promise.resolve({ ephemeral: true }) : fn(...args));
 
+// --- offline review queue ----------------------------------------------------
+// With no signal (a tournament hall) the service worker still serves the drill
+// deck, but a grade is a POST and the server is unreachable. The failed review
+// is queued here instead, with the time it was really made, and replayed in
+// order on reconnect (app.js flushes at startup and on the `online` event).
+// Keyed by user id so a shared laptop cannot replay one member's reviews into
+// another member's ladder.
+const reviewQueueKey = () => `reviewQueue:${session.user?.id || 'local'}`;
+function queuedReviews() {
+  try { return JSON.parse(localStorage.getItem(reviewQueueKey())) || []; } catch { return []; }
+}
+function saveReviewQueue(q) {
+  try { q.length ? localStorage.setItem(reviewQueueKey(), JSON.stringify(q)) : localStorage.removeItem(reviewQueueKey()); }
+  catch { /* private mode: the grade is lost, as it was before the queue */ }
+}
+function enqueueReview(id, body) {
+  const q = queuedReviews();
+  q.push({ id, ...body, at: new Date().toISOString() });
+  saveReviewQueue(q);
+  return { queued: true, pending: q.length };
+}
+
+/** Replay queued reviews oldest first (order matters: a drill missed offline
+ * comes back in the same session, and the ladder depends on the order of its
+ * reviews). Stops, keeping the rest, while the server is unreachable or the
+ * session has expired; an entry the server refuses outright (the drill was
+ * deleted while offline) is dropped so the queue can never jam.
+ * Returns { synced, pending }. */
+export async function flushReviews() {
+  const q = queuedReviews();
+  let synced = 0;
+  while (q.length) {
+    const { id, ...body } = q[0];
+    try {
+      await req('POST', `/api/drills/${encodeURIComponent(id)}/review`, body);
+      synced++;
+    } catch (err) {
+      if (err.offline || err.status === 401) return { synced, pending: q.length };
+    }
+    q.shift();
+    saveReviewQueue(q);
+  }
+  return { synced, pending: 0 };
+}
+
 export const api = {
   status: () => req('GET', '/api/status'),
   me: () => req('GET', '/api/auth/me'),
@@ -179,10 +224,27 @@ export const api = {
     req('GET', `/api/puzzles?source=${encodeURIComponent(source)}&limit=${limit}`),
   drills: ({ pattern = null, category = null, subject = null, color = null, limit = null, session = false } = {}) =>
     req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}${category ? `&category=${encodeURIComponent(category)}` : ''}${subject ? `&subject=${encodeURIComponent(subject)}` : ''}${color ? `&color=${color}` : ''}${session ? '&session=1' : ''}`),
-  reviewDrill: noopForVisitor((id, grade, correct, practice = false, ms = null, { confidence = null, note = null } = {}) =>
-    req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}), ...(confidence ? { confidence } : {}), ...(note ? { note } : {}) })),
+  reviewDrill: noopForVisitor(async (id, grade, correct, practice = false, ms = null, { confidence = null, note = null } = {}) => {
+    const body = { grade, correct, practice, ...(ms != null ? { ms } : {}), ...(confidence ? { confidence } : {}), ...(note ? { note } : {}) };
+    // Earlier queued reviews must land before this one; if they still cannot,
+    // this one joins the back of the queue without a doomed request of its own.
+    if ((await flushReviews()).pending) return enqueueReview(id, body);
+    try { return await req('POST', `/api/drills/${encodeURIComponent(id)}/review`, body); }
+    catch (err) {
+      if (!err.offline) throw err;
+      return enqueueReview(id, body);
+    }
+  }),
   suspendDrill: noopForVisitor((id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended })),
-  undoDrill: noopForVisitor(id => req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {})),
+  undoDrill: noopForVisitor(id => {
+    // A grade still sitting in the offline queue is undone by removing it: the
+    // server never saw it, so there is nothing to pop there.
+    const q = queuedReviews();
+    for (let i = q.length - 1; i >= 0; i--) {
+      if (q[i].id === id) { q.splice(i, 1); saveReviewQueue(q); return Promise.resolve({ queued: true }); }
+    }
+    return req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {});
+  }),
   restoreSuspended: noopForVisitor(() => req('POST', '/api/drills/restore-suspended', {})),
   recordDecoy: noopForVisitor(correct => req('POST', '/api/drills/decoy', { correct })),
   feedback: noopForVisitor((id, ply, helpful) => req('POST', `/api/games/${id}/moments/${ply}/feedback`, { helpful })),

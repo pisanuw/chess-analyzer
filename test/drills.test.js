@@ -77,6 +77,18 @@ test('failed review stays due today; pass advances the ladder', async () => {
   assert.ok(days > 2.7 && days < 2.9, `expected ~2.8 days, got ${days}`);
 });
 
+test('offline replay: a backdated at is kept; future or stale times fall back to apply time', async () => {
+  const game = makeGame({ id: 'aaaaaaaaaa30', moments: [{ ply: 1, loss: 25 }] });
+  await syncDrillsForGame(game, settings);
+  const hourAgo = new Date(Date.now() - 3600000).toISOString();
+  const backdated = await reviewDrill('aaaaaaaaaa30:1', 'good', true, false, null, undefined, { at: hourAgo });
+  assert.equal(backdated.reviews.at(-1).at, hourAgo);
+  const future = await reviewDrill('aaaaaaaaaa30:1', 'good', true, false, null, undefined, { at: new Date(Date.now() + 3600000).toISOString() });
+  assert.ok(Math.abs(Date.parse(future.reviews.at(-1).at) - Date.now()) < 5000, 'a future at is ignored');
+  const stale = await reviewDrill('aaaaaaaaaa30:1', 'good', true, false, null, undefined, { at: '2020-01-01T00:00:00.000Z' });
+  assert.ok(Math.abs(Date.parse(stale.reviews.at(-1).at) - Date.now()) < 5000, 'an at older than a week (a wrong clock) is ignored');
+});
+
 test('dueDrills lists core before sharpen', async () => {
   await reviewDrill('aaaaaaaaaa01:1', 'again', false); // make the core drill due now
   const { due } = await dueDrills();

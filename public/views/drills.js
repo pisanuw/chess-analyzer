@@ -570,7 +570,8 @@ export async function drillsView(root, query) {
         if (state.verdict.correct) session.decoys.right++;
         api.recordDecoy(state.verdict.correct).catch(() => {});
       } else {
-        await api.reviewDrill(state.drill.id, g, state.verdict.correct, !!roundKey, state.answerMs, { confidence: state.confidence, note: state.note });
+        const saved = await api.reviewDrill(state.drill.id, g, state.verdict.correct, !!roundKey, state.answerMs, { confidence: state.confidence, note: state.note });
+        if (saved?.queued) toast('No connection: grade saved on this device, syncs when back online');
         const missedAdded = !state.verdict.correct && !session.missed.some(x => x.id === state.drill.id);
         session.attempts++;
         if (state.verdict.correct) session.correct++;

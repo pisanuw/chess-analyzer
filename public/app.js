@@ -1,5 +1,5 @@
 // Hash router, job polling, and shared chrome.
-import { api, esc, toast, session, showLogin, setViewAs } from './api.js';
+import { api, esc, toast, session, showLogin, setViewAs, flushReviews } from './api.js';
 import { homeView } from './views/home.js';
 import { gamesView } from './views/games.js';
 import { gameView } from './views/game.js';
@@ -209,6 +209,14 @@ Promise.all([api.me().catch(() => ({})), api.status().catch(() => ({}))]).then((
   route();
   renderWhoami(me);
   updateDrillBadge();
+  // Reviews graded offline (a tournament hall): replay them now and whenever
+  // the connection comes back. Registered here, after session.user is set, so
+  // the queue is read under the right user's key.
+  const syncReviews = () => flushReviews().then(({ synced }) => {
+    if (synced) { toast(`${synced} offline review${synced === 1 ? '' : 's'} synced`); updateDrillBadge(); }
+  }).catch(() => {});
+  syncReviews();
+  window.addEventListener('online', syncReviews);
   // The activity log is admin-only; reveal its nav link for an admin. It works on
   // the hosted mirror too, where /api/audit reads the shared Supabase-backed log.
   if (me.user?.role === 'admin') document.querySelector('[data-nav="log"]')?.removeAttribute('hidden');

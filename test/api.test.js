@@ -176,6 +176,11 @@ test('reexplain guards: not a moment, no prior explanation, manual provider', as
 test('review think time, undo, suspend, and restore over HTTP', async () => {
   const passed = await req('POST', '/api/drills/abcdefabcdef%3A1/review', { grade: 'good', correct: true, ms: 1500 });
   assert.equal(passed.data.drill.reviews.at(-1).ms, 1500);
+  // An offline replay carries the time the review was really made.
+  const hourAgo = new Date(Date.now() - 3600000).toISOString();
+  const replay = await req('POST', '/api/drills/abcdefabcdef%3A1/review', { grade: 'good', correct: true, at: hourAgo });
+  assert.equal(replay.data.drill.reviews.at(-1).at, hourAgo);
+  await req('POST', '/api/drills/abcdefabcdef%3A1/undo');
   const undo = await req('POST', '/api/drills/abcdefabcdef%3A1/undo');
   assert.equal(undo.status, 200);
   assert.equal(undo.data.drill.step, 0, 'ladder restored');
