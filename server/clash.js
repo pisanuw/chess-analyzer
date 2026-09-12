@@ -338,6 +338,30 @@ function countNodes(node) {
   return 1 + (node.edges || []).reduce((s, e) => s + countNodes(e.child), 0);
 }
 
+// --- prediction check: did a real game follow the tree? --------------------------
+
+/** Walk a game's moves through the forest for the student's colour and report
+ * where the game left the predicted tree: the ply, whose move it was, the move
+ * that left it, and whether that position was one the tree knew (the mover chose
+ * an unpredicted move) or one it had no data for. `matched` counts the plies
+ * that stayed on a predicted edge. Pure: the truth about one prediction. */
+export function walkPrediction(forest, moves, studentColor) {
+  const root = forest?.forests?.[studentColor];
+  if (!root) return null;
+  let node = root, matched = 0;
+  for (const m of moves) {
+    if (!node || node.transposesTo) return { matched, leftAtPly: null, by: null, san: null, reason: 'the tree ends here', held: true };
+    if (!node.edges.length) {
+      return { matched, leftAtPly: m.ply, by: node.mover, san: m.san, reason: node.mover === 'student' ? (node.studentPrepEnds ? 'your line ended here' : 'no more of your games here') : (node.oppPrepEndsReason === 'nodata' ? 'they had never reached this position' : 'their book thinned out here'), held: true };
+    }
+    const edge = node.edges.find(e => e.uci === m.uci || e.san === m.san);
+    if (!edge) return { matched, leftAtPly: m.ply, by: node.mover, san: m.san, reason: node.mover === 'student' ? 'you left your own line' : `they chose a move the tree did not predict (${node.edges.map(e => e.san).join(', ')} expected)`, held: false };
+    matched++;
+    node = edge.child;
+  }
+  return { matched, leftAtPly: null, by: null, san: null, reason: 'the whole game stayed inside the tree', held: true };
+}
+
 // --- principal lines (for the optional LLM narration) ---------------------------
 
 // Narration is about the student's own lines, so it is keyed per member; a bare

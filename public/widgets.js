@@ -64,8 +64,11 @@ export function headToHeadCard(h2h, open = true) {
     <td class="num">${g.moments ?? '–'}</td>
     <td><small class="muted">${esc(g.event || '')}</small></td>
   </tr>`).join('');
+  const p = h2h.prediction;
+  const predNote = p ? `<p class="muted" style="margin:0 0 8px"><small>Opening prediction against them: held to move 6 or beyond in ${p.heldToMove6} of ${p.games} game${p.games === 1 ? '' : 's'}, median ${p.medianPlies} plies on a predicted line${p.leftByThem ? `; they left the predicted lines ${p.leftByThem} time${p.leftByThem === 1 ? '' : 's'}` : ''}${p.leftByYou ? `; you left your own lines ${p.leftByYou} time${p.leftByYou === 1 ? '' : 's'}` : ''}. Use it to judge how much to trust the predicted lines.</small></p>` : '';
   return `<details class="acc"${open ? ' open' : ''}><summary><span class="acc-title">Head to head</span> <span class="muted" style="font-size:13px">${r.games} game${r.games === 1 ? '' : 's'}: ${r.wins}W ${r.draws}D ${r.losses}L${r.scorePct != null ? `, ${r.scorePct}%` : ''}</span></summary>
     <div class="acc-body">
+      ${predNote}
       <table><thead><tr><th>Date</th><th>You</th><th>Result</th><th>Opening</th><th class="num">Accuracy</th><th class="num">Moments</th><th>Event</th></tr></thead><tbody>${rows}</tbody></table>
       ${h2h.games.length > 10 ? `<p class="muted"><small>Showing the latest 10 of ${h2h.games.length}.</small></p>` : ''}
     </div></details>`;

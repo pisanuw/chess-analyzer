@@ -36,7 +36,7 @@ function editNamesDialog(current, wantSubject) {
 }
 
 export async function gameView(root, id, startPly) {
-  let { game, feedback = {} } = await api.game(id);
+  let { game, feedback = {}, prediction = null } = await api.game(id);
   const { settings } = await api.settings();
   const { readonly, engineOk } = await api.status();
   const state = { ply: 0, tab: 'moments', moment: null, guess: null, preview: null, playout: null, gtm: null };
@@ -205,11 +205,13 @@ export async function gameView(root, id, startPly) {
     const gs = game.gameSummary;
     panel.innerHTML = `
       ${gs ? `<div class="card"><p>${esc(gs.summary)}</p><p><b>Lesson:</b> ${esc(gs.lesson)}</p><p><b>Opening:</b> ${esc(gs.opening_note)}</p></div>` : `<div class="card muted">Game summary appears after the explanation step.</div>`}
+      ${prediction ? `<div class="card" style="margin-top:10px; border-left: 3px solid ${prediction.held ? 'var(--good)' : 'var(--warning)'}"><b>Did the prep hold?</b> ${esc(prediction.text)}${prediction.leftAtPly ? ` <a href="#/game/${id}/${prediction.leftAtPly}" data-ply-jump="${prediction.leftAtPly}">Jump to move ${prediction.moveNo}</a>` : ''}</div>` : ''}
       <h3>Accuracy</h3>
       <table><thead><tr><th>Player</th><th class="num">Accuracy</th><th class="num">ACPL</th><th class="num">Opening</th><th class="num">Middlegame</th><th class="num">Endgame</th><th class="num">?! / ? / ??</th></tr></thead>
       <tbody>${row(h.White || 'White', 'white')}${row(h.Black || 'Black', 'black')}</tbody></table>
       <p><small>${esc(s.engine || 'Stockfish')}, depth ${s.depth}, MultiPV ${s.multipv}. Analysed ${esc((game.analysis.analysedAt || '').slice(0, 16).replace('T', ' '))}.</small></p>
       ${game.lastError ? `<p style="color: var(--critical)"><small>Last error: ${esc(game.lastError)}</small></p>` : ''}`;
+    panel.querySelector('[data-ply-jump]')?.addEventListener('click', e => { e.preventDefault(); showPly(Number(e.currentTarget.dataset.plyJump)); });
   }
 
   function renderMoments() {
@@ -618,7 +620,7 @@ export async function gameView(root, id, startPly) {
 
   // --- refresh on job completion -----------------------------------------------------
   async function rerender() {
-    ({ game, feedback = {} } = await api.game(id));
+    ({ game, feedback = {}, prediction = null } = await api.game(id));
     renderActions();
     root.querySelector('[data-tab="moments"]').textContent = `Critical moments${game.analysis ? ` (${game.analysis.summary.moments.length})` : ''}`;
     if (game.analysis) graph = evalGraph(root.querySelector('#graph'), game.analysis.moves, { currentPly: state.ply, onSelect: ply => showPly(ply), timeControl: h.TimeControl });

@@ -2,7 +2,8 @@
 // explanation jobs), the per-moment guess/eval/explanation routes, play-it-out,
 // and the job list.
 import { Chess } from 'chess.js';
-import { parsePgnGames, splitPgn, detectPlayerColor } from '../pgn.js';
+import { parsePgnGames, splitPgn, detectPlayerColor, fideIdFromHeaders } from '../pgn.js';
+import { subjectFideId, predictionFor } from '../subjects.js';
 import { getSettings, saveSettings, listGames, listAllGames, getGame, saveGame, deleteGame, getDrills, DEFAULT_SETTINGS, DEFAULT_USER, DATA_DIR } from '../store.js';
 import { assocsFromHeaders, recordAssociations } from '../players.js';
 import { enqueue, listJobs, cancelJobs, knownPatterns } from '../jobs.js';
@@ -175,7 +176,16 @@ export function registerGameRoutes(app) {
     for (const ply of game.analysis?.summary?.moments || []) {
       if (all[`${game.id}:${ply}`]) feedback[ply] = all[`${game.id}:${ply}`];
     }
-    res.json({ game, feedback });
+    // For an own game against a booked opponent: how far the game followed the
+    // opening clash the student would have prepared from (cheap: the index is
+    // cached, the forest assembles in milliseconds).
+    let prediction = null;
+    if ((game.purpose || 'own') !== 'scout' && game.playerColor) {
+      const oppName = game.playerColor === 'white' ? game.headers.Black : game.headers.White;
+      const fideId = fideIdFromHeaders(game.headers, game.playerColor === 'white' ? 'black' : 'white') || (oppName ? await subjectFideId(oppName) : null);
+      prediction = await predictionFor(game, uid, fideId).catch(() => null);
+    }
+    res.json({ game, feedback, prediction });
   }));
 
   app.delete('/api/games/:id', wrap(async (req, res) => {

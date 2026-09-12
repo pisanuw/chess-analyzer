@@ -2,6 +2,11 @@
 
 Newest first.
 
+## 2026-09-12 (Post-game prediction check)
+
+- After a game against a booked opponent, the app grades its own forecast: `walkPrediction` (`server/clash.js`) walks the played moves down the clash forest for the student's colour and reports how many plies stayed inside the predicted tree, at which ply the game left it, who left (the student off their own line, or the opponent playing a move the tree did not predict, with the moves it did expect), and whether that counts as a prediction that held. `predictionFor` (`server/subjects.js`) builds the verdict from a student index that excludes the game under review, so the game never predicts itself.
+- `GET /api/games/:id` returns `prediction` beside `feedback` (the opponent is resolved from the `FideId` headers or the subject index); the game view's Summary tab shows a "Did the prep hold?" card whose ply link jumps to the move where the line was left. The head-to-head table carries a chip per game ("predicted to move N", or "off the predicted lines") and a summary line: how many games held to move 6 or beyond, the median plies on a predicted line, and how often each side left the lines. That number is the calibration a player needs before trusting the predicted lines for the next game.
+
 ## 2026-09-12 (Prepare for a game: one page, one opponent, one colour, with a prep deck)
 
 - New page `#/prep/<opponent>?color=white|black[&tc=]` ("Prepare as White / as Black" buttons on every dossier). It composes what a player needs before one game: a twenty-minute plan with progress, the prep sheet, the head-to-head record, the opponent's book lines and habits in the colour they will have, how they handle the evaluation in that colour, the predicted lines for the student's colour with a board, and a prep deck. `GET /api/prep/:subject?color=&tc=` (`server/prep.js`) builds the payload; nothing in it calls the model.

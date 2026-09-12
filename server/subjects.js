@@ -9,6 +9,32 @@ import { memberByName } from './users.js';
 import { summarize } from './analyze.js';
 import { lookupFideId } from './players.js';
 import { resultScore } from '../public/shared.js';
+import { getScoutBook, getClashStore } from './store.js';
+import { loadStudentGames, buildStudentIndex, assembleClashForest, walkPrediction } from './clash.js';
+
+/** The prediction check for one own game against a booked opponent: how far
+ * the game followed the opening clash the student would have seen before it,
+ * as a short sentence plus the raw fields. Null when the opponent has no fresh
+ * clash index (no book, or the index is stale). The forest is assembled from
+ * the student's games as they are now, which includes this game once analysed:
+ * a line that appears only in this one game is not "predicted", so the walk
+ * ignores single-game student edges. */
+export async function predictionFor(game, userId, fideId) {
+  if (!fideId || !game?.playerColor || !game.moves?.length) return null;
+  const book = await getScoutBook(fideId);
+  const entry = book && (await getClashStore())[fideId];
+  if (!entry || entry.bookImportedAt !== book.importedAt) return null;
+  const others = (await loadStudentGames(userId)).filter(g => g.id !== game.id);
+  const student = buildStudentIndex(others);
+  const forest = assembleClashForest({ oppIndex: entry.index, coverage: entry.coverage, student, book });
+  const w = walkPrediction(forest, game.moves, game.playerColor);
+  if (!w) return null;
+  const moveNo = w.leftAtPly ? Math.ceil(w.leftAtPly / 2) : null;
+  const text = w.leftAtPly
+    ? `Prediction held for ${w.matched} pl${w.matched === 1 ? 'y' : 'ies'}; at move ${moveNo} ${w.by === 'student' ? 'you' : 'they'} played ${w.san}: ${w.reason}.`
+    : `Prediction held: ${w.reason}.`;
+  return { ...w, moveNo, text };
+}
 
 const norm = s => (s || '').trim().toLowerCase();
 
@@ -41,6 +67,7 @@ export async function headToHead(userId, subject, fideId = null) {
       line: (g?.moves || []).slice(0, 8).map(m => m.san),
       accuracy: e.accuracy, moments: e.moments,
       analysed: e.status === 'analysed' || e.status === 'explained',
+      prediction: await predictionFor(g, userId, fideId),
     });
   }
   games.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -52,7 +79,18 @@ export async function headToHead(userId, subject, fideId = null) {
     losses: scored.filter(g => g.score === 0).length,
     scorePct: scored.length ? Math.round((scored.reduce((s, g) => s + g.score, 0) / scored.length) * 100) : null,
   };
-  return { games, record };
+  // How good the opening prediction has been against this opponent: how many
+  // games stayed on a predicted line to move 6 or beyond, and the median depth.
+  const checked = games.filter(g => g.prediction);
+  const depths = checked.map(g => g.prediction.matched).sort((a, b) => a - b);
+  const prediction = checked.length ? {
+    games: checked.length,
+    heldToMove6: checked.filter(g => g.prediction.matched >= 10).length,
+    medianPlies: depths[depths.length >> 1],
+    leftByThem: checked.filter(g => g.prediction.by === 'opponent' && !g.prediction.held).length,
+    leftByYou: checked.filter(g => g.prediction.by === 'student' && !g.prediction.held).length,
+  } : null;
+  return { games, record, prediction };
 }
 
 export async function gamesForSubject(subject) {

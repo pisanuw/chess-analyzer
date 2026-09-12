@@ -217,6 +217,31 @@ test('the opponent index harvests structure habits from the whole game', async (
   assert.ok(features.avgMoves >= 4);
 });
 
+test('walkPrediction reports where a real game left the predicted tree and by whom', async () => {
+  const { walkPrediction } = await import('../server/clash.js');
+  const studentGames = [studentGame('white', ['d4', 'Nf6', 'c4', 'g6']), studentGame('white', ['d4', 'Nf6', 'c4', 'g6'])];
+  const bookGames = [bookGame('black', ['d4', 'Nf6', 'c4', 'g6']), bookGame('black', ['d4', 'Nf6', 'c4', 'g6']), bookGame('black', ['d4', 'd5'])];
+  const clash = await build(studentGames, bookGames);
+  const moves = sans => parseGame(pgnOf(sans)).moves;
+  // The opponent answers 1.d4 with 1...d5: the tree predicted Nf6 (2 games) and d5 was pruned (1 game).
+  const theirs = walkPrediction(clash, moves(['d4', 'd5', 'c4', 'e6']), 'white');
+  assert.equal(theirs.matched, 1);
+  assert.equal(theirs.leftAtPly, 2);
+  assert.equal(theirs.by, 'opponent');
+  assert.equal(theirs.held, false);
+  assert.match(theirs.reason, /did not predict \(Nf6 expected\)/);
+  // The student deviates from their own line with 2.Nf3.
+  const mine = walkPrediction(clash, moves(['d4', 'Nf6', 'Nf3', 'g6']), 'white');
+  assert.equal(mine.leftAtPly, 3);
+  assert.equal(mine.by, 'student');
+  assert.equal(mine.held, false);
+  // The game follows the whole predicted line and then runs past its end: the prediction held.
+  const followed = walkPrediction(clash, moves(['d4', 'Nf6', 'c4', 'g6', 'Nc3', 'Bg7']), 'white');
+  assert.equal(followed.matched, 4);
+  assert.equal(followed.held, true);
+  assert.equal(walkPrediction(clash, moves(['e4']), 'black'), null, 'no forest for a colour with no student games');
+});
+
 test('loadStudentGames is scoped to the member whose openings the clash crosses', async () => {
   const { writeGame, makeGame } = await import('./helpers.js');
   const { loadStudentGames } = await import('../server/clash.js');

@@ -102,3 +102,30 @@ test('the prep payload composes the colour-cut dossier, head to head, and a puni
   assert.equal(white.deck.punish.length, 0);
   assert.equal((await json('GET', '/api/prep/Nobody?color=white')).status, 404);
 });
+
+test('the game view reports whether the opening prediction held, given a booked opponent', async () => {
+  // Book Karpov (FIDE 424242) so a clash index exists, then check an own game against him.
+  const { saveScoutBook } = await import('../server/store.js');
+  const { ensureClashIndex } = await import('../server/clash.js');
+  const { predictionFor } = await import('../server/subjects.js');
+  const { recordAssociations } = await import('../server/players.js');
+  await saveScoutBook({ fideId: '424242', name: 'Karpov, A', aliases: [], importedAt: '2026-03-03T00:00:00Z', total: 2,
+    games: [bookGame('white', ['e4', 'e5', 'Nf3', 'Nc6']), bookGame('white', ['e4', 'e5', 'Nf3', 'Nc6'])] });
+  await recordAssociations([{ fideId: '424242', name: 'Karpov, A' }]);
+  await ensureClashIndex('424242', { now: new Date('2026-09-01') });
+  // Two analysed own games as Black give the student a line; the game under test answers 1.e4 with 1...c5, off the tree.
+  const mk = (id, sans) => { const g = studentGame('black', sans); return { ...makeGame({ id, color: 'black', moments: [] }), moves: g.analysis.moves, analysis: { ...g.analysis, summary: { moments: [], player: 'black', white: {}, black: {} } }, headers: { White: 'Karpov, A', Black: 'Kai Pisan', Result: '0-1', Date: '2026.04.04' } }; };
+  writeGame(dir, mk('a1a1a1a1a101', ['e4', 'e5', 'Nf3', 'Nc6']));
+  writeGame(dir, mk('a1a1a1a1a102', ['e4', 'e5', 'Nf3', 'Nc6']));
+  writeGame(dir, mk('a1a1a1a1a103', ['e4', 'c5', 'Nf3', 'd6']));
+  const off = await predictionFor(await (await import('../server/store.js')).getGame('a1a1a1a1a103'), 'kai', '424242');
+  assert.ok(off, 'a fresh clash index gives a verdict');
+  assert.equal(off.leftAtPly, 2);
+  assert.equal(off.by, 'student');
+  assert.match(off.text, /at move 1 you played c5: you left your own line/);
+  const r = await (await json('GET', '/api/games/a1a1a1a1a103')).json();
+  assert.equal(r.prediction.leftAtPly, 2, 'the game route carries the verdict');
+  const h2h = (await (await json('GET', '/api/scout/' + encodeURIComponent('Karpov, A'))).json()).headToHead;
+  assert.ok(h2h.prediction && h2h.prediction.games >= 3, 'the head-to-head aggregates prediction quality');
+  assert.ok(h2h.games.every(g => g.prediction), 'every head-to-head game carries its verdict');
+});
