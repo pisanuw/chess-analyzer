@@ -1,10 +1,22 @@
 // Games list and PGN import.
-import { api, esc, toast, busy } from '../api.js';
+import { api, esc, toast, busy, session } from '../api.js';
 
 export async function gamesView(root) {
   const { settings } = await api.settings();
   const status = await api.status();
   let games = (await api.games()).games;
+  // Only the admin (or the operator of an open local run) imports, analyses, and
+  // deletes; a signed-in member on the local server sees a read-only list.
+  const canManage = session.user?.role === 'admin' || !session.authActive;
+  const editable = !status.readonly && canManage;
+  // With several members, an import is filed under one of them (their PGN
+  // names decide the colour); the server defaults to the primary member.
+  const members = editable && session.authActive ? (await api.members().catch(() => ({ members: [] }))).members : [];
+  const selectedOwner = () => root.querySelector('#owner')?.value || null;
+  const playerNames = () => {
+    const m = members.find(x => x.id === selectedOwner());
+    return m?.playerNames?.length ? m.playerNames : settings.playerNames;
+  };
 
   // A read-only clone (viewing and drilling synced games) needs neither Stockfish
   // nor the claude CLI; only warn when there is work those tools would do.
@@ -16,12 +28,13 @@ export async function gamesView(root) {
     ${!status.readonly && !status.engineOk && (pendingAnalysis || !games.length) ? `<div class="card" style="border-color: var(--critical)"><b>Stockfish not found.</b> Install it (<code>brew install stockfish</code>) or set the path in <a href="#/settings">Settings</a>.</div>` : ''}
     ${settings.llmProvider === 'claude-cli' && !status.claude.ok && pendingExplanations ? `<div class="card" style="border-color: var(--warning); margin-top: 10px"><b>claude CLI not found.</b> Explanations will fail until it is installed, or switch the LLM provider to manual in <a href="#/settings">Settings</a>.</div>` : ''}
     ${!settings.playerNames.length && !games.length ? `<div class="card" style="margin-top: 10px">Set the player's name in <a href="#/settings">Settings</a> so imported games get the right colour automatically.</div>` : ''}
-    ${status.readonly ? '<div class="card" style="margin-top: 12px"><small class="muted">Read-only mirror: games are imported and analysed on the home machine, then published here. Drills and guessing work normally.</small></div>' : `<div class="card" style="margin-top: 12px">
+    ${!editable ? `<div class="card" style="margin-top: 12px"><small class="muted">${status.readonly ? 'Read-only mirror: games are imported and analysed on the home machine, then published here. Drills and guessing work normally.' : 'Games are imported and analysed by the admin. Ask them to import your PGNs or seed your games from your FIDE book.'}</small></div>` : `<div class="card" style="margin-top: 12px">
       <h3 style="margin-top:0">Import PGN</h3>
       <div class="import-area">
         <textarea id="pgn" placeholder="Paste one or more games in PGN format, or choose a .pgn file"></textarea>
         <div style="display:flex; flex-direction:column; gap:8px; min-width: 220px">
           <input type="file" id="pgnfile" accept=".pgn,text/plain" multiple>
+          ${members.length > 1 ? `<label class="field" style="margin:0"><span>For member</span><select id="owner">${members.map(m => `<option value="${esc(m.id)}">${esc(m.displayName)}</option>`).join('')}</select></label>` : ''}
           <label class="check" style="margin:0"><input type="checkbox" id="auto" checked> Analyse after import</label>
           <button class="primary" id="import">Import</button>
           <small class="muted" id="import-hint">Your games, an opponent's games, or a FIDE export are detected automatically.</small>
@@ -33,7 +46,7 @@ export async function gamesView(root) {
       <h2 style="margin:0">${games.length} game${games.length === 1 ? '' : 's'}</h2>
       <div class="row" style="gap: 6px; flex-wrap: wrap; align-items: center">
         <input type="search" id="game-search" placeholder="Filter by player or event…" style="width: 200px; padding: 4px 8px; font-size: 13px">
-        ${status.readonly ? '' : `
+        ${!editable ? '' : `
           <span id="sel-count" class="muted" style="font-size:13px"></span>
           <button id="act-analyze" class="small" title="Analyze the checked games, or every pending game if none are checked">Analyze</button>
           <button id="act-explain" class="small" title="Explain the checked games, or every analysed game with unexplained moments if none are checked">Explain</button>
@@ -153,18 +166,18 @@ export async function gamesView(root) {
     if (!all.length) { list.innerHTML = filterBar + '<div class="empty">No games match.</div>'; updateSel(); return; }
     const rows = shownRows();
     const arrow = k => sortKey === k ? (sortDir === 1 ? ' ↑' : ' ↓') : '';
-    const selHead = status.readonly ? '' : '<th style="width:26px"><input type="checkbox" id="select-all" title="Select all shown"></th>';
+    const selHead = !editable ? '' : '<th style="width:26px"><input type="checkbox" id="select-all" title="Select all shown"></th>';
     const head = `<tr>${selHead}${cols.map(c => `<th data-sortkey="${c.key}"${c.num ? ' class="num"' : ''} style="cursor:pointer" title="Sort by ${c.label}">${c.label}${arrow(c.key)}</th>`).join('')}</tr>`;
     list.innerHTML = filterBar + `<table><thead>${head}</thead>
       <tbody>${rows.map(g => `
         <tr class="clickable" data-id="${g.id}">
-          ${status.readonly ? '' : `<td data-stop><input type="checkbox" class="rowsel" data-id="${g.id}"${selected.has(g.id) ? ' checked' : ''}></td>`}
+          ${!editable ? '' : `<td data-stop><input type="checkbox" class="rowsel" data-id="${g.id}"${selected.has(g.id) ? ' checked' : ''}></td>`}
           <td><small>${esc(g.date)}</small></td>
           <td>${esc(g.white)}${g.whiteElo ? ` <small>(${esc(g.whiteElo)})</small>` : ''}</td>
           <td>${esc(g.black)}${g.blackElo ? ` <small>(${esc(g.blackElo)})</small>` : ''}</td>
           <td>${esc(g.result)}</td>
           <td><small>${esc(g.event)}${g.round ? ' R' + esc(g.round) : ''}</small></td>
-          <td>${g.playerColor ? `<span class="chip ${g.playerColor}">${g.playerColor}</span>` : (status.readonly ? '' : `<span data-stop>I played <button class="small" data-color="white">White</button> <button class="small" data-color="black">Black</button></span>`)}</td>
+          <td>${g.playerColor ? `<span class="chip ${g.playerColor}">${g.playerColor}</span>` : (!editable ? '' : `<span data-stop>I played <button class="small" data-color="white">White</button> <button class="small" data-color="black">Black</button></span>`)}</td>
           <td><span class="chip status-${g.status}">${g.status}${g.status === 'analysed' && g.explained ? ` (${g.explained}/${g.moments} explained)` : ''}</span></td>
           <td class="num">${g.accuracy != null ? g.accuracy + '%' : ''}</td>
           <td class="num">${g.moments != null ? `${g.moments}${g.blunders ? ` <span class="chip blunder">${g.blunders}??</span>` : ''}${g.mistakes ? ` <span class="chip mistake">${g.mistakes}?</span>` : ''}` : ''}</td>
@@ -283,7 +296,7 @@ export async function gamesView(root) {
     const counts = new Map();
     for (const m of text.matchAll(/\[(?:White|Black)\s+"([^"]+)"\]/g)) {
       const n = m[1].trim();
-      if (!n || n === '?' || settings.playerNames.some(p => p && n.toLowerCase().includes(p.toLowerCase()))) continue;
+      if (!n || n === '?' || playerNames().some(p => p && n.toLowerCase().includes(p.toLowerCase()))) continue;
       counts.set(n, (counts.get(n) || 0) + 1);
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
@@ -292,8 +305,9 @@ export async function gamesView(root) {
     if (scoutFile?.fideId) return { mode: 'book', fideId: scoutFile.fideId };
     const text = root.querySelector('#pgn').value;
     if (!text.trim()) return { mode: 'empty' };
-    const hasKai = settings.playerNames.some(p => p && text.toLowerCase().includes(p.toLowerCase()));
-    if (hasKai || !settings.playerNames.length) return { mode: 'own' };
+    const names = playerNames();
+    const hasPlayer = names.some(p => p && text.toLowerCase().includes(p.toLowerCase()));
+    if (hasPlayer || !names.length) return { mode: 'own' };
     return { mode: 'scout', subject: topOpponentName(text) };
   };
   const updateHint = () => {
@@ -315,6 +329,7 @@ export async function gamesView(root) {
     updateHint();
   });
   root.querySelector('#pgn')?.addEventListener('input', () => { scoutFile = null; updateHint(); });
+  root.querySelector('#owner')?.addEventListener('change', updateHint);
 
   root.querySelector('#game-search').addEventListener('input', e => { query = e.target.value.trim().toLowerCase(); page = 0; render(); });
 
@@ -333,7 +348,7 @@ export async function gamesView(root) {
           location.hash = `#/scout/${encodeURIComponent(r.name)}`;
           return;
         }
-        const r = await api.importPgn(pgn, root.querySelector('#auto').checked, d.mode, d.mode === 'scout' ? d.subject : '');
+        const r = await api.importPgn(pgn, root.querySelector('#auto').checked, d.mode, d.mode === 'scout' ? d.subject : '', selectedOwner());
         toast(`Imported ${r.imported.length}${d.mode === 'scout' ? ` (scouting ${d.subject})` : ''}${r.skipped.length ? `, ${r.skipped.length} already present` : ''}${r.failed.length ? `, ${r.failed.length} failed to parse` : ''}`);
         if (r.failed.length) console.warn('Failed games', r.failed);
         root.querySelector('#pgn').value = ''; updateHint();

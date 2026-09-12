@@ -71,7 +71,10 @@ test('failed review stays due today; pass advances the ladder', async () => {
   const passed = await reviewDrill('aaaaaaaaaa01:1', 'good', true);
   assert.equal(passed.step, 1);
   const days = (Date.parse(passed.due) - Date.now()) / 86400000;
-  assert.ok(days > 2.9 && days < 3.1, `expected ~3 days, got ${days}`);
+  // Step 1 is 3 days at default ease; the lapse above lowered this drill's
+  // ease to 2.3, so the interval is 3 * 2.3 / 2.5, rounded to 2.8 days.
+  assert.equal(passed.ease, 2.3);
+  assert.ok(days > 2.7 && days < 2.9, `expected ~2.8 days, got ${days}`);
 });
 
 test('dueDrills lists core before sharpen', async () => {

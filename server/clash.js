@@ -17,11 +17,10 @@
 // lines, or the opponent having no or too few games in the position).
 import { Chess } from 'chess.js';
 import { parseGame } from './pgn.js';
-import { ageDays } from './scoutbook.js';
-import { resultScore } from './report.js';
-import { getGame, listGames, getScoutBook, getClashStore, saveClashStore, getSettings } from './store.js';
+import { ageDays, pgnToDate, recencyWeight } from './scoutbook.js';
+import { listGames, loadGames, getScoutBook, getClashStore, saveClashStore, getSettings, DEFAULT_USER } from './store.js';
 import { scoreToCp, stmSign } from './analyze.js';
-import { winProb, WP_ACCEPT } from '../public/shared.js';
+import { winProb, WP_ACCEPT, resultScore, posKeyOf, fmtLine } from '../public/shared.js';
 import { getCachedEval, putCachedEval, evalCacheKey, flushCache } from './evalcache.js';
 import { poolAnalyse } from './enginepool.js';
 
@@ -35,41 +34,35 @@ export const CLASH_DEFAULTS = {
   oppBranch: 3,      // top-N opponent replies kept per node
   minCountOpp: 2,    // never branch on a single opponent game (except the only reply)
   minShareOpp: 0.08, // drop replies under this weighted share (except the only reply)
-  kaiBranch: 1,      // the player is single-file (one repertoire) below his first move
-  rootKaiBranch: 6,  // ...but his first move fans out over his whole opening menu
+  studentBranch: 1,      // the player is single-file (one repertoire) below his first move
+  rootStudentBranch: 6,  // ...but his first move fans out over his whole opening menu
   minRootGames: 2,   // ignore one-off opening roots
   maxNodes: 400,     // per-forest hard node cap
   maxParse: 1200,    // backstop on how many book games one build parses
 };
 
-const posKeyOf = fen => fen.split(' ').slice(0, 3).join(' ');
 const sideOf = fen => (fen.split(' ')[1] === 'w' ? 'white' : 'black');
 const keyOf = fen => `${sideOf(fen)}|${posKeyOf(fen)}`;
 
-/** scoutDossier's recency weight, replicated so the clash numbers reconcile with
- * the repertoire book: halves every halfLifeDays, zero past the age cutoff, a
- * small flat weight for undated games. No Elo-band filter here (scoutDossier does
- * not apply one in its repertoire loop either). */
-function weightOf(dateStr, now, maxDays, halfLifeDays) {
-  const age = ageDays(dateStr, now);
-  if (age != null && age > maxDays) return 0;
-  return age == null ? 0.25 : Math.pow(0.5, age / halfLifeDays);
-}
+/** scoutDossier's own recency weight, so the clash numbers reconcile with the
+ * repertoire book. No Elo-band filter here (scoutDossier does not apply one in
+ * its repertoire loop either). */
+const weightOf = (dateStr, now, maxDays, halfLifeDays) => recencyWeight(ageDays(dateStr, now), maxDays, halfLifeDays);
 
-/** The player's analysed own games (one full read each), the only source deep
- * enough for his side of the tree. */
-export async function loadKaiGames() {
-  const index = (await listGames()).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
-  const games = await Promise.all(index.map(g => getGame(g.id)));
-  return games.filter(g => g && g.playerColor && g.analysis?.moves);
+/** The student's analysed own games (one full read each), the only source deep
+ * enough for their side of the tree. Scoped to the member whose openings the
+ * clash crosses, so every viewer sees their own lines against the opponent. */
+export async function loadStudentGames(userId = DEFAULT_USER) {
+  const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
+  return (await loadGames(index)).filter(g => g.playerColor && g.analysis?.moves);
 }
 
 /** Index of the player's own opening moves, keyed by colour then by the position
  * before each move: { white: { posKey: { uci: agg } }, black: {...} }. */
-export function buildKaiIndex(kaiGames, maxPly = CLASH_DEFAULTS.maxPly) {
+export function buildStudentIndex(studentGames, maxPly = CLASH_DEFAULTS.maxPly) {
   const index = { white: {}, black: {} };
   const counts = { white: 0, black: 0 };
-  for (const g of kaiGames) {
+  for (const g of studentGames) {
     const color = g.playerColor;
     if (color !== 'white' && color !== 'black') continue;
     counts[color]++;
@@ -103,6 +96,7 @@ export async function buildOpponentIndex(book, settings, { onProgress, cancelled
   const colorCounts = { white: 0, black: 0 };
   let parsed = 0, skipped = 0;
   const games = book.games || [];
+  const features = featureCollector(games, now, maxDays, halfLife);
   for (let i = 0; i < games.length; i++) {
     if (cancelled?.()) break;
     if (onProgress && i % 25 === 0) { onProgress(i, games.length); await new Promise(r => setImmediate(r)); }
@@ -127,10 +121,90 @@ export async function buildOpponentIndex(book, settings, { onProgress, cancelled
       if (g.oppElo) { a.oppEloSum += g.oppElo; a.oppEloN++; }
       if ((g.date || '') > a.lastDate) a.lastDate = g.date || '';
     }
+    features.parsed(g, pg); // the whole game is parsed anyway: harvest the structure habits
     parsed++; colorCounts[color]++;
   }
   onProgress?.(games.length, games.length);
-  return { index, coverage: { total: games.length, bookGamesParsed: parsed, bookGamesSkipped: skipped, oppColorCounts: colorCounts } };
+  return { index, features: features.finish(), coverage: { total: games.length, bookGamesParsed: parsed, bookGamesSkipped: skipped, oppColorCounts: colorCounts } };
+}
+
+// --- book features: habits the whole history reveals without an engine --------
+// Computed in the same pass as the opening index (the PGNs are parsed anyway):
+// game length, draw rate, castling side, queen trades, first capture, the score
+// against higher- and lower-rated opponents, the score when out of their own
+// main lines, and current form. Everything is a count next to a rate so a thin
+// sample reads as thin.
+const RATING_GAP = 50;      // "higher rated" means at least this much above the subject
+const MAIN_LINES = 3;       // a game is "in book" when its 8-ply position is one of the subject's top lines per colour
+const FORM_GAMES = 10;      // form: the last this-many dated games
+const RECENT_DAYS = 90;     // ...and how many games in this window
+
+function featureCollector(games, now, maxDays, halfLife) {
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : null);
+  const tally = () => ({ games: 0, scored: 0, score: 0 });
+  const add = (t, score) => { t.games++; if (score != null) { t.scored++; t.score += score; } };
+  const rate = t => ({ games: t.games, scorePct: pct(t.score, t.scored) });
+  // Main lines per colour from the stored 8-ply posKeys (no parse needed).
+  const inWindow = games.filter(g => g.posKey && (g.color === 'white' || g.color === 'black') && weightOf(g.date, now, maxDays, halfLife) > 0);
+  const mainLines = { white: new Set(), black: new Set() };
+  for (const color of ['white', 'black']) {
+    const counts = new Map();
+    for (const g of inWindow) if (g.color === color) counts.set(g.posKey, (counts.get(g.posKey) || 0) + 1);
+    [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, MAIN_LINES).forEach(([k]) => mainLines[color].add(k));
+  }
+  const f = {
+    white: { games: 0, draws: 0, castled: { short: 0, long: 0, none: 0 } },
+    black: { games: 0, draws: 0, castled: { short: 0, long: 0, none: 0 } },
+    oppositeCastling: 0, queenTrades: 0, queenTradePlies: [], firstCapturePlies: [], plies: [],
+    vsHigher: tally(), vsLower: tally(), vsLevel: tally(),
+    inBook: tally(), outOfBook: tally(),
+  };
+  return {
+    parsed(g, pg) {
+      const color = g.color;
+      const score = resultScore(g.result, color);
+      const c = f[color];
+      c.games++;
+      if (score === 0.5) c.draws++;
+      f.plies.push(pg.moves.length);
+      const castle = { white: null, black: null };
+      let queenTrade = null, firstCapture = null;
+      for (const m of pg.moves) {
+        if (m.san === 'O-O' || m.san === 'O-O-O') castle[m.color] = m.san === 'O-O' ? 'short' : 'long';
+        if (firstCapture == null && m.san.includes('x')) firstCapture = m.ply;
+        if (queenTrade == null && !/[qQ]/.test(m.fenAfter.split(' ')[0])) queenTrade = m.ply;
+      }
+      c.castled[castle[color] || 'none']++;
+      if (castle.white && castle.black && castle.white !== castle.black) f.oppositeCastling++;
+      if (queenTrade != null) { f.queenTrades++; f.queenTradePlies.push(queenTrade); }
+      if (firstCapture != null) f.firstCapturePlies.push(firstCapture);
+      if (g.subjectElo && g.oppElo) {
+        const gap = g.oppElo - g.subjectElo;
+        add(gap >= RATING_GAP ? f.vsHigher : gap <= -RATING_GAP ? f.vsLower : f.vsLevel, score);
+      }
+      add(mainLines[color].has(g.posKey) ? f.inBook : f.outOfBook, score);
+    },
+    finish() {
+      const median = xs => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2); };
+      const dated = games.filter(g => pgnToDate(g.date)).sort((a, b) => pgnToDate(b.date) - pgnToDate(a.date));
+      const form = tally();
+      for (const g of dated.slice(0, FORM_GAMES)) add(form, resultScore(g.result, g.color));
+      const recent = dated.filter(g => ageDays(g.date, now) <= RECENT_DAYS).length;
+      const total = f.white.games + f.black.games;
+      return {
+        games: total,
+        avgMoves: f.plies.length ? Math.round(f.plies.reduce((s, n) => s + n, 0) / f.plies.length / 2) : null,
+        drawRate: { white: pct(f.white.draws, f.white.games), black: pct(f.black.draws, f.black.games) },
+        castling: { white: f.white.castled, black: f.black.castled },
+        oppositeCastlingPct: pct(f.oppositeCastling, total),
+        queenTrade: { pct: pct(f.queenTrades, total), medianMove: f.queenTradePlies.length ? Math.ceil(median(f.queenTradePlies) / 2) : null },
+        firstCaptureMedianMove: f.firstCapturePlies.length ? Math.ceil(median(f.firstCapturePlies) / 2) : null,
+        vsHigher: rate(f.vsHigher), vsLower: rate(f.vsLower), vsLevel: rate(f.vsLevel),
+        inBook: rate(f.inBook), outOfBook: rate(f.outOfBook),
+        form: { ...rate(form), recentGames: recent, days: RECENT_DAYS },
+      };
+    },
+  };
 }
 
 /** Build (or reuse) one opponent's parsed opening index, persisted to the local
@@ -142,9 +216,9 @@ export async function ensureClashIndex(fideId, { force = false, onProgress, canc
   if (!book) return null;
   const store = await getClashStore();
   if (!force && store[book.fideId]?.bookImportedAt === book.importedAt) return store[book.fideId];
-  const { index, coverage } = await buildOpponentIndex(book, await getSettings(), { onProgress, cancelled, now });
+  const { index, features, coverage } = await buildOpponentIndex(book, await getSettings(), { onProgress, cancelled, now });
   if (cancelled?.()) return null;
-  store[book.fideId] = { bookImportedAt: book.importedAt, builtAt: new Date().toISOString(), coverage, index };
+  store[book.fideId] = { bookImportedAt: book.importedAt, builtAt: new Date().toISOString(), coverage, features, index };
   await saveClashStore(store);
   return store[book.fideId];
 }
@@ -157,70 +231,70 @@ export function clashParams(params = {}) {
   if (params.maxPly != null) p.maxPly = clampInt(params.maxPly, 4, 24, p.maxPly);
   if (params.oppBranch != null) p.oppBranch = clampInt(params.oppBranch, 1, 5, p.oppBranch);
   if (params.minShareOpp != null) p.minShareOpp = clampInt(params.minShareOpp, 0, 40, 8) / 100;
-  if (params.kaiBranch != null) p.kaiBranch = clampInt(params.kaiBranch, 1, 3, p.kaiBranch);
+  if (params.studentBranch != null) p.studentBranch = clampInt(params.studentBranch, 1, 3, p.studentBranch);
   return p;
 }
 
 /** A display-only leaf: a position we choose not to expand (a thin opponent reply
  * past the point the book supports). Not memoised, carries no edges. */
-function leafOf(fen, ply, kaiColor) {
+function leafOf(fen, ply, studentColor) {
   const side = sideOf(fen);
-  return { key: keyOf(fen), side, mover: side === kaiColor ? 'kai' : 'opponent', ply, fenBefore: fen, edges: [], kaiPrepEnds: false, oppPrepEnds: false, oppPrepEndsReason: null, truncated: false, leaf: true };
+  return { key: keyOf(fen), side, mover: side === studentColor ? 'student' : 'opponent', ply, fenBefore: fen, edges: [], studentPrepEnds: false, oppPrepEnds: false, oppPrepEndsReason: null, truncated: false, leaf: true };
 }
 
 /** Assemble the two forests from the pre-built indexes. Cheap (no parsing), so it
  * runs per request. White forest: root is the player to move (his opening menu).
  * Black forest: root is the opponent to move (they choose the opening), then the
  * player replies. Depth alternates from there. */
-export function assembleClashForest({ oppIndex, coverage, kai, book, params = {} }) {
+export function assembleClashForest({ oppIndex, coverage, student, book, params = {} }) {
   const P = clashParams(params);
   const forests = { white: null, black: null };
-  for (const kaiColor of ['white', 'black']) {
-    if (!kai.counts[kaiColor]) continue; // no games of this colour, no forest
-    const oppColor = kaiColor === 'white' ? 'black' : 'white';
-    const kaiMap = kai.index[kaiColor] || {};
+  for (const studentColor of ['white', 'black']) {
+    if (!student.counts[studentColor]) continue; // no games of this colour, no forest
+    const oppColor = studentColor === 'white' ? 'black' : 'white';
+    const studentMap = student.index[studentColor] || {};
     const oppMap = (oppIndex && oppIndex[oppColor]) || {};
     const memo = new Set();
     const counter = { n: 0 };
-    forests[kaiColor] = expand(START_FEN, 0, false, { kaiColor, kaiMap, oppMap, memo, counter, P });
+    forests[studentColor] = expand(START_FEN, 0, false, { studentColor, studentMap, oppMap, memo, counter, P });
   }
   const nodeCount = countNodes(forests.white) + countNodes(forests.black);
   return {
     fideId: book.fideId, name: book.name,
     builtAt: new Date().toISOString(), bookImportedAt: book.importedAt,
-    params: { maxPly: P.maxPly, oppBranch: P.oppBranch, minCountOpp: P.minCountOpp, minShareOpp: P.minShareOpp, kaiBranch: P.kaiBranch },
-    kaiColorCounts: kai.counts,
+    params: { maxPly: P.maxPly, oppBranch: P.oppBranch, minCountOpp: P.minCountOpp, minShareOpp: P.minShareOpp, studentBranch: P.studentBranch },
+    studentColorCounts: student.counts,
     forests, nodeCount,
     truncated: (forests.white?.truncated || forests.black?.truncated) || nodeCount >= 2 * P.maxNodes,
     coverage,
   };
 }
 
-function expand(fen, ply, kaiMoved, ctx) {
-  const { kaiColor, kaiMap, oppMap, memo, counter, P } = ctx;
+function expand(fen, ply, studentMoved, ctx) {
+  const { studentColor, studentMap, oppMap, memo, counter, P } = ctx;
   const side = sideOf(fen);
   const key = keyOf(fen);
-  const mover = side === kaiColor ? 'kai' : 'opponent';
-  const node = { key, side, mover, ply, fenBefore: fen, edges: [], kaiPrepEnds: false, oppPrepEnds: false, oppPrepEndsReason: null, truncated: false };
+  const mover = side === studentColor ? 'student' : 'opponent';
+  const node = { key, side, mover, ply, fenBefore: fen, edges: [], studentPrepEnds: false, oppPrepEnds: false, oppPrepEndsReason: null, truncated: false };
   const posKey = posKeyOf(fen);
-  const hasData = mover === 'kai' ? !!kaiMap[posKey] : !!oppMap[posKey];
+  const hasData = mover === 'student' ? !!studentMap[posKey] : !!oppMap[posKey];
 
   if (memo.has(key)) { node.transposesTo = key; return node; } // merge move orders; do not re-expand
   memo.add(key);
   counter.n++;
   if (ply >= P.maxPly || counter.n >= P.maxNodes) {
     if (hasData) node.truncated = true;
-    else if (mover === 'kai') node.kaiPrepEnds = true;
+    else if (mover === 'student') node.studentPrepEnds = true;
     else { node.oppPrepEnds = true; node.oppPrepEndsReason = 'nodata'; }
     return node;
   }
 
-  if (mover === 'kai') {
-    const moves = kaiMap[posKey] ? Object.values(kaiMap[posKey]) : [];
+  if (mover === 'student') {
+    const moves = studentMap[posKey] ? Object.values(studentMap[posKey]) : [];
     let kept = moves.sort((a, b) => b.count - a.count);
-    if (!kaiMoved) kept = kept.filter(m => m.count >= P.minRootGames); // ignore one-off roots at his first move
-    kept = kept.slice(0, kaiMoved ? P.kaiBranch : P.rootKaiBranch);
-    if (!kept.length) { node.kaiPrepEnds = true; return node; }
+    if (!studentMoved) kept = kept.filter(m => m.count >= P.minRootGames); // ignore one-off roots at his first move
+    kept = kept.slice(0, studentMoved ? P.studentBranch : P.rootStudentBranch);
+    if (!kept.length) { node.studentPrepEnds = true; return node; }
     for (const m of kept) {
       node.edges.push({
         san: m.san, uci: m.uci, fenAfter: m.childFen, childKey: keyOf(m.childFen),
@@ -251,7 +325,7 @@ function expand(fen, ply, kaiMoved, ctx) {
       lastDate: m.lastDate || '',
       // A thin reply is speculative past this point, so show it but do not mine
       // deeper into single-game noise.
-      child: node.oppPrepEndsReason === 'thin' ? leafOf(m.childFen, ply + 1, kaiColor) : expand(m.childFen, ply + 1, kaiMoved, ctx),
+      child: node.oppPrepEndsReason === 'thin' ? leafOf(m.childFen, ply + 1, studentColor) : expand(m.childFen, ply + 1, studentMoved, ctx),
     });
     if (counter.n >= P.maxNodes) break;
   }
@@ -263,12 +337,38 @@ function countNodes(node) {
   return 1 + (node.edges || []).reduce((s, e) => s + countNodes(e.child), 0);
 }
 
+// --- prediction check: did a real game follow the tree? --------------------------
+
+/** Walk a game's moves through the forest for the student's colour and report
+ * where the game left the predicted tree: the ply, whose move it was, the move
+ * that left it, and whether that position was one the tree knew (the mover chose
+ * an unpredicted move) or one it had no data for. `matched` counts the plies
+ * that stayed on a predicted edge. Pure: the truth about one prediction. */
+export function walkPrediction(forest, moves, studentColor) {
+  const root = forest?.forests?.[studentColor];
+  if (!root) return null;
+  let node = root, matched = 0;
+  for (const m of moves) {
+    if (!node || node.transposesTo) return { matched, leftAtPly: null, by: null, san: null, reason: 'the tree ends here', held: true };
+    if (!node.edges.length) {
+      return { matched, leftAtPly: m.ply, by: node.mover, san: m.san, reason: node.mover === 'student' ? (node.studentPrepEnds ? 'your line ended here' : 'no more of your games here') : (node.oppPrepEndsReason === 'nodata' ? 'they had never reached this position' : 'their book thinned out here'), held: true };
+    }
+    const edge = node.edges.find(e => e.uci === m.uci || e.san === m.san);
+    if (!edge) return { matched, leftAtPly: m.ply, by: node.mover, san: m.san, reason: node.mover === 'student' ? 'you left your own line' : `they chose a move the tree did not predict (${node.edges.map(e => e.san).join(', ')} expected)`, held: false };
+    matched++;
+    node = edge.child;
+  }
+  return { matched, leftAtPly: null, by: null, san: null, reason: 'the whole game stayed inside the tree', held: true };
+}
+
 // --- principal lines (for the optional LLM narration) ---------------------------
 
-const fmtSanLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
+// Narration is about the student's own lines, so it is keyed per member; a bare
+// fideId key is a note from before multi-user and belongs to the primary member.
+export const clashNoteKey = (fideId, uid) => (uid === DEFAULT_USER ? fideId : `${uid}:${fideId}`);
 
-function endReasonOf(node) {
-  if (node.kaiPrepEnds) return 'you have no games continuing here';
+export function endReasonOf(node) {
+  if (node.studentPrepEnds) return 'you have no games continuing here';
   if (node.oppPrepEnds) return node.oppPrepEndsReason === 'nodata' ? 'the opponent has never faced this position' : 'the opponent has too few games here to trust';
   if (node.leaf) return 'the opponent has too few games here to continue';
   if (node.truncated) return 'the shown depth limit was reached';
@@ -278,7 +378,7 @@ function endReasonOf(node) {
 function walkPaths(node, sans, likelihood, color, out) {
   if (node.transposesTo) return; // merges into a line collected elsewhere
   if (!node.edges.length) {
-    if (sans.length) out.push({ color, sans: [...sans], sanLine: fmtSanLine(sans), endReason: endReasonOf(node), endEval: node.engineBest?.cp ?? null, likelihood });
+    if (sans.length) out.push({ color, sans: [...sans], sanLine: fmtLine(sans), endReason: endReasonOf(node), endEval: node.engineBest?.cp ?? null, likelihood });
     return;
   }
   for (const e of node.edges) {
@@ -306,7 +406,7 @@ const MAX_EXTEND = 40; // bound the engine work in one synchronous request
  * positions. */
 function collectExtendable(node, byFen) {
   if (!node) return;
-  if (!node.edges.length && !node.transposesTo && (node.kaiPrepEnds || node.oppPrepEnds || node.leaf || node.truncated)) {
+  if (!node.edges.length && !node.transposesTo && (node.studentPrepEnds || node.oppPrepEnds || node.leaf || node.truncated)) {
     let over = false;
     try { const c = new Chess(node.fenBefore); over = c.isGameOver(); } catch { over = true; }
     if (!over) (byFen.get(node.fenBefore) || byFen.set(node.fenBefore, []).get(node.fenBefore)).push(node);
@@ -344,7 +444,7 @@ function annotateLeaf(node, fen, result, oppIndex) {
   // Steering only makes sense when it is your move (you choose). Look up the
   // opponent's historical score in each engine-approved candidate's resulting
   // position; prefer the acceptable move that heads into their worst structure.
-  if (node.mover === 'kai' && oppIndex) {
+  if (node.mover === 'student' && oppIndex) {
     const oppColor = stm === 'white' ? 'black' : 'white';
     const bestStm = lines[0].stmCp;
     let steer = null;
@@ -379,11 +479,11 @@ export async function extendClashLeaves(forest, oppIndex, settings, pool) {
 
   await poolAnalyse(pool, chosen,
     async (engine, fen) => {
-      for (const name of pool.names) { const hit = await getCachedEval(evalCacheKey(name, depth, multipv, fen)); if (hit) return hit; }
+      for (const name of pool.names) { const hit = await getCachedEval(evalCacheKey(name, multipv, fen), depth); if (hit) return hit; }
       let r = await engine.analyse(fen, { depth, multipv });
       if (!r.lines.length) r = await engine.analyse(fen, { depth, multipv }); // one retry: a remote pipe can drop the info lines
       if (!r.lines.length) return { bestmove: null, lines: [] };            // give up rather than fabricate an eval
-      await putCachedEval(evalCacheKey(engine.name, depth, multipv, fen), { bestmove: r.bestmove, lines: r.lines });
+      await putCachedEval(evalCacheKey(engine.name, multipv, fen), { depth, bestmove: r.bestmove, lines: r.lines });
       return r;
     },
     async (fen, result) => { for (const node of byFen.get(fen)) annotateLeaf(node, fen, result, oppIndex); },

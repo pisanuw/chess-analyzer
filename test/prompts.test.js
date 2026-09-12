@@ -67,6 +67,7 @@ test('scoutGameSummaryPrompt and prepSheetPrompt are grounded in the dossier', (
   assert.ok(p.includes('1.e4 e5'));
   assert.ok(p.includes('on their own from move 5'));
   assert.ok(p.includes('preparation sheet'), 'the instructions from prompts/prep-sheet.md are included');
+  assert.ok(!p.includes('—'), 'no em dashes in the instructions or the dossier');
   assert.deepEqual(PREP_SHEET_SCHEMA.required, ['headline', 'profile', 'exploit_plan', 'openings', 'watch_fors']);
   assert.deepEqual(PREP_SHEET_SCHEMA.properties.profile.required, ['style', 'strongest_phase', 'weakest_phase', 'main_errors', 'time_trouble']);
 });

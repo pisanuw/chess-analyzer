@@ -1,6 +1,6 @@
 // Small SVG charts: horizontal bars, a single-series line, and the game eval graph. No dependencies.
 import { esc, formatEval, movePrefix } from './api.js';
-import { spentPerMove } from './shared.js';
+import { spentPerMove, winProb } from './shared.js';
 
 const flaggedJudgment = j => j === 'inaccuracy' || j === 'mistake' || j === 'blunder';
 
@@ -13,6 +13,23 @@ function svgEl(tag, attrs = {}, text) {
   return el;
 }
 
+/** Redraw a chart when its container's width changes (a rotated phone, a
+ * resized window, a tab that was hidden at first render). One observer per
+ * container; a redraw replaces the previous one. */
+function observeWidth(container, redraw) {
+  if (typeof ResizeObserver === 'undefined') return;
+  container._ro?.disconnect();
+  let last = container.clientWidth;
+  const ro = new ResizeObserver(() => {
+    const w = container.clientWidth;
+    if (!w || Math.abs(w - last) < 8) return;
+    last = w;
+    redraw();
+  });
+  ro.observe(container);
+  container._ro = ro;
+}
+
 function tooltip(container) {
   let tip = container.querySelector('.tip');
   if (!tip) { tip = document.createElement('div'); tip.className = 'tip'; container.appendChild(tip); }
@@ -23,7 +40,13 @@ function tooltip(container) {
 }
 
 /** Horizontal bar chart. items: [{ label, value, sub }] sorted by caller. */
-export function barChart(container, items, { format = v => String(v), maxValue = null, onClick = null } = {}) {
+export function barChart(container, items, opts = {}) {
+  const draw = () => drawBarChart(container, items, opts);
+  draw();
+  observeWidth(container, draw);
+}
+
+function drawBarChart(container, items, { format = v => String(v), maxValue = null, onClick = null } = {}) {
   container.classList.add('chart');
   container.innerHTML = '';
   if (!items.length) { container.innerHTML = '<div class="empty">No data yet</div>'; return; }
@@ -55,7 +78,13 @@ export function barChart(container, items, { format = v => String(v), maxValue =
 }
 
 /** Single-series line chart. points: [{ x: label, y: number, sub }]. */
-export function lineChart(container, points, { yMin = 0, yMax = 100, format = v => String(v), onClick = null } = {}) {
+export function lineChart(container, points, opts = {}) {
+  const draw = () => drawLineChart(container, points, opts);
+  draw();
+  observeWidth(container, draw);
+}
+
+function drawLineChart(container, points, { yMin = 0, yMax = 100, format = v => String(v), onClick = null } = {}) {
   container.classList.add('chart');
   container.innerHTML = '';
   if (points.length < 1) { container.innerHTML = '<div class="empty">No data yet</div>'; return; }
@@ -105,16 +134,29 @@ const fmtSpent = s => s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart
  * marked and, when the PGN has clocks, a time-spent strip underneath (the
  * classic patterns: the long think before the blunder, the blitzed collapse). */
 export function evalGraph(container, moves, { currentPly = 0, onSelect = null, timeControl = null } = {}) {
+  const n = moves.length;
+  if (!n) { container.classList.add('chart'); container.innerHTML = ''; return; }
+  // The cursor belongs to the current drawing; setPly moves whichever is live,
+  // and a redraw (resize) puts the cursor back where the caller left it.
+  let live = null, ply = currentPly;
+  const draw = () => { live = drawEvalGraph(container, moves, { currentPly: ply, onSelect, timeControl }); };
+  draw();
+  observeWidth(container, draw);
+  return { setPly(p) { ply = p; live?.setPly(p); } };
+}
+
+function drawEvalGraph(container, moves, { currentPly = 0, onSelect = null, timeControl = null } = {}) {
   container.classList.add('chart');
   container.innerHTML = '';
   const n = moves.length;
-  if (!n) return;
   const spents = spentPerMove(moves, timeControl);
   const hasTime = spents.some(s => s != null);
   const W = Math.max(300, container.clientWidth || 520), pad = 4;
   const evalH = 110, timeH = hasTime ? 30 : 0, H = evalH + timeH;
   const xs = ply => pad + (ply / n) * (W - 2 * pad);
-  const wpWhite = m => (m.color === 'white' ? m.wpAfter : 100 - m.wpAfter); // white perspective after the move
+  // White's win probability after the move: the stored mover-perspective value,
+  // or derived from the White-POV eval for a record that lacks it.
+  const wpWhite = m => (m.wpAfter != null ? (m.color === 'white' ? m.wpAfter : 100 - m.wpAfter) : winProb(m.evalAfter ?? 0));
   const ys = wp => pad + (1 - wp / 100) * (evalH - 2 * pad);
   const flagged = moves.filter(m => m.isPlayer && flaggedJudgment(m.judgment)).length;
   const label = `Evaluation graph across ${n} move${n === 1 ? '' : 's'}, White win probability; ${flagged} flagged player moment${flagged === 1 ? '' : 's'}`;

@@ -111,7 +111,7 @@ export async function analyseGame(pool, game, settings, onProgress) {
     let hit = null;
     if (i < CACHE_PLIES) {
       for (const name of pool.names) {
-        hit = await getCachedEval(evalCacheKey(name, depth, multipv, fens[i]));
+        hit = await getCachedEval(evalCacheKey(name, multipv, fens[i]), depth);
         if (hit) break;
       }
     }
@@ -147,7 +147,7 @@ export async function analyseGame(pool, game, settings, onProgress) {
       }
       positions[i] = { bestmove, lines, cp: scoreToCp(lines[0]), stm: stmOf(fens[i]) };
       if (i < CACHE_PLIES) {
-        await putCachedEval(evalCacheKey(engine.name, depth, multipv, fens[i]), { bestmove, lines });
+        await putCachedEval(evalCacheKey(engine.name, multipv, fens[i]), { depth, bestmove, lines });
       }
       done++;
       if (onProgress) onProgress(done, total);

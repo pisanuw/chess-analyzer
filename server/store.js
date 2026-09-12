@@ -1,5 +1,6 @@
 // JSON file storage under data/. One file per game, plus settings.json and drills.json.
 import { promises as fs } from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fideIdFromHeaders } from './pgn.js';
@@ -195,13 +196,57 @@ export async function listGames(userId = DEFAULT_USER) {
       console.error(`skipping unreadable game file ${f}: ${err.message}`);
       return null;
     });
-    const entry = g ? gameIndexEntry(g) : null;
+    // fileRev names this version of the file: the aggregate readers key their
+    // parsed-game cache and their memoised results on it (see indexFingerprint).
+    const entry = g ? { ...gameIndexEntry(g), fileRev: `${stat.mtimeMs}:${stat.size}` } : null;
     indexCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, entry });
     return entry;
   }));
   return games.filter(Boolean)
     .filter(e => ownsGame(e, userId))
     .sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.importedAt.localeCompare(a.importedAt));
+}
+
+/** A short hash of which game files are in a list and which version of each:
+ * the memo key for everything derived from those games (reports, repertoires,
+ * puzzle pools, the student's clash index). Order-independent. */
+export function indexFingerprint(entries) {
+  const h = createHash('sha1');
+  for (const s of entries.map(e => `${e.id}:${e.fileRev || ''}`).sort()) h.update(s + '\n');
+  return h.digest('hex').slice(0, 16);
+}
+
+// Full parsed games for the aggregate readers (report, repertoire, puzzles,
+// clash, decoys, drill sync), each of which used to read and parse every own
+// game file per call. Keyed by file and version like the index cache, capped
+// so a large collection cannot pin unbounded memory. The objects are SHARED
+// between callers and must be treated as read-only: anything that mutates and
+// saves a game keeps using getGame, and our own writes evict the entry.
+const gameCache = new Map(); // absolute path -> { rev, game }
+const GAME_CACHE_MAX = 400;
+
+/** The full game for one index entry (from listGames), served from the parsed
+ * cache when the file is unchanged. Null when the file is gone or unreadable. */
+export async function getGameCached(entry) {
+  if (!entry?.id || !isValidId(entry.id)) return null;
+  const file = path.join(GAMES_DIR, entry.id + '.json');
+  let rev = entry.fileRev;
+  if (!rev) {
+    try { const st = await fs.stat(file); rev = `${st.mtimeMs}:${st.size}`; } catch { return null; }
+  }
+  const hit = gameCache.get(file);
+  if (hit && hit.rev === rev) { gameCache.delete(file); gameCache.set(file, hit); return hit.game; } // refresh LRU order
+  const game = await readJson(file, null).catch(() => null);
+  if (game) {
+    gameCache.set(file, { rev, game });
+    while (gameCache.size > GAME_CACHE_MAX) gameCache.delete(gameCache.keys().next().value);
+  }
+  return game;
+}
+
+/** Every full game for a list of index entries, cache-backed, unreadable ones dropped. */
+export async function loadGames(entries) {
+  return (await Promise.all(entries.map(getGameCached))).filter(Boolean);
 }
 
 /** Every game regardless of owner (own of all members plus the shared scout
@@ -240,7 +285,20 @@ export function gameIndexEntry(g) {
     blunders: p ? p.blunders : null,
     moments: s ? s.moments.length : null,
     explained: g.explanations ? Object.keys(g.explanations).length : 0,
+    // Pattern and concept names with counts, so the explain job's "known
+    // patterns" list comes off the index instead of a full read per game.
+    patterns: countNames(g.explanations, 'pattern'),
+    concepts: countNames(g.explanations, 'concept'),
   };
+}
+
+function countNames(explanations, field) {
+  const out = {};
+  for (const e of Object.values(explanations || {})) {
+    const v = e?.[field];
+    if (typeof v === 'string' && v) out[v] = (out[v] || 0) + 1;
+  }
+  return out;
 }
 
 const isValidId = id => /^[a-f0-9]{12}$/.test(id);
@@ -262,6 +320,7 @@ export async function saveGame(game, userId = DEFAULT_USER) {
   const file = path.join(GAMES_DIR, game.id + '.json');
   await writeJson(file, game);
   indexCache.delete(file);
+  gameCache.delete(file);
   return game;
 }
 
@@ -274,6 +333,7 @@ export async function deleteGame(id, userId = ALL_USERS) {
   const file = path.join(GAMES_DIR, id + '.json');
   await fs.rm(file, { force: true });
   indexCache.delete(file);
+  gameCache.delete(file);
 }
 
 // Drill/guess state is per machine. The hosted copy has no persistent disk, so
@@ -284,6 +344,32 @@ export async function deleteGame(id, userId = ALL_USERS) {
 const sb = () => process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_KEY
   ? { url: process.env.SUPABASE_URL, headers: { apikey: process.env.SUPABASE_SERVICE_KEY, authorization: `Bearer ${process.env.SUPABASE_SERVICE_KEY}`, 'content-type': 'application/json' } }
   : null;
+
+// Every Supabase call carries a timeout: a stalled connection used to hang a
+// publish (or a function invocation) forever. A stall is retried once; every
+// write here is safe to repeat (GET, an upsert, an insert that ignores
+// duplicates, or the CAS PATCH, whose revision filter turns a replay of an
+// already-applied write into a DrillConflict that the drill lock re-reads).
+const sbTimeoutMs = () => Number(process.env.SUPABASE_TIMEOUT_MS) || 15000;
+const isStall = err => err?.name === 'TimeoutError' || err?.name === 'AbortError';
+
+export async function sbFetch(url, opts = {}) {
+  for (let attempt = 0; ; attempt++) {
+    // An explicit (ref'd) timer rather than AbortSignal.timeout: that one is
+    // unref'd, so in a publish script with nothing else pending the process
+    // could exit before the deadline fired.
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(new DOMException(`timed out after ${sbTimeoutMs()}ms`, 'TimeoutError')), sbTimeoutMs());
+    try {
+      return await fetch(url, { ...opts, signal: ctl.signal });
+    } catch (err) {
+      if (isStall(err) && attempt < 1) continue;
+      throw new Error(`supabase request ${isStall(err) ? `timed out after ${sbTimeoutMs()}ms` : 'failed'}: ${err.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
 
 /** A hosted drill write lost the compare-and-swap race; the caller re-reads and reapplies. */
 export class DrillConflict extends Error {}
@@ -301,7 +387,7 @@ export function kvEnabled() {
 export async function kvGet(key) {
   const s = sb();
   if (!s) return null;
-  const r = await fetch(`${s.url}/rest/v1/chess_kv?key=eq.${encodeURIComponent(key)}&select=value`, { headers: s.headers });
+  const r = await sbFetch(`${s.url}/rest/v1/chess_kv?key=eq.${encodeURIComponent(key)}&select=value`, { headers: s.headers });
   if (!r.ok) throw new Error(`kv read failed (${r.status})`);
   return (await r.json())[0]?.value ?? null;
 }
@@ -312,7 +398,7 @@ export async function kvGet(key) {
 export async function kvPut(key, value) {
   const s = sb();
   if (!s) return;
-  const r = await fetch(`${s.url}/rest/v1/chess_kv?on_conflict=key`, {
+  const r = await sbFetch(`${s.url}/rest/v1/chess_kv?on_conflict=key`, {
     method: 'POST',
     headers: { ...s.headers, prefer: 'resolution=merge-duplicates' },
     body: JSON.stringify([{ key, value }]),
@@ -325,7 +411,7 @@ export async function getDrills(userId = DEFAULT_USER) {
   let store;
   if (s) {
     const key = `drills:${userId}`;
-    const r = await fetch(`${s.url}/rest/v1/chess_kv?key=eq.${encodeURIComponent(key)}&select=value`, { headers: s.headers });
+    const r = await sbFetch(`${s.url}/rest/v1/chess_kv?key=eq.${encodeURIComponent(key)}&select=value`, { headers: s.headers });
     if (!r.ok) throw new Error(`drill store read failed (${r.status})`);
     store = (await r.json())[0]?.value || { drills: [] };
   } else {
@@ -453,7 +539,7 @@ export async function saveDrills(value, userId = DEFAULT_USER) {
   const prevRev = value.rev || 0;
   const next = { ...value, rev: prevRev + 1 };
   const filter = prevRev ? `value->>rev=eq.${prevRev}` : 'value->>rev=is.null';
-  const patch = await fetch(`${s.url}/rest/v1/chess_kv?key=eq.${encodeURIComponent(key)}&${filter}`, {
+  const patch = await sbFetch(`${s.url}/rest/v1/chess_kv?key=eq.${encodeURIComponent(key)}&${filter}`, {
     method: 'PATCH',
     headers: { ...s.headers, prefer: 'return=representation' },
     body: JSON.stringify({ value: next }),
@@ -463,7 +549,7 @@ export async function saveDrills(value, userId = DEFAULT_USER) {
   if (!prevRev) {
     // No row matched: usually the first ever write. Insert without clobbering
     // a row another instance created in the meantime.
-    const post = await fetch(`${s.url}/rest/v1/chess_kv`, {
+    const post = await sbFetch(`${s.url}/rest/v1/chess_kv`, {
       method: 'POST',
       headers: { ...s.headers, prefer: 'resolution=ignore-duplicates,return=representation' },
       body: JSON.stringify([{ key, value: next }]),

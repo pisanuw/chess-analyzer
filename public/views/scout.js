@@ -4,10 +4,10 @@
 import { api, esc, toast, movePrefix, busy, formatEval, session } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
 import { Board, walkSans } from '../board.js';
-import { CATEGORY_LABEL } from './report.js';
+import { CATEGORY_LABEL } from '../labels.js';
+import { fmtLine, lichessUrl as lichess } from '../shared.js';
+import { tendencyTiles, habitTiles, prepSheetBody, headToHeadCard } from '../widgets.js';
 
-const fmtLine = sans => sans.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.` : '') + s).join(' ');
-const lichess = sans => `https://lichess.org/analysis/pgn/${encodeURIComponent(fmtLine(sans))}`;
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 export async function scoutView(root) {
@@ -28,7 +28,7 @@ export async function scoutView(root) {
       <h1>Players</h1>
       <input type="search" id="subject-search" placeholder="Find opponent…" style="padding: 6px 10px; font-size: 14px">
     </div>
-    <div class="row" id="subject-list" style="gap: 6px; flex-wrap: wrap; margin-bottom: 14px"></div>
+    <div id="subject-list" style="margin-bottom: 14px"></div>
     <div class="row" id="prep-request" style="gap: 6px; align-items: center; margin-bottom: 14px">
       <span class="muted"><small>Not listed? Request a prep sheet by FIDE id:</small></span>
       <input type="text" id="prep-fide" inputmode="numeric" placeholder="e.g. 39904881" style="padding: 6px 10px; font-size: 14px; width: 14ch">
@@ -47,29 +47,47 @@ export async function scoutView(root) {
     if ((s.bookGames || 0) > 0 || s.prep) return 'yellow';
     return '';
   };
-  const btnHtml = s => {
-    const n = s.bookGames || s.games;
+  const prepLabel = { green: 'ready', yellow: 'to do', '': '' };
+  const prepTipOf = s => { const st = prepStatus(s); return st === 'green' ? 'prep sheet ready' : st === 'yellow' ? (s.prep ? 'prep sheet stale, regenerate' : 'prep sheet not generated') : 'nothing to prepare yet'; };
+  // A sortable table rather than a row of buttons: name, federation, games,
+  // prep status, and a Prepare action per row, like the Games list.
+  let sort = { key: 'games', asc: false };
+  try { sort = JSON.parse(localStorage.getItem('playersSort')) || sort; } catch { /* keep default */ }
+  const sortVal = s => sort.key === 'name' ? s.subject.toLowerCase() : sort.key === 'fed' ? (s.fed || '') : sort.key === 'prep' ? ({ green: 2, yellow: 1, '': 0 })[prepStatus(s)] : sort.key === 'analysed' ? (s.analysed || 0) : (s.bookGames || s.games || 0);
+  const rowHtml = s => {
     const st = prepStatus(s);
     const isCur = s.subject === current;
-    const col = st === 'green' ? '70,196,106' : st === 'yellow' ? '224,180,0' : '';
-    const style = col ? `border-left:4px solid rgb(${col})${isCur ? '' : `;background:rgba(${col},.14)`}` : '';
-    const prepTip = st === 'green' ? '; prep sheet ready' : st === 'yellow' ? (s.prep ? '; prep sheet stale, regenerate' : '; prep sheet not generated') : '';
-    const tip = (s.fideId ? `FIDE ${s.fideId}${s.fed ? ` (${s.fed})` : ''}, ${n} game${n === 1 ? '' : 's'}` : `no FIDE id, ${n} game${n === 1 ? '' : 's'}`) + prepTip + (s.member ? '; app member' : '');
-    return `<button class="small${isCur ? ' primary' : ''}" data-subject="${esc(s.subject)}" style="${style}" title="${esc(tip)}">${esc(s.subject)}${s.fed ? ` <small class="muted">${esc(s.fed)}</small>` : ''} (${n})${s.bookGames ? ' \u{1F4D6}' : ''}${s.member ? ' \u{1F464}' : ''}</button>`;
+    const n = s.bookGames || s.games;
+    return `<tr class="clickable${isCur ? ' current' : ''}" data-subject="${esc(s.subject)}">
+      <td><span class="dot ${st}" title="${esc(prepTipOf(s))}"></span>${esc(s.subject)}${s.member ? ' <span class="chip" title="app member">member</span>' : ''}</td>
+      <td>${esc(s.fed || '')}${s.fideId ? ` <small class="muted" title="FIDE id">${esc(s.fideId)}</small>` : ''}</td>
+      <td class="num" title="${s.bookGames ? `${s.bookGames} in their book, ` : ''}${s.analysed || 0} analysed">${n}${s.bookGames ? ' \u{1F4D6}' : ''}</td>
+      <td class="num">${s.analysed || 0}</td>
+      <td>${prepLabel[st]}</td>
+      <td class="row" style="gap:4px"><a class="small button-like" href="#/prep/${encodeURIComponent(s.subject)}?color=white" title="Prepare to play them as White">as W</a> <a class="small button-like" href="#/prep/${encodeURIComponent(s.subject)}?color=black" title="Prepare to play them as Black">as B</a></td>
+    </tr>`;
   };
   const renderSubjects = q => {
     const needle = q.trim().toLowerCase();
     const matched = subjects.filter(s => !needle || s.subject.toLowerCase().includes(needle));
     if (!matched.length) { listEl.innerHTML = '<span class="muted">No opponents match.</span>'; return; }
+    matched.sort((a, b) => { const x = sortVal(a), y = sortVal(b); const c = typeof x === 'string' ? x.localeCompare(y) : x - y; return (sort.asc ? c : -c) || a.subject.localeCompare(b.subject); });
     const collapsed = !needle && !showAll && matched.length > COLLAPSE_AT;
     const shown = collapsed ? matched.slice(0, COLLAPSE_AT) : matched;
     if (collapsed && !shown.some(s => s.subject === current)) { const cur = matched.find(s => s.subject === current); if (cur) shown.push(cur); }
-    const toggle = collapsed ? `<button class="small" id="subj-more">Show all ${matched.length}</button>`
-      : (!needle && matched.length > COLLAPSE_AT ? '<button class="small" id="subj-fewer">Show fewer</button>' : '');
-    listEl.innerHTML = shown.map(btnHtml).join('') + toggle;
+    const toggle = collapsed ? `<button class="small mt-2" id="subj-more">Show all ${matched.length}</button>`
+      : (!needle && matched.length > COLLAPSE_AT ? '<button class="small mt-2" id="subj-fewer">Show fewer</button>' : '');
+    const th = (key, label, num = false) => `<th data-sort="${key}" class="${num ? 'num ' : ''}${sort.key === key ? `sorted${sort.asc ? ' asc' : ''}` : ''}" title="Sort by ${label.toLowerCase()}">${label}</th>`;
+    listEl.innerHTML = `<div style="overflow-x:auto"><table class="players-table"><thead><tr>${th('name', 'Opponent')}${th('fed', 'Federation')}${th('games', 'Games', true)}${th('analysed', 'Analysed', true)}${th('prep', 'Prep sheet')}<th>Prepare</th></tr></thead>
+      <tbody>${shown.map(rowHtml).join('')}</tbody></table></div>${toggle}`;
     listEl.querySelector('#subj-more')?.addEventListener('click', () => { showAll = true; renderSubjects(q); });
     listEl.querySelector('#subj-fewer')?.addEventListener('click', () => { showAll = false; renderSubjects(q); });
-    listEl.querySelectorAll('button[data-subject]').forEach(b => b.onclick = () => { location.hash = `#/scout/${encodeURIComponent(b.dataset.subject)}`; });
+    listEl.querySelectorAll('th[data-sort]').forEach(h => h.onclick = () => {
+      sort = { key: h.dataset.sort, asc: sort.key === h.dataset.sort ? !sort.asc : h.dataset.sort === 'name' || h.dataset.sort === 'fed' };
+      try { localStorage.setItem('playersSort', JSON.stringify(sort)); } catch { /* private mode */ }
+      renderSubjects(q);
+    });
+    listEl.querySelectorAll('tr[data-subject]').forEach(tr => tr.onclick = e => { if (e.target.closest('a')) return; location.hash = `#/scout/${encodeURIComponent(tr.dataset.subject)}`; });
   };
   renderSubjects('');
   root.querySelector('#subject-search').addEventListener('input', e => renderSubjects(e.target.value));
@@ -99,8 +117,10 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
   // are independent: a freshly imported opponent has a book but no engine data.
   // The games list drives the "still processing" / "stale" prep-sheet flags.
   const [book, data, gamesRes] = await Promise.all([
-    entry.fideId ? api.scoutBook(entry.fideId).catch(() => null) : Promise.resolve(null),
-    api.scout(subject).catch(() => null),
+    // Only subjects with a book have one to fetch (a member with a FIDE id but no
+    // book used to trigger a 404 on every visit).
+    entry.fideId && entry.bookGames ? api.scoutBook(entry.fideId, entry.tc || null).catch(() => null) : Promise.resolve(null),
+    api.scout(subject, entry.color || null).catch(() => null),
     api.games().catch(() => ({ games: [] })),
   ]);
   if (!book && !data) {
@@ -120,20 +140,37 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
     ? `<details class="acc" id="dossier-acc"><summary><span class="acc-title">Deep dossier</span> <span class="muted" style="font-size:13px">${data.report.games} analysed game${data.report.games === 1 ? '' : 's'}</span></summary><div class="acc-body" id="engine-dossier"></div></details>`
     : `<div id="engine-dossier">${book ? engineHint(book, readonly) : ''}</div>`;
   el.innerHTML = subjectHeader(entry)
+    + colourCut(entry)
+    + headToHeadCard(data?.headToHead)
     + (data ? prepSheetCard(subject, data.report, data.prepSheet, pending, readonly, data.prepSheetVersion) : '')
     + (linkable ? fideLinkCard(subject) : '')
-    + (book ? bookSection(book.dossier, readonly, book.promote) : '')
+    + (book ? bookSection(book.dossier, readonly, book.promote, entry.color, book.features, entry.tc) : '')
     + (book ? clashCard() : '')
     + dossierAcc;
 
+  // The colour cut re-renders the whole dossier for that colour (the deep
+  // dossier, the book table, the clash forest, and the prep-round link); the
+  // time-control cut re-derives the book dossier from one class of games.
+  el.querySelectorAll('[data-color-cut]').forEach(b => b.onclick = () => { entry.color = b.dataset.colorCut || null; refresh(); });
+  el.querySelectorAll('[data-tc]').forEach(b => b.onclick = () => { entry.tc = b.dataset.tc === 'all' ? null : b.dataset.tc; refresh(); });
   if (data) wirePrep(el, subject, data.report, pending, refresh);
   if (linkable) wireFideLink(el, subject);
   if (book) {
     wirePromote(el, book.dossier, subject, book.promote, refresh);
     onFirstOpen(el.querySelector('#book-acc'), () => renderRatingTrend(el.querySelector('#elo-trend'), book.dossier.eloTrend));
-    onFirstOpen(el.querySelector('#clash-card'), () => wireClash(el, entry.fideId, boardRef, readonly));
+    onFirstOpen(el.querySelector('#clash-card'), () => wireClash(el, entry.fideId, boardRef, readonly, entry.color));
   }
   if (data) onFirstOpen(el.querySelector('#dossier-acc'), () => renderEngineDossier(el.querySelector('#engine-dossier'), data, subject, readonly));
+}
+
+/** "Their games: all, as White, as Black". Preparation is colour-specific: the
+ * student faces the opponent in one colour, so the whole page can be cut to it. */
+function colourCut(entry) {
+  const btn = (val, label) => `<button class="small${(entry.color || '') === val ? ' primary' : ''}" data-color-cut="${val}">${label}</button>`;
+  return `<div class="row" style="gap:6px; align-items:center; margin: 0 0 12px">
+    <span class="muted"><small>Their games:</small></span>${btn('', 'All')}${btn('white', 'As White')}${btn('black', 'As Black')}
+    ${entry.color ? `<small class="muted">Showing ${esc(entry.subject)} as ${entry.color}: what you meet when you have ${entry.color === 'white' ? 'Black' : 'White'}.</small>` : ''}
+  </div>`;
 }
 
 /** Run `fn` the first time a <details> is opened (or now, if already open). Lets
@@ -173,43 +210,6 @@ function subjectGameStats(games, subject, fideId) {
   };
 }
 
-/** The reading panel for a generated sheet. The sheet is read at the board, so
- * it is broken into a headline, a fixed-row profile table (same rows for every
- * opponent, so players compare at a glance), a numbered plan, an openings table,
- * and cue bullets, all in a calm high-legibility panel. Sheets made before the
- * structured format are free-text (overview / openings_advice), so fall back. */
-function prepSheetBody(sheet) {
-  const asList = v => Array.isArray(v) ? v : (v ? [v] : []);
-  const isStructured = sheet.headline || sheet.profile || Array.isArray(sheet.openings);
-  if (!isStructured) return legacyPrepBody(sheet);
-  const p = sheet.profile || {};
-  const rows = [
-    ['Style', p.style], ['Strongest phase', p.strongest_phase], ['Weakest phase', p.weakest_phase],
-    ['Main errors', p.main_errors], ['Time trouble', p.time_trouble],
-  ].filter(([, v]) => v);
-  const plan = asList(sheet.exploit_plan), openings = asList(sheet.openings), watch = asList(sheet.watch_fors);
-  return `<div class="prep-sheet">
-    ${sheet.headline ? `<p class="prep-headline">${esc(sheet.headline)}</p>` : ''}
-    ${rows.length ? `<h3>Profile</h3><table class="prep-table"><tbody>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
-    ${plan.length ? `<h3>Game plan</h3><ol>${plan.map(s => `<li>${esc(s)}</li>`).join('')}</ol>` : ''}
-    ${openings.length ? `<h3>Openings</h3><table class="prep-table"><thead><tr><th>When</th><th>You play</th><th>Why</th></tr></thead><tbody>${openings.map(o => `<tr><td>${esc(o.when)}</td><td>${esc(o.play)}</td><td>${esc(o.why)}</td></tr>`).join('')}</tbody></table>` : ''}
-    ${watch.length ? `<h3>Watch for</h3><ul>${watch.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
-  </div>`;
-}
-
-/** Older free-text sheets (overview / exploit_plan / openings_advice as prose). */
-function legacyPrepBody(sheet) {
-  const watch = Array.isArray(sheet.watch_fors)
-    ? `<ul>${sheet.watch_fors.map(w => `<li>${esc(w)}</li>`).join('')}</ul>`
-    : `<p>${esc(sheet.watch_fors)}</p>`;
-  return `<div class="prep-sheet">
-    <h3>Overview</h3><p>${esc(sheet.overview)}</p>
-    <h3>Game plan</h3><p>${esc(sheet.exploit_plan)}</p>
-    <h3>Openings</h3><p>${esc(sheet.openings_advice)}</p>
-    <h3>Watch for</h3>${watch}
-  </div>`;
-}
-
 /** The prep sheet, surfaced high on the page because it must be generated on
  * the home machine (it uses the claude CLI). Flags a stale sheet (games analysed
  * since it was made) and warns when games are still being processed. */
@@ -227,7 +227,8 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
   const pendingNote = pendingTotal
     ? `<p class="muted" style="margin:6px 0"><small>⏳ ${pendingTotal} of ${esc(subject)}'s game${pendingTotal === 1 ? ' is' : 's are'} still being processed (${pending.toAnalyse} to analyse, ${pending.toExplain} to explain). ${prepSheet ? 'Regenerate once they finish for the full picture.' : `The sheet will be built from the ${analysedNow} already analysed.`}</small></p>`
     : '';
-  const meta = prepSheet ? `<p class="muted"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}</small></p>` : '';
+  const meta = prepSheet ? `<p class="muted no-print"><small>From ${prepSheet.games} game${prepSheet.games === 1 ? '' : 's'}, ${esc((prepSheet.createdAt || '').slice(0, 10))}.${staleN ? ` ${staleN} more analysed since.` : ''}${prepSheet.evidence ? ' Hover an evidence chip for the fact behind a claim; click one to open the game.' : ''}</small>
+    <span class="row" style="gap:6px; margin-top:6px"><button class="small" id="prep-copy" title="Copy the sheet as markdown (for a coach, a note, or a message)">Copy as markdown</button> <button class="small" id="prep-print" title="Print just the sheet">Print</button></span></p>` : '';
   const body = prepSheet
     ? prepSheetBody(prepSheet) + meta
     : `<p class="muted">One page for the board: their weaknesses, the plan against them, and what to watch for. Built here on the home machine (uses the claude CLI), then published to the phone.</p>`;
@@ -251,13 +252,26 @@ function prepSheetCard(subject, report, prepSheet, pending, readonly, currentVer
   } else {
     button = '';
   }
-  return `<details class="acc" open${flag ? ' style="border-color: var(--warning)"' : ''}>
+  return `<details class="acc print-target" id="prep-acc" open${flag ? ' style="border-color: var(--warning)"' : ''}>
     <summary><span class="acc-title">Preparation sheet</span>${badge}</summary>
     <div class="acc-body">${body}${pendingNote}${button}</div>
   </details>`;
 }
 
 function wirePrep(el, subject, report, pending, refresh) {
+  const copyBtn = el.querySelector('#prep-copy');
+  if (copyBtn) copyBtn.onclick = () => busy(copyBtn, async () => {
+    try { await navigator.clipboard.writeText(await api.scoutCard(subject)); toast('Prep sheet copied as markdown'); }
+    catch (err) { toast(err.message, true); }
+  });
+  const printBtn = el.querySelector('#prep-print');
+  if (printBtn) printBtn.onclick = () => {
+    // Print only the sheet: a body class hides the chrome and every other section.
+    document.body.classList.add('print-sheet');
+    const done = () => { document.body.classList.remove('print-sheet'); window.removeEventListener('afterprint', done); };
+    window.addEventListener('afterprint', done);
+    window.print();
+  };
   const reqBtn = el.querySelector('#req-prep');
   if (reqBtn) reqBtn.onclick = async () => {
     reqBtn.disabled = true;
@@ -284,9 +298,10 @@ function subjectHeader(entry) {
     ? `FIDE <a href="https://ratings.fide.com/profile/${esc(id)}" target="_blank" rel="noopener">${esc(id)}</a>${entry.fed ? ` · ${esc(entry.fed)}` : ''}`
     : '<span class="muted">no FIDE id linked</span>';
   const aliases = (entry.aliases || []).filter(a => a !== entry.subject);
+  const prep = c => `<a class="btn small" href="#/prep/${encodeURIComponent(entry.subject)}?color=${c}" title="One page for this game: sheet, record, their ${c === 'white' ? 'Black' : 'White'} lines, the predicted lines, and a prep deck">Prepare as ${c === 'white' ? 'White' : 'Black'}</a>`;
   return `<div class="row" style="justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px">
       <h2 style="margin:0">${esc(entry.subject)}</h2>
-      <div style="font-size:14px">${idHtml}</div>
+      <div class="row" style="gap:8px; align-items:baseline"><span style="font-size:14px">${idHtml}</span>${prep('white')}${prep('black')}</div>
     </div>${aliases.length ? `<p class="muted" style="margin:2px 0 10px"><small>also seen as: ${aliases.map(esc).join(', ')}</small></p>` : '<div style="margin-bottom:10px"></div>'}`;
 }
 
@@ -337,8 +352,14 @@ function wireFideLink(el, subject) {
 }
 
 /** The book tier: what they play, weighted to recent, on-strength games. */
-function bookSection(d, readonly, promote) {
+function bookSection(d, readonly, promote, color = null, features = null, tc = null) {
   const cov = d.coverage;
+  // Offer a time-control cut only when the book actually mixes classes (an
+  // export with no TimeControl headers is all "unknown" and gets no toggle).
+  const classes = ['classical', 'rapid', 'blitz'].filter(k => (cov.byTimeControl || {})[k] > 0);
+  const tcToggle = classes.length && (classes.length > 1 || (cov.byTimeControl.unknown || 0) > 0)
+    ? `<div class="row" style="gap:6px; margin:6px 0"><span class="muted"><small>Time control:</small></span>${[['all', `All (${cov.bookTotal})`], ...classes.map(k => [k, `${k[0].toUpperCase()}${k.slice(1)} (${cov.byTimeControl[k]})`])].map(([v, label]) => `<button class="small${(tc || 'all') === v ? ' primary' : ''}" data-tc="${v}">${label}</button>`).join('')}${cov.byTimeControl.unknown ? ` <small class="muted">${cov.byTimeControl.unknown} with no time control recorded</small>` : ''}</div>`
+    : '';
   // Rating over time is a small line graph (filled in after insertion by
   // renderRatingTrend); a row of "year: elo" chips was hard to read as a trend.
   const trendBlock = d.eloTrend.length
@@ -361,18 +382,20 @@ function bookSection(d, readonly, promote) {
   return `
     <details class="acc" id="book-acc"><summary><span class="acc-title">Repertoire book</span> <span class="muted" style="font-size:13px">${d.total} games</span></summary>
     <div class="acc-body">
-    <p class="muted">Repertoire book from ${d.total} games${d.dateRange ? ` (${esc(d.dateRange.from)} to ${esc(d.dateRange.to)})` : ''}. Weighted toward recent, on-strength games: ${cov.droppedOld} game${cov.droppedOld === 1 ? '' : 's'} older than ${cov.maxAgeYears} years and ${cov.droppedElo} more than ${cov.eloBand} Elo off their current strength are set aside, because they no longer describe the player you will face.</p>
+    <p class="muted">Repertoire book from ${d.total} games${tc ? ` (${tc} only)` : ''}${d.dateRange ? ` (${esc(d.dateRange.from)} to ${esc(d.dateRange.to)})` : ''}. Weighted toward recent, on-strength games: ${cov.droppedOld} game${cov.droppedOld === 1 ? '' : 's'} older than ${cov.maxAgeYears} years and ${cov.droppedElo} more than ${cov.eloBand} Elo off their current strength are set aside, because they no longer describe the player you will face.</p>
+    ${tcToggle}
     <div class="tiles">
       <div class="tile"><div class="v">${d.currentElo ?? '–'}</div><div class="l">Current strength</div></div>
       <div class="tile"><div class="v">${d.peakElo ?? '–'}</div><div class="l">Peak in file</div></div>
       <div class="tile"><div class="v">${d.results.white.recentScorePct ?? '–'}% / ${d.results.black.recentScorePct ?? '–'}%</div><div class="l">Recent score W / B</div></div>
       <div class="tile"><div class="v">${cov.analysing}</div><div class="l">Recent games to analyse</div></div>
     </div>
+    ${features ? `<h3 style="margin:16px 0 0">Habits from their whole history</h3>${habitTiles(features)}` : ''}
     <h3 style="margin:16px 0 0">Rating over time</h3>
     ${trendBlock}
-    <div class="grid grid-2" style="margin-top: 16px">
-      <div class="card"><h3 style="margin-top:0">As White <span class="muted">(${d.results.white.games} games, scores ${d.results.white.scorePct ?? '–'}% all-time)</span></h3>${repTable('white')}</div>
-      <div class="card"><h3 style="margin-top:0">As Black <span class="muted">(${d.results.black.games} games, scores ${d.results.black.scorePct ?? '–'}% all-time)</span></h3>${repTable('black')}</div>
+    <div class="grid ${color ? '' : 'grid-2'}" style="margin-top: 16px">
+      ${!color || color === 'white' ? `<div class="card"><h3 style="margin-top:0">As White <span class="muted">(${d.results.white.games} games, scores ${d.results.white.scorePct ?? '–'}% all-time)</span></h3>${repTable('white')}</div>` : ''}
+      ${!color || color === 'black' ? `<div class="card"><h3 style="margin-top:0">As Black <span class="muted">(${d.results.black.games} games, scores ${d.results.black.scorePct ?? '–'}% all-time)</span></h3>${repTable('black')}</div>` : ''}
     </div>
     <div class="card" style="margin-top: 16px">
       <h3 style="margin-top:0">Deep preparation</h3>
@@ -431,10 +454,13 @@ function clashCard() {
   </details>`;
 }
 
-function wireClash(el, fideId, boardRef, readonly) {
+function wireClash(el, fideId, boardRef, readonly, subjectColor = null) {
   const body = el.querySelector('#clash-body');
   if (!body || !fideId) return;
-  loadClash(fideId, body, boardRef, { fideId, readonly });
+  // Cut to one colour: when the subject is shown as White, the student is Black,
+  // so only the black forest (the student's Black openings) applies.
+  const onlyForest = subjectColor ? (subjectColor === 'white' ? 'black' : 'white') : null;
+  loadClash(fideId, body, boardRef, { fideId, readonly, onlyForest });
 }
 
 async function loadClash(fideId, body, boardRef, ctx) {
@@ -472,7 +498,7 @@ async function pollClash(fideId, body, boardRef, ctx) {
 /** A per-node marker for where a prediction runs out (coverage, not just depth). */
 function clashFlag(node) {
   if (node.transposesTo) return '<span class="chip" title="Same position reached by a move order already shown">transposes</span>';
-  if (node.kaiPrepEnds) return '<span class="chip warn" title="You have no games continuing here: your prepared line ends">your line ends</span>';
+  if (node.studentPrepEnds) return '<span class="chip warn" title="You have no games continuing here: your prepared line ends">your line ends</span>';
   if (node.oppPrepEnds) return node.oppPrepEndsReason === 'nodata'
     ? '<span class="chip warn" title="This opponent has never reached this position">not faced</span>'
     : '<span class="chip warn" title="The opponent reached this but in too few games to trust a prediction">book thins out</span>';
@@ -498,13 +524,17 @@ function clashEdgeStats(node, e) {
 /** Recursive nested list. Each edge is one move; its child holds the reply tree.
  * data-path carries the whole SAN line to this move (so the board and the move
  * list under it show the sequence played); data-orient flips to the player's side. */
-function renderClashEdges(node, orient, path = []) {
+function renderClashEdges(node, orient, path = [], mainOnly = false) {
   if (!node.edges.length) return '';
-  return `<ul class="clash-tree">${node.edges.map(e => {
+  // Main lines only: the top reply at every node, one line per opening. What a
+  // phone can show, and what a player reads first on a laptop too.
+  const edges = mainOnly ? node.edges.slice(0, 1) : node.edges;
+  return `<ul class="clash-tree">${edges.map(e => {
     const label = `${movePrefix({ moveNumber: Math.floor(node.ply / 2) + 1, color: node.side })} ${esc(e.san)}`;
-    const who = node.mover === 'kai' ? 'Your move' : 'Their reply';
+    const who = node.mover === 'student' ? 'Your move' : 'Their reply';
     const line = [...path, e.san];
-    return `<li><span class="clash-move ${node.mover}" data-path="${esc(line.join(' '))}" data-orient="${orient}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${clashLeafEngine(e.child, orient, line)}${renderClashEdges(e.child, orient, line)}</li>`;
+    const more = mainOnly && node.edges.length > 1 ? ` <small class="muted" title="Other replies are hidden by the main-lines toggle">+${node.edges.length - 1} more</small>` : '';
+    return `<li><span class="clash-move ${node.mover}" data-path="${esc(line.join(' '))}" data-orient="${orient}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${more}${clashLeafEngine(e.child, orient, line)}${renderClashEdges(e.child, orient, line, mainOnly)}</li>`;
   }).join('')}</ul>`;
 }
 
@@ -514,7 +544,7 @@ function renderClashEdges(node, orient, path = []) {
  * opponent scores badly in is flagged. `path` is the line up to the leaf. */
 function clashLeafEngine(node, orient, path = []) {
   if (!node.engineBest) return '';
-  const who = node.mover === 'kai' ? 'engine suggests' : 'likely engine reply';
+  const who = node.mover === 'student' ? 'engine suggests' : 'likely engine reply';
   const lines = node.engineLines?.length ? node.engineLines : [node.engineBest];
   const items = lines.map(l => {
     const steer = l.oppScorePct != null
@@ -529,6 +559,9 @@ function clashLeafEngine(node, orient, path = []) {
 // on the clash card and remembered in the browser.
 const clashFormat = () => { try { return localStorage.getItem('clashFormat') === 'lichess' ? 'lichess' : 'tree'; } catch { return 'tree'; } };
 const setClashFormat = v => { try { localStorage.setItem('clashFormat', v); } catch { /* private mode */ } };
+// Main lines only (tree format): remembered; on by default on a phone-width screen.
+const clashMainOnly = () => { try { const v = localStorage.getItem('clashMainOnly'); return v == null ? window.innerWidth < 600 : v === '1'; } catch { return false; } };
+const setClashMainOnly = v => { try { localStorage.setItem('clashMainOnly', v ? '1' : '0'); } catch { /* private mode */ } };
 
 // A compact single stat for the lichess view: their reply frequency, or the
 // engine eval on your moves, so the key number survives without the full band.
@@ -587,17 +620,18 @@ function renderClashLichess(root, orient) {
   return html + '</tbody></table>';
 }
 
-function renderClashForest(clash, container, boardRef = { board: null }, ctx = {}) {
+export function renderClashForest(clash, container, boardRef = { board: null }, ctx = {}) {
   boardRef.board?.destroy(); boardRef.board = null; // a fresh build replaces the board div
   const forest = color => {
     const root = clash.forests[color];
     if (!root) return '';
-    const n = clash.kaiColorCounts[color] || 0;
+    const n = clash.studentColorCounts[color] || 0;
     const body = root.edges.length
-      ? (clashFormat() === 'lichess' ? renderClashLichess(root, color) : renderClashEdges(root, color))
+      ? (clashFormat() === 'lichess' ? renderClashLichess(root, color) : renderClashEdges(root, color, [], clashMainOnly()))
       : '<div class="muted">Not enough of your games in this colour.</div>';
     return `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">You as ${color} <span class="muted" style="font-size:13px">(${n} of your game${n === 1 ? '' : 's'})</span></h3>${body}</div>`;
   };
+  const forestHtml = () => ['white', 'black'].filter(c => !ctx.onlyForest || ctx.onlyForest === c).map(forest).join('');
   // Home-machine controls: extend prep-end leaves with the engine (once), and an
   // optional coach narration of the key lines.
   const extendCtl = ctx.readonly
@@ -609,7 +643,8 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
     ? ''
     : `<button class="small" id="clash-narrate" title="Ask the coach model for one grounded note per predicted line">${clash.narration ? 'Regenerate explanation' : 'Explain the key lines'}</button>`;
   const fmt = clashFormat();
-  const fmtCtl = `<span class="clash-fmt" role="group" aria-label="Variation display"><button class="small${fmt === 'tree' ? ' primary' : ''}" data-fmt="tree" title="Indented branching tree">Tree</button><button class="small${fmt === 'lichess' ? ' primary' : ''}" data-fmt="lichess" title="Main line with inlined variations, lichess style">Lichess</button></span>`;
+  const fmtCtl = `<span class="clash-fmt" role="group" aria-label="Variation display"><button class="small${fmt === 'tree' ? ' primary' : ''}" data-fmt="tree" title="Indented branching tree">Tree</button><button class="small${fmt === 'lichess' ? ' primary' : ''}" data-fmt="lichess" title="Main line with inlined variations, lichess style">Lichess</button></span>
+    <label class="muted" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="clash-main"${clashMainOnly() ? ' checked' : ''}> <small>Main lines only</small></label>`;
   container.innerHTML = `
     <p class="muted">Your openings (bold) crossed with ${esc(clash.name)}'s games, showing their most likely replies weighted toward recent, on-strength games. Percentages are how often they chose that reply; "Ng" is the game count behind it. Click any move to follow the line on the board. Badges: <span class="chip warn">not faced</span> they never reached the position, <span class="chip warn">book thins out</span> too few games to trust, <span class="chip warn">your line ends</span> you have no games continuing.</p>
     <div class="row" style="gap:10px;align-items:center;margin-bottom:6px">${fmtCtl}${extendCtl}${narrateCtl}</div>
@@ -619,7 +654,7 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
         <div class="board-wrap"><div id="clash-board"></div></div>
         <div id="clash-line" class="clash-line muted">Click any move to follow the line here.</div>
       </div>
-      <div id="clash-forests">${forest('white')}${forest('black')}</div>
+      <div id="clash-forests">${forestHtml()}</div>
     </div>
     <p class="muted"><small>${clash.nodeCount} positions${clash.truncated ? ', capped for size' : ''}, from ${clash.coverage.bookGamesParsed} of the opponent's games.</small></p>`;
 
@@ -643,6 +678,10 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
     // selected ply, so stepping back links to that earlier position, not the whole line.
     const href = at < 0 ? 'https://lichess.org/analysis' : lichess(seq.slice(0, at + 1).map(m => m.san));
     lineEl.innerHTML = `${moves} <a class="clash-lichess" href="${href}" target="_blank" rel="noopener" title="Open this position on lichess">lichess ↗</a>`;
+    // Light up the tree nodes on the line currently on the board, up to the shown ply.
+    const onBoard = new Set();
+    for (let i = 0; i <= at; i++) onBoard.add(seq.slice(0, i + 1).map(m => m.san).join(' '));
+    container.querySelectorAll('.clash-move').forEach(el => el.classList.toggle('onboard', onBoard.has(el.dataset.path)));
   };
 
   // One delegated listener per region: a tree move sets the whole line; a move in
@@ -663,12 +702,17 @@ function renderClashForest(clash, container, boardRef = { board: null }, ctx = {
 
   // Switch variation format in place: only the forests re-render, so the board
   // and the delegated click listener on #clash-forests are preserved.
+  const rerenderForests = () => {
+    forests.innerHTML = forestHtml();
+    if (current) showLine(current.sans, current.orient); // keep the highlight on the line shown
+  };
   container.querySelectorAll('[data-fmt]').forEach(b => b.onclick = () => {
     if (clashFormat() === b.dataset.fmt) return;
     setClashFormat(b.dataset.fmt);
     container.querySelectorAll('[data-fmt]').forEach(x => x.classList.toggle('primary', x.dataset.fmt === b.dataset.fmt));
-    forests.innerHTML = forest('white') + forest('black');
+    rerenderForests();
   });
+  container.querySelector('#clash-main').onchange = e => { setClashMainOnly(e.target.checked); rerenderForests(); };
 
   const extendBtn = container.querySelector('#clash-extend');
   if (extendBtn) extendBtn.onclick = () => busy(extendBtn, async () => {
@@ -707,17 +751,20 @@ function clashNarration(clash) {
 /** The deeper dossier over the analysed subset: where they go wrong, clock,
  * repertoire prep-ends, recurring patterns, and the LLM prep sheet. */
 async function renderEngineDossier(el, data, subject, readonly) {
-  const { report: r, repertoire } = data;
+  const { report: r, repertoire, color } = data;
   const j = r.totalJudged;
   const catLabel = c => CATEGORY_LABEL[c] || c;
+  if (!r.games) { el.innerHTML = `<div class="empty">No analysed games of ${esc(subject)} as ${esc(color)}.</div>`; return; }
+  const roundHref = `#/drills?subject=${encodeURIComponent(subject)}${color ? `&color=${color}` : ''}`;
   el.innerHTML = `
-    <p class="muted" style="margin-top:0">Their mistakes, phrased for your preparation: aim for the phases and structures where they go wrong. Error categories and patterns come from explained scout imports; your own games against them contribute engine data.</p>
+    <p class="muted" style="margin-top:0">Their mistakes, phrased for your preparation: aim for the phases and structures where they go wrong. Error categories and patterns come from explained scout imports; your own games against them contribute engine data. <a href="${roundHref}" title="Every punish drill from these games, opening errors first">Drill their mistakes${color ? ` as ${color}` : ''} ▸</a></p>
     <div class="tiles">
       <div class="tile"><div class="v">${r.overallAccuracy ?? '–'}%</div><div class="l">Their average accuracy</div></div>
       <div class="tile"><div class="v">${(r.totalMoments / r.games).toFixed(1)}</div><div class="l">Their mistakes per game</div></div>
       <div class="tile"><div class="v">${j.blunder} / ${j.mistake} / ${j.inaccuracy}</div><div class="l">Blunders / mistakes / inaccuracies</div></div>
       <div class="tile"><div class="v">${r.timeManagement ? r.timeManagement.underTwoMinMoments : '–'}</div><div class="l">Their errors under 2 minutes</div></div>
     </div>
+    ${r.tendencies?.games ? `<h3>How they handle the evaluation</h3>${tendencyTiles(r.tendencies)}` : ''}
     ${r.focus.length ? `<h3>Where they go wrong</h3><div class="grid grid-3">${r.focus.map((f, i) => `
       <div class="card"><div class="muted">#${i + 1}</div><b>${esc(catLabel(f.category))}</b><div class="muted">${f.count} moment${f.count === 1 ? '' : 's'}, weighted ${f.weight}</div></div>`).join('')}</div>` : ''}
     <div class="grid grid-2" style="margin-top: 20px">

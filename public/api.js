@@ -1,5 +1,11 @@
 // Thin fetch wrapper for the local JSON API.
 async function req(method, url, body) {
+  // An admin "viewing as" a member: every GET under /api carries ?user=<id> so
+  // the server scopes reports, drills, and prep to that member. Writes never
+  // carry it: looking as someone must not act as them.
+  if (method === 'GET' && session.viewAs && url.startsWith('/api/') && !url.startsWith('/api/auth') && !url.startsWith('/api/users')) {
+    url += (url.includes('?') ? '&' : '?') + 'user=' + encodeURIComponent(session.viewAs);
+  }
   let res;
   try {
     res = await fetch(url, {
@@ -38,8 +44,14 @@ export async function busy(btn, fn) {
   try { return await fn(); } finally { btn.disabled = was; }
 }
 
-/** Populated once at startup from /api/auth/me; views read session.user?.role. */
-export const session = { user: null, authActive: false, providers: {} };
+/** Populated once at startup from /api/auth/me; views read session.user?.role.
+ * `viewAs` is the member an admin is looking at (see req), kept for the tab. */
+export const session = { user: null, authActive: false, providers: {}, viewAs: null };
+try { session.viewAs = sessionStorage.getItem('viewAs') || null; } catch { /* private mode */ }
+export function setViewAs(id) {
+  session.viewAs = id || null;
+  try { if (id) sessionStorage.setItem('viewAs', id); else sessionStorage.removeItem('viewAs'); } catch { /* private mode */ }
+}
 
 let loginShown = false;
 
@@ -116,7 +128,8 @@ export const api = {
   saveSettings: patch => req('PUT', '/api/settings', patch),
   games: () => req('GET', '/api/games'),
   game: id => req('GET', `/api/games/${id}`),
-  importPgn: (pgn, analyse = true, purpose = 'own', subject = '') => req('POST', '/api/games/import', { pgn, analyse, purpose, subject }),
+  importPgn: (pgn, analyse = true, purpose = 'own', subject = '', owner = null) => req('POST', '/api/games/import', { pgn, analyse, purpose, subject, ...(owner ? { owner } : {}) }),
+  members: () => req('GET', '/api/members'),
   deleteGame: id => req('DELETE', `/api/games/${id}`),
   setPlayer: (id, color, analyse = true) => req('POST', `/api/games/${id}/player`, { color, analyse }),
   setNames: (id, white, black, subject) => req('POST', `/api/games/${id}/names`, { white, black, ...(subject !== undefined ? { subject } : {}) }),
@@ -132,8 +145,13 @@ export const api = {
   report: () => req('GET', '/api/report'),
   repertoire: () => req('GET', '/api/repertoire'),
   scoutSubjects: () => req('GET', '/api/scout'),
-  scout: subject => req('GET', `/api/scout/${encodeURIComponent(subject)}`),
+  scout: (subject, color = null) => req('GET', `/api/scout/${encodeURIComponent(subject)}${color ? `?color=${color}` : ''}`),
   prepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet`),
+  scoutCard: async subject => {
+    const res = await fetch(`/api/scout/${encodeURIComponent(subject)}/card`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'no prep sheet to export');
+    return res.text();
+  },
   requestPrepSheet: subject => req('POST', `/api/scout/${encodeURIComponent(subject)}/prepsheet/request`, {}),
   requestPrepByFide: fideId => req('POST', '/api/prep-request', { fideId }),
   requestAccess: (email, reason) => req('POST', '/api/auth/request-access', { email, reason }),
@@ -143,21 +161,26 @@ export const api = {
   addPlayer: ({ email, displayName, fideId, playerNames }) => req('POST', '/api/admin/players', { email, displayName, fideId, playerNames }),
   removeUser: id => req('DELETE', `/api/admin/users/${encodeURIComponent(id)}`),
   scoutImport: ({ pgn, fideId, name, filename }) => req('POST', '/api/scout/import', { pgn, fideId, name, filename }),
-  scoutBook: fideId => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}`),
+  scoutBook: (fideId, tc = null) => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}${tc && tc !== 'all' ? `?tc=${tc}` : ''}`),
   promoteScout: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/promote`, {}),
   scoutClash: (fideId, opts = {}) => req('GET', `/api/scout/book/${encodeURIComponent(fideId)}/clash${opts.extend ? '?extend=1' : ''}`),
   narrateClash: fideId => req('POST', `/api/scout/book/${encodeURIComponent(fideId)}/clash/narrate`, {}),
   players: () => req('GET', '/api/players'),
+  prep: (subject, color = 'white', tc = null) => req('GET', `/api/prep/${encodeURIComponent(subject)}?color=${color}${tc && tc !== 'all' ? `&tc=${tc}` : ''}`),
+  prepMark: noopForVisitor((id, correct) => req('POST', '/api/prep/mark', { id, correct })),
+  upcoming: () => req('GET', '/api/upcoming'),
+  addUpcoming: entry => req('POST', '/api/upcoming', entry),
+  removeUpcoming: id => req('DELETE', `/api/upcoming/${encodeURIComponent(id)}`),
   fideSearch: name => req('GET', `/api/fide/search?name=${encodeURIComponent(name)}`),
   linkPlayer: ({ fideId, name, fideName, federation, verify }) => req('POST', '/api/players/link', { fideId, name, fideName, federation, verify }),
   patterns: () => req('GET', '/api/patterns'),
   synthesizePattern: pattern => req('POST', '/api/patterns/synthesize', { pattern }),
   puzzles: ({ source = 'tactics', limit = 30 } = {}) =>
     req('GET', `/api/puzzles?source=${encodeURIComponent(source)}&limit=${limit}`),
-  drills: ({ pattern = null, category = null, limit = null, session = false } = {}) =>
-    req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}${category ? `&category=${encodeURIComponent(category)}` : ''}${session ? '&session=1' : ''}`),
-  reviewDrill: noopForVisitor((id, grade, correct, practice = false, ms = null) =>
-    req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}) })),
+  drills: ({ pattern = null, category = null, subject = null, color = null, limit = null, session = false } = {}) =>
+    req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}${category ? `&category=${encodeURIComponent(category)}` : ''}${subject ? `&subject=${encodeURIComponent(subject)}` : ''}${color ? `&color=${color}` : ''}${session ? '&session=1' : ''}`),
+  reviewDrill: noopForVisitor((id, grade, correct, practice = false, ms = null, { confidence = null, note = null } = {}) =>
+    req('POST', `/api/drills/${encodeURIComponent(id)}/review`, { grade, correct, practice, ...(ms != null ? { ms } : {}), ...(confidence ? { confidence } : {}), ...(note ? { note } : {}) })),
   suspendDrill: noopForVisitor((id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended })),
   undoDrill: noopForVisitor(id => req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {})),
   restoreSuspended: noopForVisitor(() => req('POST', '/api/drills/restore-suspended', {})),

@@ -1,5 +1,7 @@
 # Improvement report: frontend, backend, and opponent-preparation pedagogy
 
+> **Status (2026-09-12):** implemented. Every numbered recommendation in sections 2, 3, and 4.3 (A to I) shipped in phases on the follow-up branch, each with tests, and is described in CHANGES.md (newest first). Two optional items were left as they were and are listed in BRIEFING.md next step 9: the play-out refactor onto `public/playout.js` with a shared `gradeGuess`, and the `analysis.moves[]` de-duplication (to be measured first). Section 4.4 (things not worth doing yet) stands.
+
 Date: 2026-09-11. Scope: every file under `server/`, `public/`, `scripts/`, `netlify/`, and `test/`, plus README, BRIEFING, CLAUDE, CHANGES, and PLAN-opening-clash. `npm test` was run on a clean checkout (`npm ci`): 200 tests, all passing, no engine or claude CLI needed. One finding (the stale-session fallthrough in section 2.1) was reproduced with a script against the real app; everything else is from reading the code.
 
 The report is organised as: a ranked summary, backend, frontend, pedagogy (the part about preparing a player for a new opponent), and a suggested order of work. Each item names the files and lines it refers to so it can be turned into a task without re-reading the codebase.

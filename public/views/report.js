@@ -3,20 +3,8 @@
 // a visible width to size themselves).
 import { api, esc, toast, movePrefix } from '../api.js';
 import { barChart, lineChart } from '../charts.js';
-
-export const CATEGORY_LABEL = {
-  'tactics-allowed': 'Overlooked opponent tactic',
-  'tactics-missed': 'Missed own tactic',
-  'calculation': 'Miscalculated a line',
-  'positional': 'Positional / plan',
-  'opening': 'Opening knowledge',
-  'endgame-technique': 'Endgame technique',
-  'conversion': 'Converting a win',
-  'defence': 'Defensive resource',
-  'unexplained': 'Not yet explained',
-};
-
-const KIND_LABEL = { 'find-best': 'Find the best move', threat: 'See the threat', punish: 'Punish (scout)', opening: 'Opening prep' };
+import { CATEGORY_LABEL, KIND_LABEL } from '../labels.js';
+import { tendencyTiles } from '../widgets.js';
 
 const catLabel = c => CATEGORY_LABEL[c] || c;
 const fmtSecs = s => s == null ? '–' : s >= 60 ? `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s` : `${s}s`;
@@ -139,6 +127,11 @@ export async function reportView(root) {
       <table><thead><tr><th>Type</th><th class="num">Attempts</th><th class="num">Correct</th></tr></thead>
       <tbody>${Object.entries(r.drillStats.byKind).map(([k, v]) => `<tr><td>${esc(KIND_LABEL[k] || k)}</td><td class="num">${v.attempts}</td><td class="num">${Math.round((v.correct / v.attempts) * 100)}%</td></tr>`).join('')}</tbody></table>
       <small>Separate streams: finding the best move, seeing the threat you allowed, punishing an opponent's error, opening prep.</small>` : ''}
+      ${r.drillStats.calibration ? `<h3>Calibration</h3>
+      <table><thead><tr><th>You said</th><th class="num">Answers</th><th class="num">Correct</th></tr></thead>
+      <tbody>${Object.entries(r.drillStats.calibration).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${v.attempts}</td><td class="num">${v.rate}%</td></tr>`).join('')}</tbody></table>
+      <small>Well calibrated means "sure" is right nearly always and "guess" about half the time. A big gap either way is worth knowing at the board.</small>
+      ${r.drillStats.sureAndWrong.length ? `<p style="margin-top:8px"><b>Sure and wrong</b>, the beliefs to correct first: ${r.drillStats.sureAndWrong.map(m => `<a href="#/game/${m.gameId}/${m.ply}" title="${esc(m.label)}${m.note ? ` · you wrote: ${esc(m.note)}` : ''}">${esc(m.pattern || catLabel(m.category) || m.kind)}</a>`).join(', ')}.</p>` : ''}` : ''}
       ${r.decoys ? `<p class="muted" style="margin-top:10px">Quiet-position detection: ${r.decoys.right} of ${r.decoys.seen} handled correctly (${r.decoys.falsePositiveRate}% false positives, calling a fine move a mistake).</p>` : ''}
       ${r.drillStats.speed ? `<h3>Recognition speed</h3>
       <table><thead><tr><th>Pattern</th><th class="num">Timed reviews</th><th class="num">Median answer</th></tr></thead>
@@ -175,6 +168,7 @@ export async function reportView(root) {
     + acc('Focus areas', focusBody, true)
     + acc('Moments by error type, phase &amp; colour', chartsBody, true)
     + acc('Accuracy by game', trendBody, true)
+    + (r.tendencies?.games ? acc('Winning, losing, and turning positions', tendencyTiles(r.tendencies)) : '')
     + (catTrendBody ? acc('Are the weaknesses shrinking?', catTrendBody) : '')
     + (timeBody ? acc('Time management', timeBody) : '')
     + (endgamesBody ? acc('Recurring endgame trouble', endgamesBody) : '')

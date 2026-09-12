@@ -81,6 +81,45 @@ test('a member cannot view another member\'s game', async () => {
   assert.equal((await req('GET', '/api/games/ababababab01', { headers: sessCookie('nikash') })).status, 200);
 });
 
+test('a signed session for a user no longer on the roster is rejected, not served the default member', async () => {
+  const ghost = sessCookie('ghost_user_not_on_roster');
+  for (const path of ['/api/games', '/api/report', '/api/drills', '/api/scout', '/api/jobs']) {
+    const r = await req('GET', path, { headers: ghost });
+    assert.equal(r.status, 401, `${path} must reject the ghost session`);
+  }
+  const r = await req('GET', '/api/games', { headers: ghost });
+  assert.match(r.headers.get('set-cookie') || '', /sess=;/, 'the dead cookie is cleared');
+  // The identity endpoint stays reachable and reports nobody signed in.
+  const me = await (await req('GET', '/api/auth/me', { headers: ghost })).json();
+  assert.equal(me.user, null);
+  // Training writes are rejected too (they used to record against the default member).
+  assert.equal((await req('POST', '/api/games/abcdefabcdef/moments/1/guess', { headers: ghost })).status, 401);
+});
+
+const postJson = (path, headers, body) => fetch(base + path, { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+test('an import can be filed under a member, whose own PGN names decide the colour', async () => {
+  const PGN = '[White "Vemparala, Nikash"]\n[Black "Someone"]\n[Date "2026.05.05"]\n[Result "1-0"]\n\n1. e4 e5 1-0';
+  const r = await postJson('/api/games/import', sessCookie('yusuf'), { pgn: PGN, analyse: false, owner: 'nikash' });
+  assert.equal(r.status, 200);
+  const { imported } = await r.json();
+  assert.equal(imported.length, 1);
+  const nik = (await (await req('GET', '/api/games', { headers: sessCookie('nikash') })).json()).games.find(x => x.id === imported[0]);
+  assert.ok(nik, 'nikash sees the imported game');
+  assert.equal(nik.owner, 'nikash');
+  assert.equal(nik.playerColor, 'white', "detected from nikash's roster names, not the operator's settings");
+  assert.ok(!(await gameIds(sessCookie('kai'))).includes(imported[0]), 'kai does not see it');
+  assert.equal((await postJson('/api/games/import', sessCookie('yusuf'), { pgn: PGN, analyse: false, owner: 'nobody' })).status, 400);
+});
+
+test('/api/members lists members with PGN names and without emails', async () => {
+  const { members } = await (await req('GET', '/api/members', { headers: sessCookie('kai') })).json();
+  const nik = members.find(m => m.id === 'nikash');
+  assert.ok(nik && Array.isArray(nik.playerNames) && nik.playerNames.length);
+  assert.equal(nik.emails, undefined);
+  assert.ok(!members.some(m => m.role !== 'member'));
+});
+
 test('management routes are admin only', async () => {
   assert.equal((await req('POST', '/api/games/import', { headers: sessCookie('kai') })).status, 403);
   assert.equal((await req('PUT', '/api/settings', { headers: sessCookie('kai') })).status, 403);

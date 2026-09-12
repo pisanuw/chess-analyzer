@@ -1,9 +1,46 @@
 // Drills: positions from the player's own mistakes, scheduled with a small spaced-repetition ladder.
-import { getDrills, saveDrills, getSettings, listGames, listAllGames, getGame, DrillConflict, DEFAULT_USER } from './store.js';
-import { winProb, WP_ACCEPT } from '../public/shared.js';
+import { getDrills, saveDrills, getSettings, listGames, listAllGames, getGameCached, DrillConflict, DEFAULT_USER } from './store.js';
+import { winProb, WP_ACCEPT, normalizeKey } from '../public/shared.js';
 
 const LADDER_DAYS = [1, 3, 7, 14, 30, 60];
 const DAY = 86400000;
+
+// Per-drill ease (SM-2 lite). The ladder gives the shape of the schedule; ease
+// scales it per drill from the evidence the reviews accumulate: grades, answer
+// speed, and stated confidence. A drill the player finds easy (fast, sure,
+// graded easy) spreads its intervals out; one that keeps lapsing, or that the
+// player was sure about and got wrong, comes back sooner. Bounded so a single
+// bad day cannot collapse a mature drill or a lucky streak park one forever.
+export const EASE_DEFAULT = 2.5;
+export const EASE_MIN = 1.3;
+export const EASE_MAX = 3.2;
+const FAST_MS = 5000;   // a recognised pattern, not a re-derived one
+const SLOW_MS = 30000;  // laborious: the interval should not stretch yet
+export const CONFIDENCE = ['sure', 'likely', 'guess'];
+
+const clampEase = e => Math.min(EASE_MAX, Math.max(EASE_MIN, +e.toFixed(2)));
+
+/** Days until the next review for a ladder step at a given ease: the ladder
+ * day count scaled by ease relative to the default (so an untouched drill
+ * keeps the documented 1, 3, 7, 14, 30, 60). Never under one day. */
+export function intervalDays(step, ease = EASE_DEFAULT) {
+  return Math.max(1, Math.round(LADDER_DAYS[Math.min(step, LADDER_DAYS.length - 1)] * (ease / EASE_DEFAULT) * 10) / 10);
+}
+
+/** The ease after one review. Exported for the tests and the report. */
+export function nextEase(ease, { grade, correct, ms = null, confidence = null }) {
+  let e = ease ?? EASE_DEFAULT;
+  if (!correct || grade === 'again') {
+    e -= 0.2;
+    if (confidence === 'sure') e -= 0.1;   // sure and wrong: the worst kind of miss
+  } else {
+    if (grade === 'easy') e += 0.15;
+    if (Number.isFinite(ms) && ms >= 0 && ms <= FAST_MS) e += 0.05;
+    else if (Number.isFinite(ms) && ms >= SLOW_MS) e -= 0.05;
+    if (confidence === 'guess') e -= 0.05;  // right by luck is not knowledge yet
+  }
+  return clampEase(e);
+}
 
 /** UCI moves of the lines close enough to best. `sign` converts the stored
  * White-perspective cp to the mover's perspective. */
@@ -127,6 +164,7 @@ function makePunishDrill(game, ply, tier, existing) {
     id: drillId(game.id, ply),
     kind: 'punish',
     subject: game.subject || null,
+    subjectColor: m.color, // the colour the subject erred in: a prep round asks for one colour only
     gameId: game.id,
     ply,
     fen: m.fenAfter,
@@ -276,7 +314,7 @@ async function recordGuessUnlocked(game, ply, uci, correct, settings, userId = D
     // player got wrong in the real game. Seed one rung up, not two; a real
     // review (or a second success) moves it further.
     drill.step = Math.max(drill.step, 1);
-    drill.due = new Date(Date.now() + LADDER_DAYS[drill.step] * DAY).toISOString();
+    drill.due = new Date(Date.now() + intervalDays(drill.step, drill.ease) * DAY).toISOString();
   }
   await saveDrills(store, userId);
   return { seeded, step: drill.step, due: drill.due };
@@ -294,7 +332,7 @@ export function syncAllDrills(userId = DEFAULT_USER) {
     const store = await getDrills(userId); // read once, sync every game in memory, write once
     for (const entry of await listGames(userId)) {
       if (entry.status !== 'analysed' && entry.status !== 'explained') { pendingGames.add(entry.id); continue; }
-      const game = await getGame(entry.id);
+      const game = await getGameCached(entry);
       if (!game?.analysis) { pendingGames.add(entry.id); continue; }
       await syncGameUnlocked(game, settings, userId, store);
       for (const ply of game.analysis.summary.moments) {
@@ -326,16 +364,24 @@ export function removeDrillsForGame(gameId, userId = DEFAULT_USER) {
  * evidence), but a pass does not advance the ladder. `ms` is the time from
  * seeing the position to answering: recognition speed is the real signal of
  * pattern acquisition, and the raw material for fitting per-drill ease later. */
-export function reviewDrill(id, grade, correct, practice = false, ms = null, userId = DEFAULT_USER) {
-  return locked(() => reviewUnlocked(id, grade, correct, practice, ms, userId));
+export function reviewDrill(id, grade, correct, practice = false, ms = null, userId = DEFAULT_USER, extra = {}) {
+  return locked(() => reviewUnlocked(id, grade, correct, practice, ms, userId, extra));
 }
 
-async function reviewUnlocked(id, grade, correct, practice, ms, userId = DEFAULT_USER) {
+/** `extra.confidence` is what the player said before the reveal (sure, likely,
+ * guess); `extra.note` is their one-line explain-back on a miss, typed before
+ * the coach's answer appeared. Both go into the review record. */
+async function reviewUnlocked(id, grade, correct, practice, ms, userId = DEFAULT_USER, extra = {}) {
   const store = await getDrills(userId);
   const d = store.drills.find(x => x.id === id);
   if (!d) throw new Error('drill not found');
-  const prev = { prevStep: d.step, prevDue: d.due }; // lets undoReview restore the ladder
-  if (grade === 'again' || correct === false) {
+  const confidence = CONFIDENCE.includes(extra.confidence) ? extra.confidence : null;
+  const note = typeof extra.note === 'string' && extra.note.trim() ? extra.note.replace(/\s+/g, ' ').trim().slice(0, 300) : null;
+  const prev = { prevStep: d.step, prevDue: d.due, prevEase: d.ease ?? null }; // lets undoReview restore the ladder
+  const wrong = grade === 'again' || correct === false;
+  if (confidence === 'guess' && grade === 'easy') grade = 'good'; // a lucky guess is not "easy"
+  d.ease = nextEase(d.ease, { grade, correct: !wrong, ms, confidence });
+  if (wrong) {
     // Soften the lapse: drop two rungs, not all the way to day one. A single
     // slip on a mature drill should not erase months of spacing (the up-ladder
     // is gentle at +1/+2, so the down-step should be comparable). It still
@@ -345,12 +391,14 @@ async function reviewUnlocked(id, grade, correct, practice, ms, userId = DEFAULT
   } else if (!practice) {
     if (grade === 'easy') d.step = Math.min(LADDER_DAYS.length - 1, d.step + 2);
     else d.step = Math.min(LADDER_DAYS.length - 1, d.step + 1);
-    d.due = new Date(Date.now() + LADDER_DAYS[d.step] * DAY).toISOString();
+    d.due = new Date(Date.now() + intervalDays(d.step, d.ease) * DAY).toISOString();
   }
   d.reviews.push({
     at: new Date().toISOString(), grade, correct: !!correct, ...prev,
     ...(practice ? { practice: true } : {}),
     ...(Number.isFinite(ms) && ms >= 0 ? { ms: Math.round(ms) } : {}),
+    ...(confidence ? { confidence } : {}),
+    ...(note ? { note } : {}),
   });
   await saveDrills(store, userId);
   return d;
@@ -366,6 +414,7 @@ export function undoReview(id, userId = DEFAULT_USER) {
     const r = d.reviews.pop();
     if (!r) throw new Error('no review to undo');
     if (r.prevStep != null) { d.step = r.prevStep; d.due = r.prevDue; }
+    if ('prevEase' in r) { if (r.prevEase == null) delete d.ease; else d.ease = r.prevEase; }
     await saveDrills(store, userId);
     return d;
   });
@@ -423,6 +472,26 @@ export function recordDecoy(correct, userId = DEFAULT_USER) {
     if (correct) store.decoys.right++;
     await saveDrills(store, userId);
     return store.decoys;
+  });
+}
+
+/** A prep-deck attempt (a line flashcard or a punish drill worked from the
+ * Prepare page): a per-drill seen/right tally outside the ladder, so the page
+ * can show how much of the deck has been done before the game. */
+export function markPrep(id, correct, userId = DEFAULT_USER) {
+  return locked(async () => {
+    const store = await getDrills(userId);
+    store.prep = store.prep || {};
+    const m = store.prep[id] || { seen: 0, right: 0 };
+    m.seen++;
+    if (correct) m.right++;
+    m.lastAt = new Date().toISOString();
+    store.prep[id] = m;
+    // Keep the map bounded: the oldest marks fall out past a generous cap.
+    const ids = Object.keys(store.prep);
+    if (ids.length > 2000) for (const k of ids.sort((a, b) => (store.prep[a].lastAt || '').localeCompare(store.prep[b].lastAt || '')).slice(0, ids.length - 2000)) delete store.prep[k];
+    await saveDrills(store, userId);
+    return m;
   });
 }
 
@@ -490,7 +559,7 @@ export async function buildDecoys(count, rand = Math.random, userId = DEFAULT_US
   const out = [];
   for (const entry of order) {
     if (out.length >= count) break;
-    const game = await getGame(entry.id);
+    const game = await getGameCached(entry);
     if (!game?.analysis) continue;
     const moments = new Set(game.analysis.summary.moments);
     const candidates = game.analysis.moves.filter(m => decoyCandidate(m, moments));
@@ -507,17 +576,21 @@ export async function buildDecoys(count, rand = Math.random, userId = DEFAULT_US
  * due or not, back to back (blocked practice). Suspended drills never serve.
  * With `session` (a real sitting, not the badge poll), quiet-position decoys
  * are mixed into the queue, never first. */
-export async function dueDrills(limit = 20, { pattern = null, category = null, session = false, rand = Math.random, userId = DEFAULT_USER } = {}) {
+export async function dueDrills(limit = 20, { pattern = null, category = null, subject = null, color = null, session = false, rand = Math.random, userId = DEFAULT_USER } = {}) {
   const store = await getDrills(userId);
   const now = Date.now();
   const pool = store.drills.filter(d => !d.suspended);
   const suspendedCount = store.drills.length - pool.length;
-  if (pattern || category) {
-    const key = normalizeKey(pattern || category);
-    const field = pattern ? (d => d.pattern) : (d => d.category);
-    const match = pool.filter(d => normalizeKey(field(d)) === key)
-      .sort((a, b) => Date.parse(a.due) - Date.parse(b.due));
-    return { due: match.slice(0, limit), total: store.drills.length, dueCount: match.length, pattern, category, suspendedCount, feedback: store.feedback };
+  if (pattern || category || subject) {
+    // A prep round: this opponent's punish drills, optionally only the colour
+    // they will have against the student (opening-phase errors first, since those
+    // are the positions the student is likeliest to reach).
+    const key = normalizeKey(pattern || category || subject);
+    const field = pattern ? (d => d.pattern) : category ? (d => d.category) : (d => d.subject);
+    let match = pool.filter(d => normalizeKey(field(d)) === key);
+    if (subject) match = match.filter(d => d.kind === 'punish' && (!color || punishSubjectColor(d) === color));
+    match.sort((a, b) => (subject ? phaseRank(a) - phaseRank(b) : 0) || Date.parse(a.due) - Date.parse(b.due));
+    return { due: match.slice(0, limit), total: store.drills.length, dueCount: match.length, pattern, category, subject, color, suspendedCount, feedback: store.feedback };
   }
   const rank = d => (d.tier === 'core' ? 0 : d.tier === 'opening' ? 1 : 2);
   const due = pool.filter(d => Date.parse(d.due) <= now)
@@ -538,22 +611,26 @@ export async function dueDrills(limit = 20, { pattern = null, category = null, s
   return { due: list, total: store.drills.length, dueCount: due.length, suspendedCount, feedback: store.feedback };
 }
 
-function normalizeKey(s) {
-  return (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-}
+/** A punish drill's subject colour (older stores predate the field: the subject
+ * had the colour opposite the student's). */
+export const punishSubjectColor = d => d.subjectColor || (d.sideToMove === 'white' ? 'black' : 'white');
+const phaseRank = d => (d.phase === 'opening' ? 0 : d.phase === 'middlegame' ? 1 : 2);
 
 /** An ephemeral practice set for visitors: punish drills drawn from the shared
  * scout library, built fresh on every request and never stored. Visitors have no
  * games and nothing they do is recorded, so there is no ladder, no due dates, and
- * no store read or write here. */
-export async function visitorDrills(limit = 20, rand = Math.random) {
+ * no store read or write here. With `subject` (and `color`), one opponent's
+ * drills only, the same prep round members get. */
+export async function visitorDrills(limit = 20, rand = Math.random, { subject = null, color = null } = {}) {
   const index = (await listAllGames())
     .filter(g => (g.purpose || 'own') === 'scout' && (g.status === 'analysed' || g.status === 'explained'))
+    .filter(g => !subject || normalizeKey(g.subject) === normalizeKey(subject))
+    .filter(g => !color || g.playerColor === color)
     .sort(() => rand() - 0.5);
   const out = [];
   for (const entry of index) {
     if (out.length >= limit) break;
-    const game = await getGame(entry.id);
+    const game = await getGameCached(entry);
     if (!game?.analysis) continue;
     for (const ply of game.analysis.summary.moments) {
       const d = makePunishDrill(game, ply, 'core', null);
@@ -561,5 +638,5 @@ export async function visitorDrills(limit = 20, rand = Math.random) {
       if (out.length >= limit) break;
     }
   }
-  return { due: out, total: out.length, dueCount: out.length, suspendedCount: 0, feedback: {}, visitor: true };
+  return { due: out, total: out.length, dueCount: out.length, subject, color, suspendedCount: 0, feedback: {}, visitor: true };
 }

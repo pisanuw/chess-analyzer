@@ -1,9 +1,9 @@
 // Home dashboard: the daily prescription. Reuses the report, drills, and games
 // endpoints (no new backend), so a player lands on "what to do now" instead of
 // the import/admin surface.
-import { api, esc } from '../api.js';
+import { api, esc, session } from '../api.js';
 import { lineChart } from '../charts.js';
-import { CATEGORY_LABEL } from './report.js';
+import { CATEGORY_LABEL } from '../labels.js';
 
 const iso = d => d.toISOString().slice(0, 10);
 
@@ -19,16 +19,29 @@ function currentStreak(dates) {
 }
 
 export async function homeView(root) {
-  const [{ report: r }, drills, gamesRes] = await Promise.all([
+  const [{ report: r }, drills, gamesRes, { upcoming }] = await Promise.all([
     api.report().catch(() => ({ report: null })),
     api.drills().catch(() => ({})),
     api.games().catch(() => ({ games: [] })),
+    api.upcoming().catch(() => ({ upcoming: [] })),
   ]);
   const games = gamesRes.games || [];
   const due = drills.dueCount || 0;
+  // The next game, with how far its prep has come.
+  const nextGame = (upcoming || []).find(u => !u.date || u.date.slice(0, 10) >= iso(new Date())) || (upcoming || [])[0];
+  const nextPrep = nextGame ? await api.prep(nextGame.subject, nextGame.color, nextGame.timeControl).then(x => x.prep).catch(() => null) : null;
+  const nextLine = nextGame ? `<div class="card" style="margin-top: 16px; border-left: 3px solid var(--accent)">
+      <div class="row" style="gap: 12px; flex-wrap: wrap; align-items: center">
+        <b>Next game:</b> <span>${esc(nextGame.subject)}, you as <span class="chip ${nextGame.color}">${nextGame.color}</span>${nextGame.date ? `, ${esc(nextGame.date)}` : ''}${nextGame.round ? ` (round ${esc(nextGame.round)})` : ''}</span>
+        ${nextPrep ? `<span class="muted">prep deck ${nextPrep.progress.done} of ${nextPrep.progress.total} done${nextPrep.sheet ? '' : ', no sheet yet'}</span>` : ''}
+        <a class="btn small primary" href="#/prep/${encodeURIComponent(nextGame.subject)}?color=${nextGame.color}${nextGame.timeControl && nextGame.timeControl !== 'all' ? `&tc=${nextGame.timeControl}` : ''}">Prepare ▸</a>
+      </div></div>` : '';
 
   if (!games.length) {
-    root.innerHTML = `<h1>Home</h1><div class="card"><p>No games yet. Import a PGN on the <a href="#/games">Games</a> page, and set the player name in <a href="#/settings">Settings</a> so imported games get the right colour.</p></div>`;
+    const isAdmin = session.user?.role === 'admin' || !session.authActive;
+    root.innerHTML = `<h1>Home</h1>${nextLine}<div class="card" style="margin-top: 16px"><p>${isAdmin
+      ? 'No games yet. Import a PGN on the <a href="#/games">Games</a> page, and set the player name in <a href="#/settings">Settings</a> so imported games get the right colour.'
+      : 'No games of yours yet. Ask the admin to import your PGNs or seed your games from your FIDE book; the <a href="#/scout">Players</a> page works meanwhile.'}</p></div>`;
     return;
   }
 
@@ -39,7 +52,8 @@ export async function homeView(root) {
 
   root.innerHTML = `
     <h1>Home</h1>
-    <div class="tiles">
+    ${nextLine}
+    <div class="tiles" style="margin-top: 16px">
       <div class="tile"><div class="v">${due}</div><div class="l">Drills due</div></div>
       <div class="tile"><div class="v">${r?.overallAccuracy ?? '–'}${r?.overallAccuracy != null ? '%' : ''}</div><div class="l">Average accuracy</div></div>
       <div class="tile"><div class="v">${streak}</div><div class="l">Day streak</div></div>

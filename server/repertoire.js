@@ -1,27 +1,33 @@
 // Opening repertoire: group analysed games by colour and first plies, find where preparation ends.
-import { getGame, listGames, DEFAULT_USER } from './store.js';
+import { DEFAULT_USER } from './store.js';
 import { gamesForSubject } from './subjects.js';
+import { analysedOwnGames, gamesKey } from './report.js';
+import { memo } from './memo.js';
+import { resultScore, posKeyOf } from '../public/shared.js';
 
 const LINE_PLIES = 8;
 
 /** Most frequent key in a count map (ties: first inserted). */
 const topKey = map => [...map.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 
-export async function buildRepertoire({ purpose = 'own', subject = null, userId = DEFAULT_USER } = {}) {
-  let games;
-  if (purpose === 'scout') {
-    games = await gamesForSubject(subject);
-  } else {
-    const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
-    games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
-  }
+/** Memoised on the game files' fingerprint, like the report; cloned on return. */
+export async function buildRepertoire({ purpose = 'own', subject = null, userId = DEFAULT_USER, color = null } = {}) {
+  const key = `${await gamesKey({ purpose, subject, userId })}|${color || 'all'}`;
+  return structuredClone(await memo('repertoire', key, async () => {
+    let games = purpose === 'scout' ? await gamesForSubject(subject) : await analysedOwnGames(userId);
+    if (color) games = games.filter(g => g.playerColor === color);
+    return repertoireOf(games);
+  }));
+}
+
+export function repertoireOf(games) {
   const lines = new Map();
   for (const g of games) {
     const opening = g.analysis.moves.slice(0, LINE_PLIES);
     // Group by the POSITION after the opening plies, not the move order, so
     // transpositions merge. Placement, turn, and castling identify it; en
     // passant and the counters would split identical positions spuriously.
-    const posKey = opening.length ? opening[opening.length - 1].fenAfter.split(' ').slice(0, 3).join(' ') : 'start';
+    const posKey = opening.length ? posKeyOf(opening[opening.length - 1].fenAfter) : 'start';
     const key = `${g.playerColor}|${posKey}`;
     if (!lines.has(key)) lines.set(key, { color: g.playerColor, variants: new Map(), ecos: new Map(), games: [], score: 0, scored: 0, acc: 0, prepEnds: [] });
     const l = lines.get(key);
@@ -48,11 +54,4 @@ export async function buildRepertoire({ purpose = 'own', subject = null, userId 
     prepEndsPly: l.prepEnds.length ? Math.min(...l.prepEnds) : null,
     games: l.games.sort((a, b) => (b.date || '').localeCompare(a.date || '')),
   })).sort((a, b) => a.color.localeCompare(b.color) || b.count - a.count);
-}
-
-function resultScore(result, color) {
-  if (result === '1-0') return color === 'white' ? 1 : 0;
-  if (result === '0-1') return color === 'black' ? 1 : 0;
-  if (result === '1/2-1/2') return 0.5;
-  return null;
 }

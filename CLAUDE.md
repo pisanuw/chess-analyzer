@@ -8,8 +8,8 @@ Local web app: Node 20+ (developed on 22) / Express 5 backend, vanilla ES-module
 
 ## Conventions
 
-- Push directly to `main`. Commit messages: a descriptive summary line, body explaining what and why. Run `npm test` before committing.
-- No em dashes in prose, UI copy, or prompts. Use commas, colons, or parentheses.
+- Push directly to `main`. Commit messages: a descriptive summary line, body explaining what and why. Run `npm run lint` and `npm test` before committing, and `npm run test:ui` when a view changed (CI runs all three).
+- No em dashes in prose, UI copy, or prompts. Use commas, colons, or parentheses. `scripts/check-prose.js` (part of `npm run lint`) fails on one.
 - Keep it a single `npm start` app with no build step. No bundler, no framework, no TypeScript.
 - Frontend must keep talking to the backend only through `public/api.js` so a hosted build can swap the backend later.
 - LLM calls go through `server/llm.js`. Default provider is the `claude` CLI (`-p --output-format json --tools "" --json-schema ...`). Never add an API-key provider that is on by default; ask first before touching API keys.
@@ -24,7 +24,11 @@ Local web app: Node 20+ (developed on 22) / Express 5 backend, vanilla ES-module
 - Game id = first 12 hex chars of sha1(White|Black|Date|Round|SAN moves). Re-importing the same game is a no-op.
 - Jobs are in-memory (`server/jobs.js`), processed one at a time; game JSON is written after each step so a crash loses at most the current step.
 - `data/` is gitignored and holds all user data. It is also its own private git repo (github.com/pisanuw/chess-analyzer-data) for syncing between machines; `drills.json` and `settings.json` are per-machine and excluded there, and `syncAllDrills()` re-derives drills from game files at startup. Each machine mirrors its drill store to `drills-<hostname>.json`, which DOES sync (read-only history merged into report stats); `evalcache.json` and `*.tmp` never sync.
-- Pure chess-math helpers shared by server and frontend live in `public/shared.js` (the server imports the file directly); do not re-duplicate winProb, WP_ACCEPT, formatEval, or the time-spent calculation.
+- Pure chess-math helpers shared by server and frontend live in `public/shared.js` (the server imports the file directly); do not re-duplicate winProb, WP_ACCEPT, formatEval, resultScore, normalizeKey, posKeyOf, or the time-spent calculation.
+- Aggregate readers (report, repertoire, puzzles, clash, decoys, drill sync, scout dossiers, head-to-head) read games through the parsed-game cache (`getGameCached` / `loadGames` in `server/store.js`, keyed by file version); treat those objects as read-only and use `getGame` for anything that mutates and saves. `buildReport` and `buildRepertoire` memoise their games half on `indexFingerprint` (`server/memo.js`); index entries carry `fileRev` and pattern/concept counts.
+- `time_pressure` on an explanation is computed (`timePressureOf` in `server/prompts.js`: under two minutes left, or ten seconds or less spent), never taken from the model. Pattern names are folded onto the library's spelling before storage (`canonicalPattern`). Explain batches are capped at `BATCH_MAX` moments.
+- Drills carry an `ease` (SM-2 lite, `nextEase` / `intervalDays` in `server/drills.js`) that scales the ladder; reviews store `confidence` and the explain-back `note`. The report's `drillStats.calibration` and `sureAndWrong` come from them.
+- An admin "viewing as" a member sends `?user=<id>` on GET calls only (`public/api.js` `req`); the service worker (`public/sw.js`) is network-first and caches only the app shell and the drill deck.
 - `claude --version` was 2.1.x when this was built; flags used: `-p`, `--output-format json`, `--tools ""`, `--no-session-persistence`, `--system-prompt`, `--json-schema`, `--model`. The parsed result is `structured_output` in the JSON envelope.
 
 ## Multi-user and auth

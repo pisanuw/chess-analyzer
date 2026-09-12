@@ -1,5 +1,5 @@
 // Hash router, job polling, and shared chrome.
-import { api, esc, toast, session, showLogin } from './api.js';
+import { api, esc, toast, session, showLogin, setViewAs } from './api.js';
 import { homeView } from './views/home.js';
 import { gamesView } from './views/games.js';
 import { gameView } from './views/game.js';
@@ -10,6 +10,7 @@ import { puzzlesView } from './views/puzzles.js';
 import { settingsView } from './views/settings.js';
 import { logView } from './views/log.js';
 import { adminView } from './views/admin.js';
+import { prepView } from './views/prep.js';
 
 const app = document.getElementById('app');
 let current = null; // { name, destroy }
@@ -21,6 +22,7 @@ const routes = [
   { re: /^#\/report$/, name: 'report', view: reviewView },
   { re: /^#\/repertoire$/, name: 'report', view: reviewView }, // repertoire now lives in the Report page accordion
   { re: /^#\/scout(?:\/(.*))?$/, name: 'scout', view: scoutView },
+  { re: /^#\/prep\/([^?]+)(?:\?(.*))?$/, name: 'scout', view: prepView }, // prepare for a game: one opponent, one colour
   { re: /^#\/drills(?:\?(.*))?$/, name: 'puzzles', view: drillsView }, // drills live under Puzzles now; highlight that tab
   { re: /^#\/puzzles(?:\?(.*))?$/, name: 'puzzles', view: puzzlesView }, // optional query: ?source=tactics|moments|missed
   { re: /^#\/settings$/, name: 'settings', view: settingsView },
@@ -45,19 +47,23 @@ async function route() {
   if (current?.destroy) current.destroy();
   current = null;
   document.querySelectorAll('[data-nav]').forEach(a => a.classList.toggle('active', a.dataset.nav === r.name));
-  app.innerHTML = '<div class="empty">Loading…</div>';
+  // Each view renders into its own element: a slow view that resolves after the
+  // user has moved on writes into a detached node, never over the newer page.
+  const host = document.createElement('div');
+  host.innerHTML = '<div class="empty">Loading…</div>';
+  app.replaceChildren(host);
   try {
-    const view = await r.view(app, ...params) || {};
+    const view = await r.view(host, ...params) || {};
     if (token !== nav) { view.destroy?.(); return; }
     current = view;
   } catch (err) {
     if (token !== nav) return;
     if (err.handled) return; // e.g. a 401 already raised the login overlay
     if (err.offline) {
-      app.innerHTML = `<div class="card"><b>Cannot reach the server.</b> ${esc(err.message)} <button class="small" id="retry-route">Retry</button></div>`;
-      app.querySelector('#retry-route').onclick = () => route();
+      host.innerHTML = `<div class="card"><b>Cannot reach the server.</b> ${esc(err.message)} <button class="small" id="retry-route">Retry</button></div>`;
+      host.querySelector('#retry-route').onclick = () => route();
     } else {
-      app.innerHTML = `<div class="card"><b>Error:</b> ${esc(err.message)}</div>`;
+      host.innerHTML = `<div class="card"><b>Error:</b> ${esc(err.message)}</div>`;
     }
     console.error(err);
   }
@@ -141,9 +147,32 @@ function renderWhoami(me) {
       <div class="menu-head">${esc(name)}${roleTag ? ` <span class="chip">${roleTag}</span>` : ''}</div>
       <div class="menu-label">Page theme</div>
       <div class="menu-row">${opt('auto', 'Auto')}${opt('light', 'Light')}${opt('dark', 'Dark')}</div>
+      ${u.role === 'admin' ? `<div class="menu-label">Viewing as</div>
+      <div class="menu-row"><select id="view-as" aria-label="View the app as a member"><option value="">Myself</option></select></div>
+      <div class="menu-label"><small>Read-only: reports, drills, and prep of that member, as they see them.</small></div>` : ''}
       <button class="link" id="logout-btn">Sign out</button>
     </div>
   </div>`;
+  const viewAs = el.querySelector('#view-as');
+  if (viewAs) {
+    // The admin can check any member's report, drills, and prep: the GET calls
+    // carry ?user=<id> (writes never do). Remembered for the tab.
+    api.members().then(({ members = [] }) => {
+      for (const m of members) {
+        if (m.role === 'visitor') continue;
+        const o = document.createElement('option');
+        o.value = m.id; o.textContent = m.displayName || m.id;
+        if (session.viewAs === m.id) o.selected = true;
+        viewAs.appendChild(o);
+      }
+    }).catch(() => {});
+    viewAs.onchange = () => {
+      setViewAs(viewAs.value || null);
+      menu.classList.add('hidden');
+      route();
+      updateDrillBadge();
+    };
+  }
   const menu = el.querySelector('#whoami-menu');
   el.querySelector('#whoami-btn').onclick = e => { e.stopPropagation(); menu.classList.toggle('hidden'); };
   document.addEventListener('click', e => { if (!el.contains(e.target)) menu.classList.add('hidden'); });
@@ -162,6 +191,12 @@ function renderWhoami(me) {
 // admin body class (CSS hides .admin-only controls for members), then set up
 // chrome. The hosted mirror cannot run jobs (the queue lives in a function
 // instance's memory), so job polling and the Settings link stay off there.
+// Offline drills: the worker keeps the app shell and the last drill deck.
+// Registered on https and localhost only (a worker needs a secure context).
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
 Promise.all([api.me().catch(() => ({})), api.status().catch(() => ({}))]).then(([me, status]) => {
   session.user = me.user || null;
   session.authActive = !!me.authActive;

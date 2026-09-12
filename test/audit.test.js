@@ -27,6 +27,13 @@ test('logEvent then readAudit round-trips, newest first, with a timestamp', asyn
   assert.ok(events[0].at, 'stamps an ISO timestamp');
 });
 
+test('concurrent appends are serialised so none is lost', async () => {
+  const before = (await audit.readAudit(500)).length;
+  await Promise.all([...Array(12).keys()].map(i => audit.logEvent({ action: `burst ${i}` })));
+  const events = await audit.readAudit(500);
+  assert.equal(events.length, before + 12, 'every event of the burst survived');
+});
+
 test('/api/audit is admin only', async () => {
   assert.equal((await fetch(base + '/api/audit')).status, 401, 'no session is rejected by the auth gate');
   const kai = createSessionToken('kai');
