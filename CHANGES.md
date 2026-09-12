@@ -1,6 +1,8 @@
-# CHANGES
+## 2026-09-12 (Implementing the improvement report: pedagogy, part 1)
 
-Newest first.
+- Elo-banded the opening-clash index and book repertoire shares (`server/clashindex.js` `buildOpponentIndex`, `server/scoutbook.js` `scoutDossier`'s repertoire loop): both used to weight only by recency, so a predicted line or a repertoire share could be dominated by games from a materially different version of the opponent; now they use the same Elo-band filter scoutDossier's analysed subset already applied.
+- The opponent's rating trend (`eloTrend`, already computed by `scoutDossier` but never read by the prep-sheet prompt) is now cited as its own evidence item in `prepContext` (`server/prompts.js`), flagging when a large swing makes their history a weaker guide than usual.
+- New optional prep-sheet fields, both omittable when the data behind them is missing rather than forcing fabrication: `structures` turns a whole-history habit (castling side, queen-trade timing) into a concrete middlegame plan, not just an opening note; `matchup_risks` must cross the student's OWN weakness (from their personal report, newly fed into `prepContext` as S-prefixed evidence) with something this specific opponent does well, the real head-to-head risk rather than either fact in isolation. Rendered in both the HTML sheet (`public/widgets.js`) and the markdown card (`server/prepsheet.js`).
 
 ## 2026-09-12 (Implementing the improvement report: backend robustness, part 2)
 

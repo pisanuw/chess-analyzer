@@ -12,7 +12,7 @@ const LINE_SAN = 10;     // SAN prefix stored per game, enough to name the varia
 
 const START_FEN_PREFIX = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR';
 const norm = s => (s || '').trim().toLowerCase();
-const median = xs => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2); };
+export const median = xs => { const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2); };
 const topKey = map => [...map.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 
 /** The FIDE id a metadb export encodes in its filename, e.g.
@@ -147,7 +147,11 @@ export function scoutDossier(book, opts = {}) {
     const c = byColor[g.color];
     c.count++; c.wsum += w;
     if (sc != null) { c.scoreW += sc * w; c.scoredW += w; c.score += sc; c.scored++; }
-    if (!g.posKey || w <= 0) continue;
+    // The repertoire is what the student will actually face: a line from when
+    // the opponent was a materially different strength (unlike this Elo-band
+    // check, recency weighting alone never fully discounts it) should not
+    // dominate a predicted share. Overall score/form above stays unfiltered.
+    if (!g.posKey || w <= 0 || !withinElo(g)) continue;
     const key = `${g.color}|${g.posKey}`;
     const l = lines.get(key) || { color: g.color, variants: new Map(), ecos: new Map(), count: 0, wsum: 0, scoreW: 0, scoredW: 0, oppEloSum: 0, oppEloN: 0, lastDate: '', lastTs: -Infinity };
     const sanLine = g.line.slice(0, OPENING_PLIES).join(' ');

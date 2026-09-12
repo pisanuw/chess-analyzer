@@ -24,16 +24,19 @@ const report = {
 };
 const repertoire = [{ color: 'white', line: ['e4', 'e5'], eco: 'C20', count: 3, scorePct: 33, prepEndsPly: 9 }];
 const extra = {
-  book: { currentElo: 2150, peakElo: 2200, results: { white: { recentScorePct: 55 }, black: { recentScorePct: 45 } }, repertoire: [{ color: 'white', line: ['e4', 'c5'], eco: 'B20', share: 60, count: 30, scorePct: 58, avgOppElo: 2050, lastDate: '2026.05.01' }] },
+  book: { currentElo: 2150, peakElo: 2200, eloTrend: [{ year: 2023, elo: 1950, games: 20 }, { year: 2024, elo: 2150, games: 25 }], results: { white: { recentScorePct: 55 }, black: { recentScorePct: 45 } }, repertoire: [{ color: 'white', line: ['e4', 'c5'], eco: 'B20', share: 60, count: 30, scorePct: 58, avgOppElo: 2050, lastDate: '2026.05.01' }] },
   features: { games: 50, form: { games: 10, scorePct: 60, recentGames: 4, days: 90 }, vsHigher: { games: 14, scorePct: 28 }, vsLower: { games: 21, scorePct: 62 }, inBook: { games: 40, scorePct: 55 }, outOfBook: { games: 10, scorePct: 30 }, castling: { white: { short: 40, long: 2, none: 8 }, black: { short: 30, long: 0, none: 5 } }, oppositeCastlingPct: 9, queenTrade: { pct: 34, medianMove: 22 }, drawRate: { white: 20, black: 25 } },
   clashLines: [{ idx: 0, color: 'black', sanLine: '1.e4 c6 2.d4 d5', endReason: 'the opponent has never faced this position', endEval: 20 }],
   headToHead: { games: [{ gameId: 'aaaaaaaaaa01', date: '2026.03.01', color: 'white', result: '1-0', line: ['e4', 'e5'], accuracy: 91, moments: 1 }], record: { games: 1, wins: 1, draws: 0, losses: 0, scorePct: 100 } },
-  student: { name: 'Kai', rating: 2000, repertoire: [{ color: 'black', line: ['e4', 'c6'], eco: 'B12', count: 19, scorePct: 55 }] },
+  student: {
+    name: 'Kai', rating: 2000, repertoire: [{ color: 'black', line: ['e4', 'c6'], eco: 'B12', count: 19, scorePct: 55 }],
+    weaknesses: { games: 5, byCategory: { conversion: { count: 4, weight: 8 } }, byPhase: { endgame: { accuracy: 62, moments: 4 } } },
+  },
 };
 
 test('prepContext numbers every fact and maps each id to its text and link', () => {
   const { body, evidence } = prepContext('Karpov, A', report, repertoire, extra);
-  for (const id of ['E1', 'P1', 'R1', 'L1', 'C1', 'T1', 'F1', 'H1', 'S1', 'S2']) {
+  for (const id of ['E1', 'P1', 'R1', 'L1', 'C1', 'T1', 'F1', 'H1', 'S1', 'S2', 'S3', 'S4']) {
     assert.ok(body.includes(`[${id}]`), `${id} appears in the prompt body`);
     assert.ok(evidence[id]?.text, `${id} is in the evidence map`);
   }
@@ -42,6 +45,10 @@ test('prepContext numbers every fact and maps each id to its text and link', () 
   assert.ok(body.includes('Karpov, A is 150 above'), 'the rating gap is stated');
   assert.ok(body.includes('60% of their white games'), 'book shares are stated');
   assert.ok(body.includes('the prediction ends because the opponent has never faced this position'));
+  assert.ok(body.includes('gained about 200 rating points'), 'the rating trend is cited (F id)');
+  assert.ok(body.includes('weaker guide than usual'), 'a large trend flags reduced predictiveness');
+  assert.ok(body.includes('conversion: 4 moments in their own games'), "the student's own weakness is cited (S id), not just the opponent's");
+  assert.ok(body.includes('weakest in the endgame: accuracy 62%'));
   assert.ok(!body.includes('—'), 'no em dashes');
 });
 
@@ -53,23 +60,33 @@ test('prepSheetPrompt still works with only the analysed subset, and the schema 
   assert.deepEqual(PREP_SHEET_SCHEMA.properties.exploit_plan.items.required, ['step', 'evidence']);
   assert.deepEqual(PREP_SHEET_SCHEMA.properties.watch_fors.items.required, ['cue', 'evidence']);
   assert.ok(PREP_SHEET_SCHEMA.properties.openings.items.required.includes('evidence'));
+  assert.deepEqual(PREP_SHEET_SCHEMA.properties.structures.items.required, ['structure', 'plan', 'evidence']);
+  assert.deepEqual(PREP_SHEET_SCHEMA.properties.matchup_risks.items.required, ['risk', 'evidence']);
+  // Both are optional (omittable when the data behind them is missing), unlike
+  // the always-required fields: forcing them would mean fabricating content.
+  assert.ok(!PREP_SHEET_SCHEMA.required.includes('structures'));
+  assert.ok(!PREP_SHEET_SCHEMA.required.includes('matchup_risks'));
   const ev = prepSheetEvidence('Karpov, A', report, repertoire);
   assert.ok(ev.E1 && !ev.L1);
 });
 
 test('validateSheet keeps only issued ids, flags uncited items, and tolerates plain strings', () => {
-  const evidence = { E1: { text: 'x' }, P1: { text: 'y' } };
+  const evidence = { E1: { text: 'x' }, P1: { text: 'y' }, F1: { text: 'z' }, S1: { text: 'w' } };
   const out = validateSheet({
     headline: 'h', profile: { style: 's' },
     exploit_plan: [{ step: 'Attack', evidence: ['P1', 'Z9', 'P1'] }, { step: 'Trade', evidence: [] }, 'Just a string'],
+    structures: [{ structure: 'castles queenside', plan: 'race the queenside pawns', evidence: ['F1'] }],
     openings: [{ when: 'w', play: 'p', why: 'y', evidence: ['E1'] }],
     watch_fors: [{ cue: 'c', evidence: ['nope'] }],
+    matchup_risks: [{ risk: 'you convert poorly and they grind', evidence: ['S1', 'F1'] }],
   }, evidence);
   assert.deepEqual(out.exploit_plan[0], { step: 'Attack', evidence: ['P1'], unsupported: false });
   assert.equal(out.exploit_plan[1].unsupported, true);
   assert.deepEqual(out.exploit_plan[2], { step: 'Just a string', evidence: [], unsupported: true });
   assert.equal(out.openings[0].unsupported, false);
   assert.equal(out.watch_fors[0].unsupported, true, 'an unknown id is dropped and leaves the cue unsupported');
+  assert.deepEqual(out.structures[0], { structure: 'castles queenside', plan: 'race the queenside pawns', evidence: ['F1'], unsupported: false });
+  assert.deepEqual(out.matchup_risks[0], { risk: 'you convert poorly and they grind', evidence: ['S1', 'F1'], unsupported: false });
 });
 
 test('sheets are per student, with the primary member and legacy sheets as shared fallbacks', () => {
@@ -85,17 +102,21 @@ test('the markdown card renders a v2 sheet with evidence footnotes, and the rout
   const sheet = {
     headline: 'Trade queens early.', profile: { style: 'solid', strongest_phase: 'opening', weakest_phase: 'endgame', main_errors: 'endgame technique', time_trouble: 'no clock data' },
     exploit_plan: [{ step: 'Reach an endgame', evidence: ['T1'] }],
+    structures: [{ structure: 'castles queenside as White about 40% of the time', plan: 'race the queenside pawns', evidence: ['F2'] }],
     openings: [{ when: 'As White in the Sicilian', play: 'Caro-Kann instead', why: 'they score 30% out of book', evidence: ['F3'] }],
     watch_fors: [{ cue: 'Passive rook', evidence: ['P1'] }, { cue: 'Unfounded', evidence: [], unsupported: true }],
-    evidence: { T1: { text: 'converted 1 of 2' }, F3: { text: 'scores 30% out of book' }, P1: { text: '"Passive rook" (2x)' } },
+    matchup_risks: [{ risk: 'you convert winning positions poorly and they grind on', evidence: ['S1', 'T1'] }],
+    evidence: { T1: { text: 'converted 1 of 2' }, F2: { text: 'castles queenside 40% of the time' }, F3: { text: 'scores 30% out of book' }, P1: { text: '"Passive rook" (2x)' }, S1: { text: 'converts poorly' } },
     games: 3, createdAt: '2026-09-11T00:00:00Z',
   };
   const md = buildScoutCard('Karpov, A', sheet, { record: { games: 1, wins: 1, draws: 0, losses: 0, scorePct: 100 } });
   assert.match(md, /^# Preparation sheet: Karpov, A/);
   assert.match(md, /Head to head: 1 game, 1W 0D 0L \(100%\)/);
   assert.match(md, /1\. Reach an endgame \[T1\]/);
+  assert.match(md, /## Structures and plans[\s\S]*castles queenside as White about 40% of the time: race the queenside pawns \[F2\]/);
   assert.match(md, /\| As White in the Sicilian \| Caro-Kann instead \| they score 30% out of book \[F3\] \|/);
   assert.match(md, /- Unfounded \[unsupported\]/);
+  assert.match(md, /## Matchup risks[\s\S]*you convert winning positions poorly and they grind on \[S1, T1\]/);
   assert.match(md, /## Evidence[\s\S]*- P1: "Passive rook" \(2x\)/);
   assert.ok(!md.includes('—'));
 

@@ -123,6 +123,19 @@ export const PREP_SHEET_SCHEMA = {
       description: 'Numbered game-plan steps in order, each one short action sentence in active voice',
       items: { type: 'object', properties: { step: { type: 'string' }, evidence: EVIDENCE }, required: ['step', 'evidence'] },
     },
+    structures: {
+      type: 'array', maxItems: 3,
+      description: 'Typical pawn structures or plans from their whole-history habits (F habit ids: castling side, queen-trade timing, game length): a concrete MIDDLEGAME plan, not another opening note. Omit entirely (empty array) when no whole-history habit (F) data is given, rather than inventing one.',
+      items: {
+        type: 'object',
+        properties: {
+          structure: { type: 'string', description: 'The structural habit, from an F id, e.g. "castles queenside about 40% of the time as White"' },
+          plan: { type: 'string', description: 'The concrete middlegame plan this suggests for the student, one short sentence' },
+          evidence: EVIDENCE,
+        },
+        required: ['structure', 'plan', 'evidence'],
+      },
+    },
     openings: {
       type: 'array', minItems: 1, maxItems: 6,
       description: 'Opening advice as one row per line, so it scans quickly. Reference their actual lines only, and the student\'s own lines where given.',
@@ -141,6 +154,15 @@ export const PREP_SHEET_SCHEMA = {
       type: 'array', minItems: 3, maxItems: 5,
       description: 'Three to five short cues to watch for during the game, one per item',
       items: { type: 'object', properties: { cue: { type: 'string' }, evidence: EVIDENCE }, required: ['cue', 'evidence'] },
+    },
+    matchup_risks: {
+      type: 'array', maxItems: 3,
+      description: 'Where the student\'s OWN weakness (an S id) lines up with something this specific opponent does well or steers toward (an E, T, F, or L id): the real head-to-head risk, not the student\'s weakness or the opponent\'s strength stated alone. Each item must cite at least one S id and at least one non-S id. Omit entirely when the student has no weakness data, or none of it crosses this opponent\'s profile.',
+      items: {
+        type: 'object',
+        properties: { risk: { type: 'string', description: 'The crossing risk, one concrete sentence, e.g. "you convert winning positions poorly and they specifically steer into a grind"' }, evidence: EVIDENCE },
+        required: ['risk', 'evidence'],
+      },
     },
   },
   required: ['headline', 'profile', 'exploit_plan', 'openings', 'watch_fors'],
@@ -388,6 +410,18 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
   const bookLines = book ? ['white', 'black'].flatMap(c => book.repertoire.filter(l => l.color === c).slice(0, 5))
     .map(l => cite('L', 'book line', `as ${l.color}: ${lineText(l.line)}${l.eco ? ` (${l.eco})` : ''}, ${l.share}% of their ${l.color} games (${l.count} games), scores ${pctText(l.scorePct)}${l.avgOppElo ? ` vs ~${l.avgOppElo}` : ''}${l.lastDate ? `, last ${l.lastDate}` : ''}`)) : [];
   const strength = book ? [cite('F', 'strength', `current strength about ${book.currentElo ?? '?'}${book.peakElo ? ` (peak ${book.peakElo})` : ''}; recent score ${pctText(book.results?.white?.recentScorePct)} as White, ${pctText(book.results?.black?.recentScorePct)} as Black`)] : [];
+  // Rating trend: without it, a fast-improving or declining opponent reads the
+  // same as a plateaued one at the same current rating, even though their
+  // history is a worse predictor of who shows up to THIS game.
+  const trend = book?.eloTrend?.length >= 2 ? [(() => {
+    const first = book.eloTrend[0], last = book.eloTrend[book.eloTrend.length - 1];
+    const delta = last.elo - first.elo;
+    const years = last.year - first.year;
+    const seq = book.eloTrend.map(y => `${y.year}: ${y.elo} (${y.games} game${y.games === 1 ? '' : 's'})`).join(', ');
+    const stability = Math.abs(delta) >= 100 ? `their history is a weaker guide than usual: they are a different player now than for much of it`
+      : 'a fairly stable rating over this span';
+    return cite('F', 'rating trend', `${delta >= 0 ? 'gained' : 'lost'} about ${Math.abs(delta)} rating points over ${years || 1} year${years === 1 ? '' : 's'} (${seq}); ${stability}`);
+  })()] : [];
 
   const t = report.tendencies;
   const tend = t?.games ? [
@@ -418,10 +452,23 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
 
   const s = extra.student;
   const gap = s?.rating && book?.currentElo ? book.currentElo - s.rating : null;
+  // The student's own weaknesses (their personal report, not this opponent's):
+  // without this, a real head-to-head risk (the student converts poorly and
+  // this opponent specifically steers into won positions to grind, say) never
+  // surfaces, only the two facts in isolation.
+  const sw = s?.weaknesses;
+  const studentWeak = sw?.games ? [
+    ...Object.entries(sw.byCategory || {}).filter(([k, v]) => k !== 'unexplained' && v.count >= 3)
+      .sort((a, b) => b[1].weight - a[1].weight).slice(0, 3)
+      .map(([k, v]) => cite('S', 'student weakness', `${k}: ${v.count} moment${v.count === 1 ? '' : 's'} in their own games (weight ${v.weight})`)),
+    ...['opening', 'middlegame', 'endgame'].filter(ph => sw.byPhase?.[ph]?.moments >= 3)
+      .map(ph => cite('S', 'student weakness', `weakest in the ${ph}: accuracy ${pctText(sw.byPhase[ph].accuracy)}`)),
+  ] : [];
   const student = s ? [
     cite('S', 'student', `rated about ${s.rating || '?'}${gap != null ? `; ${subject} is ${Math.abs(gap)} ${gap >= 0 ? 'above' : 'below'}` : ''}`),
     ...['white', 'black'].flatMap(c => (s.repertoire || []).filter(l => l.color === c).slice(0, 4)
       .map(l => cite('S', 'student line', `plays as ${c}: ${lineText(l.line)}${l.eco ? ` (${l.eco})` : ''}, ${l.count} game${l.count === 1 ? '' : 's'}, scores ${pctText(l.scorePct)}`))),
+    ...studentWeak,
   ] : [];
 
   const body = [
@@ -430,7 +477,7 @@ export function prepContext(subjectName, report, repertoire, extra = {}) {
     section('Their errors by phase', phases),
     section('Their recurring weaknesses (named from explained moments)', pats, '- none yet'),
     section('Their repertoire in the analysed games', rep, '- unknown'),
-    ...(book ? [section('Their strength', strength), section('Their repertoire over their whole history (recent, on-strength games weighted)', bookLines)] : []),
+    ...(book ? [section('Their strength', [...strength, ...trend]), section('Their repertoire over their whole history (recent, on-strength games weighted)', bookLines)] : []),
     ...(tend.length ? [section('How the evaluation goes in their games', tend)] : []),
     ...(habits.length ? [section('Habits over their whole history', habits)] : []),
     ...(clash.length ? [section(`Predicted opening lines between the student and ${subject} (from real games; each note says why the prediction ends)`, clash)] : []),

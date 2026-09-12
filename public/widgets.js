@@ -17,7 +17,7 @@ export function prepSheetBody(sheet) {
     ['Style', p.style], ['Strongest phase', p.strongest_phase], ['Weakest phase', p.weakest_phase],
     ['Main errors', p.main_errors], ['Time trouble', p.time_trouble],
   ].filter(([, v]) => v);
-  const plan = asList(sheet.exploit_plan), openings = asList(sheet.openings), watch = asList(sheet.watch_fors);
+  const plan = asList(sheet.exploit_plan), structures = asList(sheet.structures), openings = asList(sheet.openings), watch = asList(sheet.watch_fors), risks = asList(sheet.matchup_risks);
   const ev = sheet.evidence || {};
   const chips = item => {
     if (typeof item === 'string') return '';
@@ -32,8 +32,10 @@ export function prepSheetBody(sheet) {
     ${sheet.headline ? `<p class="prep-headline">${esc(sheet.headline)}</p>` : ''}
     ${rows.length ? `<h3>Profile</h3><table class="prep-table"><tbody>${rows.map(([k, v]) => `<tr><th>${k}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>` : ''}
     ${plan.length ? `<h3>Game plan</h3><ol>${plan.map(s => `<li>${text(s, 'step')}${chips(s)}</li>`).join('')}</ol>` : ''}
+    ${structures.length ? `<h3>Structures and plans</h3><ul>${structures.map(s => `<li>${typeof s === 'string' ? esc(s) : `<b>${esc(s.structure)}:</b> ${esc(s.plan)}`}${chips(s)}</li>`).join('')}</ul>` : ''}
     ${openings.length ? `<h3>Openings</h3><table class="prep-table"><thead><tr><th>When</th><th>You play</th><th>Why</th></tr></thead><tbody>${openings.map(o => `<tr><td>${esc(o.when)}</td><td>${esc(o.play)}</td><td>${esc(o.why)}${chips(o)}</td></tr>`).join('')}</tbody></table>` : ''}
     ${watch.length ? `<h3>Watch for</h3><ul>${watch.map(w => `<li>${text(w, 'cue')}${chips(w)}</li>`).join('')}</ul>` : ''}
+    ${risks.length ? `<h3>Matchup risks</h3><ul>${risks.map(r => `<li>${text(r, 'risk')}${chips(r)}</li>`).join('')}</ul>` : ''}
   </div>`;
 }
 

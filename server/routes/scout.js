@@ -34,7 +34,11 @@ const seededOwnGameId = (memberId, gameId) => crypto.createHash('sha1').update(`
 async function prepExtra(req, uid, subject, fideId, settings) {
   const extra = { headToHead: await headToHead(uid, subject, fideId) };
   const user = await getUser(uid).catch(() => null);
-  extra.student = { name: user?.displayName || uid, rating: await studentRating(req, settings), repertoire: await buildRepertoire({ userId: uid }) };
+  // The student's own weaknesses (their personal report, not this opponent's):
+  // the real head-to-head risk is where the two cross, e.g. the student converts
+  // poorly and this opponent specifically steers into won positions to grind.
+  const ownReport = await buildReport({ userId: uid }).catch(() => null);
+  extra.student = { name: user?.displayName || uid, rating: await studentRating(req, settings), repertoire: await buildRepertoire({ userId: uid }), weaknesses: ownReport };
   const book = fideId ? await getScoutBook(fideId) : null;
   if (book) {
     extra.book = scoutDossier(book, dossierOpts(settings));

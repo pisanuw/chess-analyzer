@@ -5,7 +5,7 @@
 // trickiest part (forest assembly) can be read, tested, and changed without
 // wading through book-parsing and feature-harvesting code, and vice versa.
 import { parseGame } from './pgn.js';
-import { ageDays, pgnToDate, recencyWeight } from './scoutbook.js';
+import { ageDays, pgnToDate, recencyWeight, median } from './scoutbook.js';
 import { listGames, loadGames, getScoutBook, getClashStore, saveClashStore, getSettings, DEFAULT_USER } from './store.js';
 import { resultScore, posKeyOf } from '../public/shared.js';
 
@@ -72,11 +72,21 @@ export function buildStudentIndex(studentGames, maxPly = CLASH_DEFAULTS.maxPly) 
 export async function buildOpponentIndex(book, settings, { onProgress, cancelled, now = new Date() } = {}) {
   const maxDays = (settings.scoutMaxAgeYears ?? 3) * 365.25;
   const halfLife = settings.scoutHalfLifeDays ?? 540;
+  const eloBand = settings.scoutEloBand ?? 200;
   const index = { white: {}, black: {} };
   const colorCounts = { white: 0, black: 0 };
   let parsed = 0, skipped = 0;
   const games = book.games || [];
   const features = featureCollector(games, now, maxDays, halfLife);
+  // Current strength and an Elo-band filter, the same calculation scoutDossier
+  // uses for its analysed subset (server/scoutbook.js): without it, a
+  // predicted line here could be dominated by games from a materially
+  // different version of the opponent, since recency weighting alone never
+  // fully discounts an old game.
+  const dated = games.map(g => ({ g, age: ageDays(g.date, now), ts: pgnToDate(g.date)?.getTime() ?? -Infinity })).sort((a, b) => b.ts - a.ts);
+  const recentRated = dated.filter(({ g, age }) => g.subjectElo && (age == null || age <= maxDays)).slice(0, 12).map(({ g }) => g.subjectElo);
+  const currentElo = recentRated.length ? median(recentRated) : (dated.find(({ g }) => g.subjectElo)?.g.subjectElo || null);
+  const withinElo = g => !currentElo || !g.subjectElo || Math.abs(g.subjectElo - currentElo) <= eloBand;
   for (let i = 0; i < games.length; i++) {
     if (cancelled?.()) break;
     if (onProgress && i % 25 === 0) { onProgress(i, games.length); await new Promise(r => setImmediate(r)); }
@@ -87,6 +97,7 @@ export async function buildOpponentIndex(book, settings, { onProgress, cancelled
     if (!g.posKey || !g.pgn || (color !== 'white' && color !== 'black')) { skipped++; continue; }
     const w = weightOf(g.date, now, maxDays, halfLife);
     if (w <= 0) { skipped++; continue; }
+    if (!withinElo(g)) { skipped++; continue; }
     if (parsed >= CLASH_DEFAULTS.maxParse) { skipped++; continue; }
     let pg;
     try { pg = parseGame(g.pgn); } catch { skipped++; continue; }

@@ -31,6 +31,10 @@ on a phone). It must be scannable in seconds, not read like an essay.
   layers (E, P, R, K) for how they go wrong; the C predicted lines and S
   student lines for what the student should play. Small samples are stated with
   their counts: treat two games as an anecdote, not a tendency.
+- One F fact is their rating trend across their whole history. When it says
+  their history is a weaker guide than usual (a large swing), say so in the
+  sheet (the headline or a watch_for is the natural place): the opponent who
+  shows up may play better, or worse, than the rest of the dossier suggests.
 
 ## Style
 
@@ -42,7 +46,7 @@ on a phone). It must be scannable in seconds, not read like an essay.
   compared side by side. Keep each value to a few words.
 - Plain punctuation: commas, colons, parentheses. Never use em dashes.
 
-## Structure (fill every field)
+## Structure (fill every field, except structures which is omitted when there is no whole-history habit data)
 
 - **headline**: one short sentence, the single most useful thing to know before
   the game.
@@ -58,6 +62,11 @@ on a phone). It must be scannable in seconds, not read like an essay.
   gap and the "against higher / lower rated" habit to set the risk level:
   complicate against an opponent who scores badly under pressure, keep it simple
   against one who overpresses.
+- **structures**: 0 to 3 items `{ structure, plan, evidence }`, each an F habit
+  (castling side, queen-trade timing, opposite-side castling, game length)
+  turned into a concrete MIDDLEGAME plan, e.g. "castles queenside as White
+  about 40% of the time" -> "race the queenside pawns when they do". Not
+  another opening note. Leave empty when no F habit data is given.
 - **openings**: one row per line so it scans quickly, each `{ when, play, why,
   evidence }`: when (their colour and line), play (what the student plays,
   short, from the student's own lines or the predicted lines), why (one short
@@ -65,3 +74,12 @@ on a phone). It must be scannable in seconds, not read like an essay.
   Reference their actual lines only.
 - **watch_fors**: 3 to 5 short cues `{ cue, evidence }` to watch for during the
   game, one per item, each tied to a pattern, habit, or tendency id.
+- **matchup_risks**: 0 to 3 items `{ risk, evidence }`. Each crosses the
+  student's OWN weakness (an S id, from their personal report) with something
+  THIS opponent specifically does well or steers toward (an E, T, F, or L id):
+  e.g. the student converts winning positions poorly [S3] and this opponent
+  scores well once they reach an endgame [T2]. Cite at least one S id and at
+  least one non-S id per item. This is the real head-to-head risk, not the
+  student's weakness or the opponent's strength stated in isolation. Leave
+  empty when the student has no weakness data, or none of it crosses this
+  opponent's profile.
