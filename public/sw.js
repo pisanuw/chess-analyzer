@@ -1,12 +1,16 @@
-// Service worker: the app shell plus the last drill deck stay usable with no
-// signal (a tournament hall), which is exactly where a pre-game drill set is
-// wanted. Network first everywhere, so online behaviour is unchanged and a new
-// version of the app is picked up on the next load; the cache is only the
-// fallback. Only the drill deck and the three small startup calls are cached
-// from the API; every other API response is never stored. Reviews made offline
-// are queued in localStorage by api.js and replayed in order on reconnect.
-const CACHE = 'chess-analyzer-v1';
-const OFFLINE_API = new Set(['/api/drills', '/api/auth/me', '/api/status', '/api/settings']);
+// Service worker: the app shell, the last drill deck, and the last Prepare
+// pages stay usable with no signal (a tournament hall), which is exactly where
+// a pre-game deck and sheet are wanted. Network first everywhere, so online
+// behaviour is unchanged and a new version of the app is picked up on the next
+// load; the cache is only the fallback. Only the drill deck, the prep and
+// dossier reads, the upcoming list, and the small startup calls are cached
+// from the API; every other API response is never stored. Reviews and prep
+// marks made offline are queued in localStorage by api.js and replayed in
+// order on reconnect.
+const CACHE = 'chess-analyzer-v2';
+const OFFLINE_API = new Set(['/api/drills', '/api/auth/me', '/api/status', '/api/settings', '/api/upcoming', '/api/scout', '/api/games', '/api/players']);
+const OFFLINE_API_PREFIXES = ['/api/prep/', '/api/scout/'];
+const offlineApi = p => OFFLINE_API.has(p) || OFFLINE_API_PREFIXES.some(x => p.startsWith(x));
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => {
@@ -18,7 +22,7 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith('/api/') && !OFFLINE_API.has(url.pathname)) return;
+  if (url.pathname.startsWith('/api/') && !offlineApi(url.pathname)) return;
   e.respondWith(networkFirst(req));
 });
 

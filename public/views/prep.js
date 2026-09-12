@@ -178,8 +178,17 @@ export async function prepView(root, subjectEnc, query) {
     const had = (marks[d.id]?.right || 0) > 0;
     marks[d.id] = { seen: (marks[d.id]?.seen || 0) + 1, right: (marks[d.id]?.right || 0) + (correct ? 1 : 0) };
     if (correct && !had) { doneCount++; updateProgress(); }
-    api.prepMark(d.id, correct).catch(() => {});
+    mark(d.id, correct);
     renderPanel();
+  }
+
+  // A mark made with no connection is queued on the device (api.js) and
+  // replayed later; say so once per visit rather than after every card.
+  let saidOffline = false;
+  function mark(id, correct) {
+    api.prepMark(id, correct).then(r => {
+      if (r?.queued && !saidOffline) { saidOffline = true; toast('No connection: progress saved on this device, syncs when back online'); }
+    }).catch(() => {});
   }
 
   function renderPanel() {
@@ -200,7 +209,7 @@ export async function prepView(root, subjectEnc, query) {
       pane.querySelector('#deck-show').onclick = () => {
         state.status = 'revealed'; state.correct = false; state.text = `${d.bestSan}.`;
         boards.deck.set(d.fen, { shapes: lineShapes(d.lines, d.playedUci) });
-        api.prepMark(d.id, false).catch(() => {});
+        mark(d.id, false);
         marks[d.id] = { seen: (marks[d.id]?.seen || 0) + 1, right: marks[d.id]?.right || 0 };
         renderPanel();
       };

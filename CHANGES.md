@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-12 (Implementing the round-2 report: the Prepare page works offline)
+
+- The service worker cached only the drill deck and the startup calls, so the Prepare page (the sheet, the predicted lines, the deck) failed with no signal, exactly where it is wanted. `public/sw.js` now also caches the prep reads (`/api/prep/*`), the dossier reads (`/api/scout`, `/api/scout/*`, `/api/players`, `/api/games`), and the upcoming list, still network first, so online behaviour is unchanged and the last-viewed Prepare pages open from the cache. A deck mark made offline was silently lost; `api.prepMark` now queues it in the same per-user localStorage queue as offline drill grades (`kind: 'prep'`), replayed in order by `flushReviews`, and the page says once that progress is saved on the device. Test in `test/offlinequeue.test.js`.
+
 ## 2026-09-12 (Implementing the round-2 report: one PGN date key everywhere)
 
 - PGN dates are often unpadded ("2026.7.29"), and a string sort ranks July after October. `scoutbook.js` and the Games page had each fixed this privately while `store.js` (the games list), `report.js` (the chronological order behind the timeline, the accuracy trend, and the recent-versus-earlier category trend), `repertoire.js`, and `subjects.js` (head to head) still string-sorted. One `pgnDateKey` in `public/shared.js` (YYYYMMDD, partial dates padded with zeros) now orders all of them and the Games page. Tests in `test/shared.test.js` and `test/report.test.js`.

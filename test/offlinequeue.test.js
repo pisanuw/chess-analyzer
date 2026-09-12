@@ -110,6 +110,29 @@ test('undo removes the newest queued review for that drill without a server call
   assert.equal(calls.at(-1).url, '/api/drills/g6%3A1/undo');
 });
 
+test('a prep-deck mark made offline is queued behind the reviews and replayed to the mark route', async () => {
+  session.user = { id: 'kai', role: 'member' };
+  store.delete('reviewQueue:kai');
+  script = ['offline', 'offline'];
+  await api.reviewDrill('g9:1', 'again', false, false, null, {});
+  const res = await api.prepMark('line:777:abc', true);
+  assert.equal(res.queued, true);
+  assert.deepEqual(queue().map(e => [e.id, e.kind || null]), [['g9:1', null], ['line:777:abc', 'prep']]);
+  // Undoing a drill grade never touches a queued prep mark with the same id shape.
+  calls = [];
+  script = [];
+  const { synced } = await flushReviews();
+  assert.equal(synced, 2);
+  assert.deepEqual(calls.map(c => c.url), ['/api/drills/g9%3A1/review', '/api/prep/mark']);
+  assert.deepEqual(calls[1].body, { id: 'line:777:abc', correct: true });
+  assert.equal(queue().length, 0);
+  // Online with an empty queue: a mark posts directly.
+  calls = [];
+  await api.prepMark('line:777:abc', false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/api/prep/mark');
+});
+
 test('the queue is per user: one member cannot replay into another ladder', async () => {
   script = ['offline'];
   await api.reviewDrill('g7:1', 'good', true, false, null, {});

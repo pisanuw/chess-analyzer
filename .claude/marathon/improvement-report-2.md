@@ -18,7 +18,7 @@
 - [x] B3 date key: `pgnDateKey` in `public/shared.js`, used by store.js, report.js, repertoire.js, subjects.js, games.js; tests.
 
 ### Phase B: small frontend
-- [ ] F1 offline Prepare page: sw.js prefix matches for /api/prep/, /api/upcoming, /api/scout/; prep marks queued offline like reviews; tests.
+- [x] F1 offline Prepare page: sw.js caches prep/scout/upcoming reads; prep marks queued offline (kind 'prep'); test. (Smoke test here needs `CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chrome`.)
 - [ ] F5 PNG icons (apple-touch-icon 180, manifest 192/512).
 - [ ] F3 theme control on the Settings page (and reachable without auth).
 - [ ] F6 pause job/badge polling and pollClash when the tab is hidden.

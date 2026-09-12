@@ -122,11 +122,12 @@ const noopForVisitor = fn => (...args) => (session.user?.role === 'visitor' ? Pr
 
 // --- offline review queue ----------------------------------------------------
 // With no signal (a tournament hall) the service worker still serves the drill
-// deck, but a grade is a POST and the server is unreachable. The failed review
-// is queued here instead, with the time it was really made, and replayed in
-// order on reconnect (app.js flushes at startup and on the `online` event).
-// Keyed by user id so a shared laptop cannot replay one member's reviews into
-// another member's ladder.
+// deck and the Prepare page, but a grade or a prep mark is a POST and the
+// server is unreachable. The failed write is queued here instead, with the
+// time it was really made, and replayed in order on reconnect (app.js flushes
+// at startup and on the `online` event). An entry without a `kind` is a drill
+// review; `kind: 'prep'` is a prep-deck mark. Keyed by user id so a shared
+// laptop cannot replay one member's reviews into another member's ladder.
 const reviewQueueKey = () => `reviewQueue:${session.user?.id || 'local'}`;
 function queuedReviews() {
   try { return JSON.parse(localStorage.getItem(reviewQueueKey())) || []; } catch { return []; }
@@ -135,26 +136,31 @@ function saveReviewQueue(q) {
   try { q.length ? localStorage.setItem(reviewQueueKey(), JSON.stringify(q)) : localStorage.removeItem(reviewQueueKey()); }
   catch { /* private mode: the grade is lost, as it was before the queue */ }
 }
-function enqueueReview(id, body) {
+function enqueueReview(id, body, kind = null) {
   const q = queuedReviews();
-  q.push({ id, ...body, at: new Date().toISOString() });
+  q.push({ id, ...body, ...(kind ? { kind } : {}), at: new Date().toISOString() });
   saveReviewQueue(q);
   return { queued: true, pending: q.length };
 }
 
-/** Replay queued reviews oldest first (order matters: a drill missed offline
- * comes back in the same session, and the ladder depends on the order of its
- * reviews). Stops, keeping the rest, while the server is unreachable or the
- * session has expired; an entry the server refuses outright (the drill was
- * deleted while offline) is dropped so the queue can never jam.
+/** The request that replays one queued entry. */
+function replayEntry({ id, kind, ...body }) {
+  if (kind === 'prep') return req('POST', '/api/prep/mark', { id, correct: !!body.correct });
+  return req('POST', `/api/drills/${encodeURIComponent(id)}/review`, body);
+}
+
+/** Replay queued reviews and prep marks oldest first (order matters: a drill
+ * missed offline comes back in the same session, and the ladder depends on the
+ * order of its reviews). Stops, keeping the rest, while the server is
+ * unreachable or the session has expired; an entry the server refuses outright
+ * (the drill was deleted while offline) is dropped so the queue can never jam.
  * Returns { synced, pending }. */
 export async function flushReviews() {
   const q = queuedReviews();
   let synced = 0;
   while (q.length) {
-    const { id, ...body } = q[0];
     try {
-      await req('POST', `/api/drills/${encodeURIComponent(id)}/review`, body);
+      await replayEntry(q[0]);
       synced++;
     } catch (err) {
       if (err.offline || err.status === 401) return { synced, pending: q.length };
@@ -163,6 +169,18 @@ export async function flushReviews() {
     saveReviewQueue(q);
   }
   return { synced, pending: 0 };
+}
+
+/** POST a training write, or queue it when the server is unreachable (after
+ * first trying to drain what is already queued, so order is kept). */
+async function postOrQueue(id, body, kind, send) {
+  // Earlier queued entries must land before this one; if they still cannot,
+  // this one joins the back of the queue without a doomed request of its own.
+  if ((await flushReviews()).pending) return enqueueReview(id, body, kind);
+  try { return await send(); } catch (err) {
+    if (!err.offline) throw err;
+    return enqueueReview(id, body, kind);
+  }
 }
 
 export const api = {
@@ -220,7 +238,7 @@ export const api = {
   syncPatternNotes: () => req('POST', '/api/admin/pattern-notes/sync', {}),
   players: () => req('GET', '/api/players'),
   prep: (subject, color = 'white', tc = null) => req('GET', `/api/prep/${encodeURIComponent(subject)}?color=${color}${tc && tc !== 'all' ? `&tc=${tc}` : ''}`),
-  prepMark: noopForVisitor((id, correct) => req('POST', '/api/prep/mark', { id, correct })),
+  prepMark: noopForVisitor((id, correct) => postOrQueue(id, { correct }, 'prep', () => req('POST', '/api/prep/mark', { id, correct }))),
   upcoming: () => req('GET', '/api/upcoming'),
   addUpcoming: entry => req('POST', '/api/upcoming', entry),
   removeUpcoming: id => req('DELETE', `/api/upcoming/${encodeURIComponent(id)}`),
@@ -232,16 +250,9 @@ export const api = {
     req('GET', `/api/puzzles?source=${encodeURIComponent(source)}&limit=${limit}`),
   drills: ({ pattern = null, category = null, subject = null, color = null, limit = null, session = false } = {}) =>
     req('GET', `/api/drills?limit=${limit || 20}${pattern ? `&pattern=${encodeURIComponent(pattern)}` : ''}${category ? `&category=${encodeURIComponent(category)}` : ''}${subject ? `&subject=${encodeURIComponent(subject)}` : ''}${color ? `&color=${color}` : ''}${session ? '&session=1' : ''}`),
-  reviewDrill: noopForVisitor(async (id, grade, correct, practice = false, ms = null, { confidence = null, note = null } = {}) => {
+  reviewDrill: noopForVisitor((id, grade, correct, practice = false, ms = null, { confidence = null, note = null } = {}) => {
     const body = { grade, correct, practice, ...(ms != null ? { ms } : {}), ...(confidence ? { confidence } : {}), ...(note ? { note } : {}) };
-    // Earlier queued reviews must land before this one; if they still cannot,
-    // this one joins the back of the queue without a doomed request of its own.
-    if ((await flushReviews()).pending) return enqueueReview(id, body);
-    try { return await req('POST', `/api/drills/${encodeURIComponent(id)}/review`, body); }
-    catch (err) {
-      if (!err.offline) throw err;
-      return enqueueReview(id, body);
-    }
+    return postOrQueue(id, body, null, () => req('POST', `/api/drills/${encodeURIComponent(id)}/review`, body));
   }),
   suspendDrill: noopForVisitor((id, suspended = true) => req('POST', `/api/drills/${encodeURIComponent(id)}/suspend`, { suspended })),
   undoDrill: noopForVisitor(id => {
@@ -249,7 +260,7 @@ export const api = {
     // server never saw it, so there is nothing to pop there.
     const q = queuedReviews();
     for (let i = q.length - 1; i >= 0; i--) {
-      if (q[i].id === id) { q.splice(i, 1); saveReviewQueue(q); return Promise.resolve({ queued: true }); }
+      if (q[i].id === id && !q[i].kind) { q.splice(i, 1); saveReviewQueue(q); return Promise.resolve({ queued: true }); }
     }
     return req('POST', `/api/drills/${encodeURIComponent(id)}/undo`, {});
   }),
