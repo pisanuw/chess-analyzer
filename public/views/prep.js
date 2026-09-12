@@ -34,7 +34,7 @@ export async function prepView(root, subjectEnc, query) {
   const cov = book?.coverage;
   const classes = ['classical', 'rapid', 'blitz'].filter(k => (cov?.byTimeControl || {})[k] > 0);
   const tcToggle = classes.length && (classes.length > 1 || (cov.byTimeControl.unknown || 0) > 0)
-    ? `<span class="row" style="gap:4px"><small class="muted">Time control:</small>${[['all', 'All'], ...classes.map(k => [k, k[0].toUpperCase() + k.slice(1)])].map(([v, l]) => `<button class="small${(tc || 'all') === v ? ' primary' : ''}" data-tc="${v}">${l}</button>`).join('')}</span>`
+    ? `<span class="row" style="gap:4px"><small class="muted">Time control:</small>${[['all', 'All'], ...classes.map(k => [k, k[0].toUpperCase() + k.slice(1)])].map(([v, l]) => `<button class="small${(tc || 'all') === v ? ' primary' : ''}" data-tc="${v}" aria-pressed="${(tc || 'all') === v}">${l}</button>`).join('')}</span>`
     : '';
 
   const bookLines = book?.repertoire?.length ? `<table><thead><tr><th class="num">Share</th><th>Their line as ${oppColor}</th><th>ECO</th><th class="num">Games</th><th class="num">Scores</th><th>Last</th></tr></thead><tbody>${book.repertoire.slice(0, 6).map(r => `<tr>
@@ -48,7 +48,7 @@ export async function prepView(root, subjectEnc, query) {
         <small class="muted">${book?.currentElo ? `Currently about ${book.currentElo}. ` : ''}${report.games ? `${report.games} analysed game${report.games === 1 ? '' : 's'} of them as ${oppColor}.` : `No analysed games of them as ${oppColor} yet.`}</small>
       </div>
       <div class="row" style="gap:6px; align-items:center">
-        <span class="row" style="gap:4px"><small class="muted">Your colour:</small><button class="small${myColor === 'white' ? ' primary' : ''}" data-color="white">White</button><button class="small${myColor === 'black' ? ' primary' : ''}" data-color="black">Black</button></span>
+        <span class="row" style="gap:4px"><small class="muted">Your colour:</small><button class="small${myColor === 'white' ? ' primary' : ''}" data-color="white" aria-pressed="${myColor === 'white'}">White</button><button class="small${myColor === 'black' ? ' primary' : ''}" data-color="black" aria-pressed="${myColor === 'black'}">Black</button></span>
         ${tcToggle}
       </div>
     </div>
@@ -102,12 +102,15 @@ export async function prepView(root, subjectEnc, query) {
   root.querySelector('#add-upcoming')?.addEventListener('submit', async e => {
     e.preventDefault();
     const f = new FormData(e.target);
-    try { await api.addUpcoming({ subject, fideId: prep.fideId, color: myColor, date: f.get('date') || '', round: f.get('round') || '', timeControl: tc || 'all' }); toast('Added to your upcoming games'); location.reload(); }
+    try { await api.addUpcoming({ subject, fideId: prep.fideId, color: myColor, date: f.get('date') || '', round: f.get('round') || '', timeControl: tc || 'all' }); toast('Added to your upcoming games'); rerender(); }
     catch (err) { toast(err.message, true); }
   });
   root.querySelectorAll('[data-remove-upcoming]').forEach(b => b.onclick = async () => {
-    try { await api.removeUpcoming(b.dataset.removeUpcoming); toast('Removed'); location.reload(); } catch (err) { toast(err.message, true); }
+    try { await api.removeUpcoming(b.dataset.removeUpcoming); toast('Removed'); rerender(); } catch (err) { toast(err.message, true); }
   });
+  // Re-run the view (the router tears this one down) instead of reloading the
+  // page, which would lose the scroll position and every open accordion.
+  function rerender() { window.dispatchEvent(new HashChangeEvent('hashchange')); }
   const copyBtn = root.querySelector('#prep-copy');
   if (copyBtn) copyBtn.onclick = () => busy(copyBtn, async () => {
     try { await navigator.clipboard.writeText(await api.scoutCard(subject)); toast('Sheet copied as markdown'); } catch (err) { toast(err.message, true); }

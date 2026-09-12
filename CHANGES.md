@@ -2,6 +2,17 @@
 
 Newest first.
 
+## 2026-09-12 (Implementing the round-2 report: chart tooltips on touch)
+
+- The bar chart, the line chart, and the eval graph (`public/charts.js`) showed their tooltips on `mousemove` only, so a phone got no detail at all (the game behind an accuracy point, the count behind a bar). They now use pointer events: hover as before, and on touch the first tap on a spot pins the tooltip (and the cursor), a second tap on the same spot runs the click action (open the game, list the moments, jump to the ply), and a tap anywhere else hides it.
+
+## 2026-09-12 (Implementing the round-2 report: small frontend fixes)
+
+- The page theme (Auto, Light, Dark) lived only in the account menu, which was hidden whenever no login is configured, so a bare local run had no way to set it. The menu now shows on a bare run too, reduced to the theme row (no name, no sign out).
+- Job polling and the drill badge stop while the tab is hidden and poll again the moment it is shown; the clash build poller waits the same way.
+- Adding or removing an upcoming game on the Prepare page and linking a FIDE id on the Players page re-run the view instead of reloading the page (scroll position and open sections survive).
+- Accessibility: the Players table's readiness dot is hidden from assistive tech (the "Prep sheet" column carries the same word, now with the fuller hint as a title), and the colour, time-control, and colour-cut toggles on the Players and Prepare pages carry `aria-pressed`.
+
 ## 2026-09-12 (Implementing the round-2 report: PNG home-screen icons)
 
 - iOS ignores an SVG `apple-touch-icon`, so the installed app (the tournament-hall phone) got a screenshot tile, and Android's install prompt wants PNG sizes in the manifest. `scripts/make-icons.js` (`npm run icons`) renders `public/icon.svg` to `icon-180.png`, `icon-192.png`, and `icon-512.png` with the Playwright Chromium; the PNGs are committed, `index.html` points the touch icon at the 180 px one, and the manifest lists the 192 and 512 px ones ahead of the SVG.

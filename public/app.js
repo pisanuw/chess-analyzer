@@ -83,7 +83,13 @@ const jobsEl = document.getElementById('jobs');
 let lastActive = new Set();
 export const jobEvents = new EventTarget();
 
+// Polling stops while the tab is hidden (a laptop asleep in a bag, a phone in
+// a pocket) and resumes with an immediate poll when it is shown again.
+let pollTimer = null;
+const schedulePoll = ms => { clearTimeout(pollTimer); pollTimer = setTimeout(pollJobs, ms); };
+
 async function pollJobs() {
+  if (document.hidden) { schedulePoll(5000); return; }
   try {
     const { jobs } = await api.jobs();
     const active = jobs.filter(j => j.status === 'running' || j.status === 'queued');
@@ -117,13 +123,14 @@ async function pollJobs() {
       jobEvents.dispatchEvent(new CustomEvent('finished', { detail: jobs.filter(j => finished.includes(j.id)) }));
     }
     lastActive = nowActive;
-    setTimeout(pollJobs, active.length ? 1500 : 5000);
+    schedulePoll(active.length ? 1500 : 5000);
   } catch {
-    setTimeout(pollJobs, 5000);
+    schedulePoll(5000);
   }
 }
 
 export async function updateDrillBadge() {
+  if (document.hidden) return;
   try {
     const { dueCount } = await api.drills();
     const b = document.getElementById('drill-badge');
@@ -135,26 +142,28 @@ export async function updateDrillBadge() {
 function renderWhoami(me) {
   const el = document.getElementById('whoami');
   if (!el) return;
-  if (!me.authActive || !me.user) { el.hidden = true; return; } // no login configured: nothing to show
+  if (me.authActive && !me.user) { el.hidden = true; return; } // not signed in: the login overlay covers the app
   el.hidden = false;
-  const u = me.user;
-  const name = u.name || u.displayName || u.id;
-  const roleTag = u.role === 'admin' ? 'admin' : u.role === 'visitor' ? 'visitor' : '';
-  const avatar = u.picture
+  // With no login configured (a bare local run) there is nobody to show, but
+  // the page theme still needs a home: the same menu, reduced to the theme row.
+  const u = me.authActive ? me.user : null;
+  const name = u ? (u.name || u.displayName || u.id) : 'Display';
+  const roleTag = u?.role === 'admin' ? 'admin' : u?.role === 'visitor' ? 'visitor' : '';
+  const avatar = u?.picture
     ? `<img class="avatar" src="${esc(u.picture)}" alt="" referrerpolicy="no-referrer">`
-    : `<span class="avatar avatar-initials">${esc((name[0] || '?').toUpperCase())}</span>`;
+    : `<span class="avatar avatar-initials">${u ? esc((name[0] || '?').toUpperCase()) : '◐'}</span>`;
   let theme = 'auto'; try { theme = localStorage.getItem('theme') || 'auto'; } catch {}
   const opt = (val, label) => `<button class="small theme-opt${theme === val ? ' primary' : ''}" data-theme-set="${val}">${label}</button>`;
   el.innerHTML = `<div class="whoami-wrap">
     <button id="whoami-btn" aria-haspopup="true" aria-expanded="false" aria-controls="whoami-menu" title="${esc(name)}${roleTag ? ` (${roleTag})` : ''}">${avatar}<span class="who">${esc(name)}</span></button>
-    <div id="whoami-menu" class="hidden" role="menu" aria-label="Account menu">
+    <div id="whoami-menu" class="hidden" role="menu" aria-label="${u ? 'Account menu' : 'Display menu'}">
       <div class="menu-head">${esc(name)}${roleTag ? ` <span class="chip">${roleTag}</span>` : ''}</div>
       <div class="menu-label">Page theme</div>
       <div class="menu-row">${opt('auto', 'Auto')}${opt('light', 'Light')}${opt('dark', 'Dark')}</div>
-      ${u.role === 'admin' ? `<div class="menu-label">Viewing as</div>
+      ${u?.role === 'admin' ? `<div class="menu-label">Viewing as</div>
       <div class="menu-row"><select id="view-as" aria-label="View the app as a member"><option value="">Myself</option></select></div>
       <div class="menu-label"><small>Read-only: reports, drills, and prep of that member, as they see them.</small></div>` : ''}
-      <button class="link" id="logout-btn">Sign out</button>
+      ${u ? '<button class="link" id="logout-btn">Sign out</button>' : ''}
     </div>
   </div>`;
   const viewAs = el.querySelector('#view-as');
@@ -200,7 +209,8 @@ function renderWhoami(me) {
     else document.documentElement.setAttribute('data-theme', val);
     el.querySelectorAll('[data-theme-set]').forEach(x => x.classList.toggle('primary', x === b));
   });
-  el.querySelector('#logout-btn').onclick = async () => { try { await api.logout(); } catch {} location.reload(); };
+  const logout = el.querySelector('#logout-btn');
+  if (logout) logout.onclick = async () => { try { await api.logout(); } catch {} location.reload(); };
 }
 
 // Identity + chrome. /api/auth/me is exempt from the auth gate, so it answers
@@ -246,5 +256,6 @@ Promise.all([api.me().catch(() => ({})), api.status().catch(() => ({}))]).then((
     pollJobs();
     setInterval(updateDrillBadge, 60000);
     jobEvents.addEventListener('finished', updateDrillBadge);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { pollJobs(); updateDrillBadge(); } });
   }
 }).catch(err => { console.error(err); route(); }); // still render something if startup chrome fails

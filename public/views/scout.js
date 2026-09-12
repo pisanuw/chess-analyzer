@@ -58,11 +58,11 @@ export async function scoutView(root) {
     const isCur = s.subject === current;
     const n = s.bookGames || s.games;
     return `<tr class="clickable${isCur ? ' current' : ''}" data-subject="${esc(s.subject)}">
-      <td><span class="dot ${st}" title="${esc(prepTipOf(s))}"></span>${esc(s.subject)}${s.member ? ' <span class="chip" title="app member">member</span>' : ''}</td>
+      <td><span class="dot ${st}" title="${esc(prepTipOf(s))}" aria-hidden="true"></span>${esc(s.subject)}${s.member ? ' <span class="chip" title="app member">member</span>' : ''}</td>
       <td>${esc(s.fed || '')}${s.fideId ? ` <small class="muted" title="FIDE id">${esc(s.fideId)}</small>` : ''}</td>
       <td class="num" title="${s.bookGames ? `${s.bookGames} in their book, ` : ''}${s.analysed || 0} analysed">${n}${s.bookGames ? ' \u{1F4D6}' : ''}</td>
       <td class="num">${s.analysed || 0}</td>
-      <td>${prepLabel[st]}</td>
+      <td>${prepLabel[st] ? `<span title="${esc(prepTipOf(s))}">${prepLabel[st]}</span>` : `<span class="muted"><small>${st ? '' : 'nothing yet'}</small></span>`}</td>
       <td class="row" style="gap:4px"><a class="small button-like" href="#/prep/${encodeURIComponent(s.subject)}?color=white" title="Prepare to play them as White">as W</a> <a class="small button-like" href="#/prep/${encodeURIComponent(s.subject)}?color=black" title="Prepare to play them as Black">as B</a></td>
     </tr>`;
   };
@@ -164,7 +164,7 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
 /** "Their games: all, as White, as Black". Preparation is colour-specific: the
  * student faces the opponent in one colour, so the whole page can be cut to it. */
 function colourCut(entry) {
-  const btn = (val, label) => `<button class="small${(entry.color || '') === val ? ' primary' : ''}" data-color-cut="${val}">${label}</button>`;
+  const btn = (val, label) => `<button class="small${(entry.color || '') === val ? ' primary' : ''}" data-color-cut="${val}" aria-pressed="${(entry.color || '') === val}">${label}</button>`;
   return `<div class="row" style="gap:6px; align-items:center; margin: 0 0 12px">
     <span class="muted"><small>Their games:</small></span>${btn('', 'All')}${btn('white', 'As White')}${btn('black', 'As Black')}
     ${entry.color ? `<small class="muted">Showing ${esc(entry.subject)} as ${entry.color}: what you meet when you have ${entry.color === 'white' ? 'Black' : 'White'}.</small>` : ''}
@@ -349,7 +349,7 @@ function wireFideLink(el, subject) {
         try {
           await api.linkPlayer({ fideId: b.dataset.id, name: subject, fideName: b.dataset.name, federation: b.dataset.fed });
           toast(`Linked ${subject} to FIDE ${b.dataset.id}`);
-          location.reload(); // re-derive the subject list so the merge takes effect
+          window.dispatchEvent(new HashChangeEvent('hashchange')); // re-render: the subject list re-derives so the merge takes effect
         } catch (err) { toast(err.message, true); b.disabled = false; }
       });
     } catch (err) { out.innerHTML = `<span class="muted">FIDE search failed: ${esc(err.message)}</span>`; }
@@ -366,7 +366,7 @@ function bookSection(d, readonly, promote, color = null, features = null, tc = n
   // export with no TimeControl headers is all "unknown" and gets no toggle).
   const classes = ['classical', 'rapid', 'blitz'].filter(k => (cov.byTimeControl || {})[k] > 0);
   const tcToggle = classes.length && (classes.length > 1 || (cov.byTimeControl.unknown || 0) > 0)
-    ? `<div class="row" style="gap:6px; margin:6px 0"><span class="muted"><small>Time control:</small></span>${[['all', `All (${cov.bookTotal})`], ...classes.map(k => [k, `${k[0].toUpperCase()}${k.slice(1)} (${cov.byTimeControl[k]})`])].map(([v, label]) => `<button class="small${(tc || 'all') === v ? ' primary' : ''}" data-tc="${v}">${label}</button>`).join('')}${cov.byTimeControl.unknown ? ` <small class="muted">${cov.byTimeControl.unknown} with no time control recorded</small>` : ''}</div>`
+    ? `<div class="row" style="gap:6px; margin:6px 0"><span class="muted"><small>Time control:</small></span>${[['all', `All (${cov.bookTotal})`], ...classes.map(k => [k, `${k[0].toUpperCase()}${k.slice(1)} (${cov.byTimeControl[k]})`])].map(([v, label]) => `<button class="small${(tc || 'all') === v ? ' primary' : ''}" data-tc="${v}" aria-pressed="${(tc || 'all') === v}">${label}</button>`).join('')}${cov.byTimeControl.unknown ? ` <small class="muted">${cov.byTimeControl.unknown} with no time control recorded</small>` : ''}</div>`
     : '';
   // Rating over time is a small line graph (filled in after insertion by
   // renderRatingTrend); a row of "year: elo" chips was hard to read as a trend.
@@ -494,6 +494,7 @@ async function pollClash(fideId, body, boardRef, ctx) {
   // into, or rendering into, a container nobody can see anymore.
   for (let i = 0; i < 200; i++) {
     await new Promise(r => setTimeout(r, 1500));
+    await whenVisible(); // a hidden tab does not poll; the build continues on the server
     if (!body.isConnected) return;
     const { jobs = [] } = await api.jobs().catch(() => ({ jobs: [] }));
     if (!body.isConnected) return;
@@ -509,6 +510,15 @@ async function pollClash(fideId, body, boardRef, ctx) {
     }
   }
   if (body.isConnected) body.innerHTML = '<div class="empty">The clash build is taking longer than expected. Reload the page to check.</div>';
+}
+
+/** Resolves once the tab is visible (immediately when it already is). */
+function whenVisible() {
+  if (!document.hidden) return Promise.resolve();
+  return new Promise(resolve => {
+    const onChange = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', onChange); resolve(); } };
+    document.addEventListener('visibilitychange', onChange);
+  });
 }
 
 /** A per-node marker for where a prediction runs out (coverage, not just depth). */
