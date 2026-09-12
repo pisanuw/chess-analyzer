@@ -2,6 +2,10 @@
 
 Newest first.
 
+## 2026-09-12 (Measured and rejected the analysis.moves de-duplication)
+
+- Measured the improvement report's claim that dropping the repeated `san/uci/fenBefore/fenAfter` from `analysis.moves[]` would roughly halve game files. On the live data (289 games, 51.2 MB) those fields are 4.3 MB, 8% of raw bytes, so the migration is not worth touching every reader of `analysis.moves`. The real byte sinks: pretty-printing whitespace 49% (compact JSON would be 25.9 MB), `analysis.moves` 37% (engine `lines[]` 15 points), `game.moves` 11%. Left the format alone (indented files diff line-by-line in the data repo and git packing absorbs the whitespace); updated IMPROVEMENT-REPORT.md 2.3 with the numbers and removed the item from BRIEFING.md step 9. No code changed.
+
 ## 2026-09-12 (Lint, prose check, CI, docs)
 
 - `npm run lint`: a minimal eslint flat config (`eslint.config.js`: no-undef, no-unused-vars, eqeqeq, prefer-const, and a few bug catchers, nothing stylistic; browser globals for `public/`, node for the rest, service-worker for `public/sw.js`) plus `scripts/check-prose.js`, which fails on an em dash in any prose, UI, or prompt file. The first lint run found a real bug: the Drills page shadowed the imported `session` with its local session tally, so the visitor copy never showed.
