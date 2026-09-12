@@ -4,7 +4,7 @@
 // no engine work is needed. Own games contribute engine data only: explanations
 // exist for the player's moments, not the opponent's, so categories stay
 // "unexplained" unless the subject's other games are imported as scout games.
-import { getGame, listGames, listAllGames, listScoutBooks, getPlayers, getSettings } from './store.js';
+import { getGameCached, listGames, listAllGames, listScoutBooks, getPlayers, getSettings } from './store.js';
 import { memberByName } from './users.js';
 import { summarize } from './analyze.js';
 import { lookupFideId } from './players.js';
@@ -60,7 +60,7 @@ export async function headToHead(userId, subject, fideId = null) {
     const oppId = e.playerColor === 'white' ? e.blackFideId : e.whiteFideId;
     const match = norm(oppName) === norm(subject) || (fideId && (oppId === fideId || lookupFideId(players, oppName) === fideId));
     if (!match) continue;
-    const g = await getGame(e.id);
+    const g = await getGameCached(e);
     games.push({
       gameId: e.id, date: e.date, event: e.event, color: e.playerColor, result: e.result,
       score: resultScore(e.result, e.playerColor), eco: e.eco,
@@ -102,14 +102,14 @@ export async function gamesForSubject(subject) {
     if (e.purpose === 'scout') {
       if (e.subject !== subject) continue;
       scoutMatched = true;
-      const g = await getGame(e.id);
+      const g = await getGameCached(e);
       if (g?.analysis && g.playerColor) out.push(g);
       continue;
     }
     if (!e.playerColor) continue;
     const oppName = e.playerColor === 'white' ? e.black : e.white;
     if (oppName !== subject) continue;
-    const g = await getGame(e.id);
+    const g = await getGameCached(e);
     if (g?.analysis) out.push(flipToOpponent(g, settings));
   }
   // A member with no scout book is scouted from their OWN games, viewed from
@@ -124,7 +124,7 @@ export async function gamesForSubject(subject) {
       for (const e of await listGames(member.id)) {
         if (e.purpose !== 'own' || !e.playerColor || seen.has(e.id)) continue;
         if (e.status !== 'analysed' && e.status !== 'explained') continue;
-        const g = await getGame(e.id);
+        const g = await getGameCached(e);
         if (g?.analysis && g.playerColor) out.push(g);
       }
     }

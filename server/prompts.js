@@ -43,12 +43,11 @@ export const EXPLANATION_SCHEMA = {
   properties: {
     pattern: { type: 'string', description: 'Short name for the recurring pattern, 2 to 6 words, reusable across games (e.g. "Hanging piece after exchange", "Wrong rook", "Passive king in rook endgame")' },
     category: { type: 'string', enum: CATEGORIES },
-    time_pressure: { type: 'boolean', description: 'true only if the clock data makes time trouble a likely factor' },
     explanation: { type: 'string', description: 'One paragraph, at most 120 words, for a 2000-rated player: why the played move fails and why the engine line works, citing only the given lines' },
     key_question: { type: 'string', description: 'The single question the player should have asked before moving' },
     concept: { type: 'string', description: 'The general chess concept to study, one phrase' },
   },
-  required: ['pattern', 'category', 'time_pressure', 'explanation', 'key_question', 'concept'],
+  required: ['pattern', 'category', 'explanation', 'key_question', 'concept'],
 };
 
 export const SUMMARY_SCHEMA = {
@@ -68,12 +67,11 @@ export const SCOUT_EXPLANATION_SCHEMA = {
   properties: {
     pattern: { type: 'string', description: 'Short name for the opponent\'s recurring weakness, 2 to 6 words, reusable across their games (e.g. "Grabs pawns under attack", "Passive rook in endgames")' },
     category: { type: 'string', enum: CATEGORIES },
-    time_pressure: { type: 'boolean', description: 'true only if the clock data makes time trouble a likely factor for the opponent' },
     explanation: { type: 'string', description: 'One paragraph, at most 120 words, for the student preparing against this opponent: what the opponent\'s move gets wrong and, concretely, how the engine line punishes it, citing only the given lines' },
     key_question: { type: 'string', description: 'The cue the student should watch for at the board to recognise or induce this kind of error from the opponent' },
     concept: { type: 'string', description: 'The exploitation idea to study, one phrase' },
   },
-  required: ['pattern', 'category', 'time_pressure', 'explanation', 'key_question', 'concept'],
+  required: ['pattern', 'category', 'explanation', 'key_question', 'concept'],
 };
 
 /** Schema for a whole game's explanations in one call: one entry per moment,
@@ -181,14 +179,36 @@ Rules:
 
 const gameLine = game => `${field(game.headers.White)} vs ${field(game.headers.Black)}, ${field(game.headers.Event, 120) === '?' ? 'unknown event' : field(game.headers.Event, 120)} ${field(game.headers.Date, 20)}, result ${field(game.headers.Result, 12)}.`;
 
+// Time pressure is a fact of the clock, not the model's impression: under two
+// minutes left after the move, or a snap decision (ten seconds or less) at a
+// critical moment. Stored on every explanation as time_pressure, so the
+// report's clock statistics never depend on how the model read the numbers.
+export const TIME_PRESSURE_CLOCK = 120;
+export const TIME_PRESSURE_SPENT = 10;
+
+/** Seconds spent on a move, from the stored clocks, or null. */
+function spentOn(game, ply) {
+  const moves = game?.analysis?.moves;
+  return moves ? spentPerMove(moves, game.headers?.TimeControl)[ply - 1] ?? null : null;
+}
+
+/** Whether the move at `ply` was made in time pressure by the app's rule. */
+export function timePressureOf(game, ply) {
+  const m = game?.analysis?.moves?.[ply - 1];
+  if (!m || m.clock == null) return false;
+  if (m.clock < TIME_PRESSURE_CLOCK) return true;
+  const spent = spentOn(game, ply);
+  return spent != null && spent <= TIME_PRESSURE_SPENT;
+}
+
 function clockText(m, game) {
   if (m.clock == null) return '';
   const mins = Math.floor(m.clock / 60), secs = m.clock % 60;
   const base = `Clock after the move: ${mins}:${String(secs).padStart(2, '0')} remaining.`;
-  // Deterministic time-spent, so time_pressure is not guessed from one number.
-  const spent = game?.analysis?.moves ? spentPerMove(game.analysis.moves, game.headers?.TimeControl)[m.ply - 1] : null;
-  if (spent == null) return base;
-  return `${base} Time spent on this move: about ${spent} seconds.`;
+  const spent = spentOn(game, m.ply);
+  const spentText = spent == null ? '' : ` Time spent on this move: about ${spent} seconds.`;
+  const pressure = timePressureOf(game, m.ply) ? 'Time pressure: yes (by the clock rule: under two minutes left, or ten seconds or less spent).' : 'Time pressure: no.';
+  return `${base}${spentText} ${pressure}`;
 }
 
 /** The per-moment context for an own-game moment: position, lines, played move,

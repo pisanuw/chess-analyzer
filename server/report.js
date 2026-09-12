@@ -1,6 +1,7 @@
 // Aggregate weakness report across all analysed games.
-import { getGame, listGames, getDrills, getForeignDrillStores, DEFAULT_USER } from './store.js';
+import { listGames, listAllGames, loadGames, indexFingerprint, getDrills, getForeignDrillStores, getSettings, DEFAULT_USER } from './store.js';
 import { gamesForSubject } from './subjects.js';
+import { memo } from './memo.js';
 import { parseTimeControl, spentPerMove, resultScore, normalizeKey } from '../public/shared.js';
 import { CATEGORIES } from './prompts.js';
 import { curveTendencies } from './tendencies.js';
@@ -9,20 +10,54 @@ export { parseTimeControl, resultScore };
 
 const WEIGHT = { inaccuracy: 1, mistake: 2, blunder: 3 };
 
-/** Weakness report for the tracked player (default), or for a scouted subject
- * (scout imports plus the player's own games against them, flipped). */
-export async function buildReport({ purpose = 'own', subject = null, userId = DEFAULT_USER, color = null } = {}) {
-  let games;
-  if (purpose === 'scout') {
-    games = await gamesForSubject(subject);
-  } else {
-    const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
-    games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
-  }
-  // Preparation is colour-specific: only the subject's games in the colour the
-  // student will face matter, so the whole dossier can be cut to one colour.
-  if (color) games = games.filter(g => g.playerColor === color);
+/** The analysed own games of a member, from the parsed-game cache. */
+export async function analysedOwnGames(userId = DEFAULT_USER) {
+  const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
+  return (await loadGames(index)).filter(g => g.playerColor && g.analysis);
+}
 
+/** The memo key for anything derived from a member's own games (or a subject's
+ * scout games): a fingerprint of the game files that feed it, so the value is
+ * recomputed exactly when a game is imported, analysed, explained, or deleted. */
+export async function gamesKey({ purpose = 'own', subject = null, userId = DEFAULT_USER } = {}) {
+  if (purpose === 'scout') {
+    // Flipped own games depend on the moment threshold; the roster (a member
+    // scouted from their own games) is code, so it needs no key.
+    const settings = await getSettings();
+    return `scout|${subject}|${settings.momentThreshold ?? 12}|${indexFingerprint(await listAllGames())}`;
+  }
+  return `own|${userId}|${indexFingerprint(await listGames(userId))}`;
+}
+
+/** Weakness report for the tracked player (default), or for a scouted subject
+ * (scout imports plus the player's own games against them, flipped). The
+ * games half is memoised on the game files' fingerprint (a member's report is
+ * computed once per change, not once per page view); the drill half is read
+ * fresh, since the ladder moves with every review. */
+export async function buildReport({ purpose = 'own', subject = null, userId = DEFAULT_USER, color = null } = {}) {
+  const key = `${await gamesKey({ purpose, subject, userId })}|${color || 'all'}`;
+  // Cloned so a caller that decorates the report cannot corrupt the memo.
+  const agg = structuredClone(await memo('report', key, async () => {
+    let games = purpose === 'scout' ? await gamesForSubject(subject) : await analysedOwnGames(userId);
+    // Preparation is colour-specific: only the subject's games in the colour the
+    // student will face matter, so the whole dossier can be cut to one colour.
+    if (color) games = games.filter(g => g.playerColor === color);
+    return aggregateGames(games);
+  }));
+  const { refByKey, ...gameStats } = agg;
+
+  // Drill performance from review history: this machine's live store plus the
+  // read-only mirrors other machines sync through the data repo (the same
+  // player reviews on both, so the histories merge).
+  const dstore = purpose === 'own' ? await getDrills(userId) : { drills: [] };
+  const foreign = purpose === 'own' ? await getForeignDrillStores(userId) : [];
+  return { ...gameStats, ...drillSection(dstore, foreign, refByKey) };
+}
+
+/** Everything in the report that comes from the games alone: categories,
+ * phases, colours, patterns, concepts, the timeline and trend, clock use,
+ * endgame trouble spots, focus areas, and the eval-curve tendencies. */
+export function aggregateGames(games) {
   const byCategory = Object.fromEntries([...CATEGORIES, 'unexplained'].map(c => [c, { count: 0, weight: 0, moments: [] }]));
   const byPhase = Object.fromEntries(['opening', 'middlegame', 'endgame'].map(p => [p, { moves: 0, cpl: 0, acc: 0, moments: 0, weight: 0 }]));
   const byColor = Object.fromEntries(['white', 'black'].map(c => [c, { games: 0, acc: 0, moments: 0, score: 0, scored: 0 }]));
@@ -35,7 +70,7 @@ export async function buildReport({ purpose = 'own', subject = null, userId = DE
   const time = { moves: 0, momentSpentTotal: 0, momentSpentN: 0, otherSpentTotal: 0, otherSpentN: 0, comfortBlunders: 0, underTwoMin: 0, fastMoments: 0 };
   let timePressure = 0, totalMoments = 0, totalJudged = { inaccuracy: 0, mistake: 0, blunder: 0 };
 
-  for (const g of games.sort((a, b) => (a.headers.Date || '').localeCompare(b.headers.Date || '') || a.importedAt.localeCompare(b.importedAt))) {
+  for (const g of [...games].sort((a, b) => (a.headers.Date || '').localeCompare(b.headers.Date || '') || a.importedAt.localeCompare(b.importedAt))) {
     const color = g.playerColor;
     const p = g.analysis.summary[color];
     const score = resultScore(g.headers.Result, color);
@@ -142,11 +177,56 @@ export async function buildReport({ purpose = 'own', subject = null, userId = DE
     if (!categoryTrend.length) categoryTrend = null;
   }
 
-  // Drill performance from review history: this machine's live store plus the
-  // read-only mirrors other machines sync through the data repo (the same
-  // player reviews on both, so the histories merge).
-  const dstore = purpose === 'own' ? await getDrills(userId) : { drills: [] };
-  const foreign = purpose === 'own' ? await getForeignDrillStores(userId) : [];
+  const timeManagement = time.moves ? {
+    movesWithClock: time.moves,
+    momentAvgSpent: time.momentSpentN ? Math.round(time.momentSpentTotal / time.momentSpentN) : null,
+    otherAvgSpent: time.otherSpentN ? Math.round(time.otherSpentTotal / time.otherSpentN) : null,
+    comfortBlunders: time.comfortBlunders,
+    underTwoMinMoments: time.underTwoMin,
+    fastMoments: time.fastMoments,
+  } : null;
+
+  // Focus areas by weighted count, annotated with the per-category trend delta
+  // (positive = worsening) so the study prescription can prioritise weaknesses
+  // that are getting worse and ease off ones that are already improving.
+  const trendByCat = new Map((categoryTrend || []).map(t => [t.category, t.delta]));
+  const focus = Object.entries(byCategory)
+    .filter(([k, v]) => k !== 'unexplained' && v.count > 0)
+    .sort((a, b) => b[1].weight - a[1].weight)
+    .slice(0, 3)
+    .map(([k, v]) => ({ category: k, count: v.count, weight: v.weight, trend: trendByCat.has(k) ? trendByCat.get(k) : null }));
+
+  return {
+    games: games.length,
+    totalMoments,
+    totalJudged,
+    timePressure,
+    overallAccuracy: games.length ? +(games.reduce((s, g) => s + g.analysis.summary[g.playerColor].accuracy, 0) / games.length).toFixed(1) : null,
+    focus,
+    byCategory,
+    byPhase,
+    byColor,
+    patterns: [...patterns.values()].sort((a, b) => b.weight - a.weight),
+    concepts: [...concepts.values()].sort((a, b) => b.count - a.count).slice(0, 15),
+    timeline,
+    categoryTrend,
+    timeManagement,
+    // Conversion, defence, swings, and where the eval turns, straight from the
+    // stored win-probability curves (no labels involved).
+    tendencies: games.length ? curveTendencies(games) : null,
+    // Rank by how many distinct games a signature recurs in, not raw moment
+    // count: three blunders in one endgame is one trouble spot, not three.
+    endgames: [...endgames.values()]
+      .map(eg => ({ signature: eg.signature, count: eg.count, games: eg.games.size, weight: eg.weight, moments: eg.moments }))
+      .sort((a, b) => b.games - a.games || b.weight - a.weight)
+      .slice(0, 10),
+    refByKey,
+  };
+}
+
+/** The report's drill half: review history, quiet-position detection, and
+ * explanation feedback, from the member's live store and the mirrors. */
+function drillSection(dstore, foreign, refByKey) {
   const drillByPhase = {}, drillByCategory = {}, drillByKind = {}, patternSpeed = new Map();
   const activityDates = new Set(); // YYYY-MM-DD the player practised, for the home-screen streak
   let drillAttempts = 0, drillCorrect = 0;
@@ -221,55 +301,7 @@ export async function buildReport({ purpose = 'own', subject = null, userId = DE
       }
     }
   }
-
-  const timeManagement = time.moves ? {
-    movesWithClock: time.moves,
-    momentAvgSpent: time.momentSpentN ? Math.round(time.momentSpentTotal / time.momentSpentN) : null,
-    otherAvgSpent: time.otherSpentN ? Math.round(time.otherSpentTotal / time.otherSpentN) : null,
-    comfortBlunders: time.comfortBlunders,
-    underTwoMinMoments: time.underTwoMin,
-    fastMoments: time.fastMoments,
-  } : null;
-
-  // Focus areas by weighted count, annotated with the per-category trend delta
-  // (positive = worsening) so the study prescription can prioritise weaknesses
-  // that are getting worse and ease off ones that are already improving.
-  const trendByCat = new Map((categoryTrend || []).map(t => [t.category, t.delta]));
-  const focus = Object.entries(byCategory)
-    .filter(([k, v]) => k !== 'unexplained' && v.count > 0)
-    .sort((a, b) => b[1].weight - a[1].weight)
-    .slice(0, 3)
-    .map(([k, v]) => ({ category: k, count: v.count, weight: v.weight, trend: trendByCat.has(k) ? trendByCat.get(k) : null }));
-
-  return {
-    games: games.length,
-    totalMoments,
-    totalJudged,
-    timePressure,
-    overallAccuracy: games.length ? +(games.reduce((s, g) => s + g.analysis.summary[g.playerColor].accuracy, 0) / games.length).toFixed(1) : null,
-    focus,
-    byCategory,
-    byPhase,
-    byColor,
-    patterns: [...patterns.values()].sort((a, b) => b.weight - a.weight),
-    concepts: [...concepts.values()].sort((a, b) => b.count - a.count).slice(0, 15),
-    timeline,
-    categoryTrend,
-    drillStats,
-    decoys,
-    activity: [...activityDates].sort(),
-    feedback,
-    timeManagement,
-    // Conversion, defence, swings, and where the eval turns, straight from the
-    // stored win-probability curves (no labels involved).
-    tendencies: games.length ? curveTendencies(games) : null,
-    // Rank by how many distinct games a signature recurs in, not raw moment
-    // count: three blunders in one endgame is one trouble spot, not three.
-    endgames: [...endgames.values()]
-      .map(eg => ({ signature: eg.signature, count: eg.count, games: eg.games.size, weight: eg.weight, moments: eg.moments }))
-      .sort((a, b) => b.games - a.games || b.weight - a.weight)
-      .slice(0, 10),
-  };
+  return { drillStats, decoys, activity: [...activityDates].sort(), feedback };
 }
 
 const CATEGORY_TITLES = {

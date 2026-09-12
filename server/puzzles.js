@@ -5,9 +5,10 @@
 // engine, no LLM, no writes. That also means the read-only hosted mirror serves
 // puzzles too. Drills are the spaced-repetition twin of this; the two share the
 // acceptedLines band so "correct" means the same thing in both.
-import { listGames, getGame, DEFAULT_USER } from './store.js';
+import { listGames, loadGames, indexFingerprint, DEFAULT_USER } from './store.js';
 import { winProb } from '../public/shared.js';
 import { acceptedLines } from './drills.js';
+import { memo } from './memo.js';
 
 const MIN_PLY = 8;            // skip book opening moves: a puzzle is a real decision
 const WIN_FLOOR = 66;         // the best line must be clearly winning for the mover
@@ -84,19 +85,23 @@ function makePuzzle(game, m, source) {
 export async function buildPuzzles(source = 'tactics', limit = 30, rand = Math.random, userId = DEFAULT_USER) {
   const spec = SOURCES[source] || SOURCES.tactics;
   const resolved = SOURCES[source] ? source : 'tactics';
-  const out = [];
   // A member's puzzles come from the games they can see: their own games plus the
   // shared scout library (tactics can draw on scout games; moments/missed are own only).
-  for (const entry of await listGames(userId)) {
-    if (entry.status !== 'analysed' && entry.status !== 'explained') continue;
-    if (spec.ownOnly && (entry.purpose || 'own') === 'scout') continue;
-    const game = await getGame(entry.id);
-    if (!game?.analysis?.moves) continue;
-    const moments = new Set(game.analysis.summary?.moments || []);
-    for (const m of game.analysis.moves) {
-      if (spec.pick(m, moments)) out.push(makePuzzle(game, m, resolved));
+  const index = (await listGames(userId)).filter(e => (e.status === 'analysed' || e.status === 'explained') && !(spec.ownOnly && (e.purpose || 'own') === 'scout'));
+  // The candidate pool is memoised on the games' fingerprint; only the shuffle
+  // and the cut are per request.
+  const pool = await memo('puzzles', `${resolved}|${indexFingerprint(index)}`, async () => {
+    const found = [];
+    for (const game of await loadGames(index)) {
+      if (!game.analysis?.moves) continue;
+      const moments = new Set(game.analysis.summary?.moments || []);
+      for (const m of game.analysis.moves) {
+        if (spec.pick(m, moments)) found.push(makePuzzle(game, m, resolved));
+      }
     }
-  }
+    return found;
+  });
+  const out = [...pool];
   for (let i = out.length - 1; i > 0; i--) { // Fisher-Yates so the deck is fresh each request
     const j = Math.floor(rand() * (i + 1));
     [out[i], out[j]] = [out[j], out[i]];

@@ -1,5 +1,5 @@
 // Drills: positions from the player's own mistakes, scheduled with a small spaced-repetition ladder.
-import { getDrills, saveDrills, getSettings, listGames, listAllGames, getGame, DrillConflict, DEFAULT_USER } from './store.js';
+import { getDrills, saveDrills, getSettings, listGames, listAllGames, getGameCached, DrillConflict, DEFAULT_USER } from './store.js';
 import { winProb, WP_ACCEPT, normalizeKey } from '../public/shared.js';
 
 const LADDER_DAYS = [1, 3, 7, 14, 30, 60];
@@ -295,7 +295,7 @@ export function syncAllDrills(userId = DEFAULT_USER) {
     const store = await getDrills(userId); // read once, sync every game in memory, write once
     for (const entry of await listGames(userId)) {
       if (entry.status !== 'analysed' && entry.status !== 'explained') { pendingGames.add(entry.id); continue; }
-      const game = await getGame(entry.id);
+      const game = await getGameCached(entry);
       if (!game?.analysis) { pendingGames.add(entry.id); continue; }
       await syncGameUnlocked(game, settings, userId, store);
       for (const ply of game.analysis.summary.moments) {
@@ -511,7 +511,7 @@ export async function buildDecoys(count, rand = Math.random, userId = DEFAULT_US
   const out = [];
   for (const entry of order) {
     if (out.length >= count) break;
-    const game = await getGame(entry.id);
+    const game = await getGameCached(entry);
     if (!game?.analysis) continue;
     const moments = new Set(game.analysis.summary.moments);
     const candidates = game.analysis.moves.filter(m => decoyCandidate(m, moments));
@@ -582,7 +582,7 @@ export async function visitorDrills(limit = 20, rand = Math.random, { subject = 
   const out = [];
   for (const entry of index) {
     if (out.length >= limit) break;
-    const game = await getGame(entry.id);
+    const game = await getGameCached(entry);
     if (!game?.analysis) continue;
     for (const ply of game.analysis.summary.moments) {
       const d = makePunishDrill(game, ply, 'core', null);

@@ -18,7 +18,7 @@
 import { Chess } from 'chess.js';
 import { parseGame } from './pgn.js';
 import { ageDays, pgnToDate, recencyWeight } from './scoutbook.js';
-import { getGame, listGames, getScoutBook, getClashStore, saveClashStore, getSettings, DEFAULT_USER } from './store.js';
+import { listGames, loadGames, getScoutBook, getClashStore, saveClashStore, getSettings, DEFAULT_USER } from './store.js';
 import { scoreToCp, stmSign } from './analyze.js';
 import { winProb, WP_ACCEPT, resultScore, posKeyOf, fmtLine } from '../public/shared.js';
 import { getCachedEval, putCachedEval, evalCacheKey, flushCache } from './evalcache.js';
@@ -54,8 +54,7 @@ const weightOf = (dateStr, now, maxDays, halfLifeDays) => recencyWeight(ageDays(
  * clash crosses, so every viewer sees their own lines against the opponent. */
 export async function loadStudentGames(userId = DEFAULT_USER) {
   const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
-  const games = await Promise.all(index.map(g => getGame(g.id)));
-  return games.filter(g => g && g.playerColor && g.analysis?.moves);
+  return (await loadGames(index)).filter(g => g.playerColor && g.analysis?.moves);
 }
 
 /** Index of the player's own opening moves, keyed by colour then by the position
@@ -480,11 +479,11 @@ export async function extendClashLeaves(forest, oppIndex, settings, pool) {
 
   await poolAnalyse(pool, chosen,
     async (engine, fen) => {
-      for (const name of pool.names) { const hit = await getCachedEval(evalCacheKey(name, depth, multipv, fen)); if (hit) return hit; }
+      for (const name of pool.names) { const hit = await getCachedEval(evalCacheKey(name, multipv, fen), depth); if (hit) return hit; }
       let r = await engine.analyse(fen, { depth, multipv });
       if (!r.lines.length) r = await engine.analyse(fen, { depth, multipv }); // one retry: a remote pipe can drop the info lines
       if (!r.lines.length) return { bestmove: null, lines: [] };            // give up rather than fabricate an eval
-      await putCachedEval(evalCacheKey(engine.name, depth, multipv, fen), { bestmove: r.bestmove, lines: r.lines });
+      await putCachedEval(evalCacheKey(engine.name, multipv, fen), { depth, bestmove: r.bestmove, lines: r.lines });
       return r;
     },
     async (fen, result) => { for (const node of byFen.get(fen)) annotateLeaf(node, fen, result, oppIndex); },

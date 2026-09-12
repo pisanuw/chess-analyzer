@@ -1,6 +1,8 @@
 // Opening repertoire: group analysed games by colour and first plies, find where preparation ends.
-import { getGame, listGames, DEFAULT_USER } from './store.js';
+import { DEFAULT_USER } from './store.js';
 import { gamesForSubject } from './subjects.js';
+import { analysedOwnGames, gamesKey } from './report.js';
+import { memo } from './memo.js';
 import { resultScore, posKeyOf } from '../public/shared.js';
 
 const LINE_PLIES = 8;
@@ -8,15 +10,17 @@ const LINE_PLIES = 8;
 /** Most frequent key in a count map (ties: first inserted). */
 const topKey = map => [...map.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
 
+/** Memoised on the game files' fingerprint, like the report; cloned on return. */
 export async function buildRepertoire({ purpose = 'own', subject = null, userId = DEFAULT_USER, color = null } = {}) {
-  let games;
-  if (purpose === 'scout') {
-    games = await gamesForSubject(subject);
-  } else {
-    const index = (await listGames(userId)).filter(g => (g.status === 'analysed' || g.status === 'explained') && g.purpose === 'own');
-    games = (await Promise.all(index.map(g => getGame(g.id)))).filter(g => g && g.playerColor && g.analysis);
-  }
-  if (color) games = games.filter(g => g.playerColor === color);
+  const key = `${await gamesKey({ purpose, subject, userId })}|${color || 'all'}`;
+  return structuredClone(await memo('repertoire', key, async () => {
+    let games = purpose === 'scout' ? await gamesForSubject(subject) : await analysedOwnGames(userId);
+    if (color) games = games.filter(g => g.playerColor === color);
+    return repertoireOf(games);
+  }));
+}
+
+export function repertoireOf(games) {
   const lines = new Map();
   for (const g of games) {
     const opening = g.analysis.moves.slice(0, LINE_PLIES);

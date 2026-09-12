@@ -5,9 +5,10 @@ import { getGame, saveGame, getSettings, listAllGames, listScoutBooks, DEFAULT_U
 import { ensureClashIndex } from './clash.js';
 import { complete, LlmError } from './llm.js';
 import { flushCache } from './evalcache.js';
-import { systemPrompt, momentPrompt, momentsBatchPrompt, gameSummaryPrompt, gameSummarySystemPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutMomentsBatchPrompt, scoutGameSummaryPrompt, batchExplanationSchema, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA, CATEGORIES } from './prompts.js';
+import { systemPrompt, momentPrompt, momentsBatchPrompt, gameSummaryPrompt, gameSummarySystemPrompt, scoutSystemPrompt, scoutMomentPrompt, scoutMomentsBatchPrompt, scoutGameSummaryPrompt, batchExplanationSchema, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, SUMMARY_SCHEMA, CATEGORIES, timePressureOf } from './prompts.js';
 import { syncDrillsForGame } from './drills.js';
 import { getUser } from './users.js';
+import { normalizeKey } from '../public/shared.js';
 
 /** The rating the coach prompts assume for a game's tracked player: the
  * player's own Elo header in that game, then the owner's roster rating, then the
@@ -159,16 +160,23 @@ async function runAnalyse(job) {
 /** Validate one explanation object from a batch reply (the CLI enforces the
  * schema on single calls, but batch entries are matched to plies by hand).
  * Returns the clean entry or null. */
-export function sanitizeExplanation(e) {
+export function sanitizeExplanation(e, known = []) {
   if (!e) return null;
   for (const k of ['pattern', 'category', 'explanation', 'key_question']) if (typeof e[k] !== 'string' || !e[k]) return null;
   if (!CATEGORIES.includes(e.category)) return null;
+  // time_pressure is not taken from the reply: the job stamps it from the clock.
   return {
-    pattern: e.pattern, category: e.category, time_pressure: !!e.time_pressure,
+    pattern: canonicalPattern(e.pattern, known), category: e.category,
     explanation: e.explanation, key_question: e.key_question,
     concept: typeof e.concept === 'string' ? e.concept : '',
   };
 }
+
+/** Moments per batch call. A whole game in one prompt shares the context, but
+ * a game with 15 moments would be one 20-minute call whose failure loses all
+ * of it; chunks of this size keep each call bounded and the loss small. */
+export const BATCH_MAX = 8;
+const chunk = (xs, n) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, (i + 1) * n));
 
 /** One retry for transient CLI failures (timeout, malformed output); anything
  * else propagates. A minute-long call failing at moment 5 of 6 should not
@@ -202,47 +210,51 @@ async function runExplain(job) {
   const known = await knownPatterns(game);
   let remaining = [...todo];
 
-  // Whole game in one call first: the moments share their context and each
-  // per-moment CLI call costs about a minute of wall time. Anything missing
-  // or invalid in the reply falls through to the per-moment loop, which is
-  // also the retry path when the batch call itself fails.
+  // The moments in batches first: they share their context and each per-moment
+  // CLI call costs about a minute of wall time. Anything missing or invalid in
+  // a reply falls through to the per-moment loop, which is also the retry path
+  // when a batch call itself fails. Batches are capped at BATCH_MAX moments so
+  // one call stays a few minutes long and a failure loses at most one chunk.
   if (remaining.length >= 2) {
-    if (job.cancelled) throw new Error('cancelled');
-    job.itemStartedAt = new Date().toISOString();
-    try {
-      const args = [game, remaining, [...known.patterns], [...known.concepts]];
-      const asked = remaining.length;
-      const { output, costUsd, model } = await completeRetry(settings, {
-        system,
-        prompt: scout ? scoutMomentsBatchPrompt(...args) : momentsBatchPrompt(...args),
-        schema: batchExplanationSchema(scout),
-        timeoutMs: 240000 + 60000 * remaining.length,
-      });
-      const byPly = new Map((output?.explanations || []).map(e => [Number(e?.ply), e]));
-      const saved = [];
-      for (const ply of remaining) {
-        const e = sanitizeExplanation(byPly.get(ply));
-        if (!e) continue;
-        const entry = { ...e, model, costUsd: null, createdAt: new Date().toISOString() };
-        game.explanations[ply] = entry; // keep the held copy current for later prompts
-        if (entry.pattern) known.patterns.add(entry.pattern);
-        if (entry.concept) known.concepts.add(entry.concept);
-        saved.push([ply, entry]);
+    for (const plies of chunk(remaining, BATCH_MAX)) {
+      if (job.cancelled) throw new Error('cancelled');
+      job.itemStartedAt = new Date().toISOString();
+      try {
+        const args = [game, plies, [...known.patterns], [...known.concepts]];
+        const prompt = scout ? scoutMomentsBatchPrompt(...args) : momentsBatchPrompt(...args);
+        // Prompt size grows with the moments and the pattern library; log it so
+        // a runaway game shows up in the server log before it shows up as cost.
+        console.log(`[job ${job.id}] batch of ${plies.length} moment${plies.length === 1 ? '' : 's'}: prompt ${prompt.length} chars (about ${Math.round(prompt.length / 4)} tokens)`);
+        const { output, costUsd, model } = await completeRetry(settings, {
+          system, prompt, schema: batchExplanationSchema(scout),
+          timeoutMs: 240000 + 60000 * plies.length,
+        });
+        const byPly = new Map((output?.explanations || []).map(e => [Number(e?.ply), e]));
+        const saved = [];
+        for (const ply of plies) {
+          const e = sanitizeExplanation(byPly.get(ply), known.patterns);
+          if (!e) continue;
+          const entry = { ...e, time_pressure: timePressureOf(game, ply), model, costUsd: null, createdAt: new Date().toISOString() };
+          game.explanations[ply] = entry; // keep the held copy current for later prompts
+          if (entry.pattern) known.patterns.add(entry.pattern);
+          if (entry.concept) known.concepts.add(entry.concept);
+          saved.push([ply, entry]);
+        }
+        // Only bill a batch that produced usable explanations; a zero-match reply
+        // (all plies mislabelled) is wasted spend, and it silently degraded to a
+        // full per-moment re-explain, so make that visible in the log.
+        if (saved.length) job.costUsd += costUsd || 0;
+        if (saved.length < plies.length) console.warn(`[job ${job.id}] batch matched ${saved.length}/${plies.length} moments${saved.length ? '' : ' (0: not billed)'}; the rest fall back per moment`);
+        if (saved.length) {
+          await updateGame(job.gameId, g => { g.explanations = g.explanations || {}; for (const [ply, entry] of saved) g.explanations[ply] = entry; });
+          job.progress += saved.length;
+        }
+      } catch (err) {
+        if (job.cancelled || !(err instanceof LlmError)) throw err;
+        console.error(`[job ${job.id}] batch explanation failed, falling back per moment: ${err.message}`);
       }
-      // Only bill a batch that produced usable explanations; a zero-match reply
-      // (all plies mislabelled) is wasted spend, and it silently degraded to a
-      // full per-moment re-explain, so make that visible in the log.
-      if (saved.length) job.costUsd += costUsd || 0;
-      if (saved.length < asked) console.warn(`[job ${job.id}] batch matched ${saved.length}/${asked} moments${saved.length ? '' : ' (0: not billed)'}; the rest fall back per moment`);
-      if (saved.length) {
-        await updateGame(job.gameId, g => { g.explanations = g.explanations || {}; for (const [ply, entry] of saved) g.explanations[ply] = entry; });
-        job.progress += saved.length;
-        remaining = remaining.filter(ply => !game.explanations[ply]);
-      }
-    } catch (err) {
-      if (job.cancelled || !(err instanceof LlmError)) throw err;
-      console.error(`[job ${job.id}] batch explanation failed, falling back per moment: ${err.message}`);
     }
+    remaining = remaining.filter(ply => !game.explanations[ply]);
   }
 
   for (const ply of remaining) {
@@ -250,7 +262,7 @@ async function runExplain(job) {
     job.itemStartedAt = new Date().toISOString(); // lets the UI show elapsed time on the current explanation
     const args = [game, ply, [...known.patterns], [...known.concepts]];
     const { output, costUsd, model } = await completeRetry(settings, { system, prompt: scout ? scoutMomentPrompt(...args) : momentPrompt(...args), schema });
-    const entry = { ...output, model, costUsd, createdAt: new Date().toISOString() };
+    const entry = { ...output, pattern: canonicalPattern(output.pattern, known.patterns), time_pressure: timePressureOf(game, ply), model, costUsd, createdAt: new Date().toISOString() };
     game.explanations[ply] = entry; // keep the held copy current for later prompts
     await updateGame(job.gameId, g => { g.explanations = g.explanations || {}; g.explanations[ply] = entry; });
     if (output.pattern) known.patterns.add(output.pattern);
@@ -303,15 +315,31 @@ export async function prebuildClashes() {
  * Exported for the re-explain route. */
 export async function knownPatterns(currentGame) {
   const patterns = new Map(), concepts = new Map();
-  const add = (map, key) => { if (key) map.set(key, (map.get(key) || 0) + 1); };
+  const add = (map, key, n = 1) => { if (key) map.set(key, (map.get(key) || 0) + n); };
+  // Name counts come off the game index (gameIndexEntry keeps them), so this
+  // costs no full reads; the current game is taken from memory since the job
+  // may hold explanations not yet on disk.
   for (const entry of await listAllGames()) {
     if (!entry.explained) continue;
     // Pattern libraries do not mix: the player's own patterns stay separate from
     // each scouted subject's patterns.
     if (entry.purpose !== (currentGame.purpose || 'own') || entry.subject !== (currentGame.subject || null)) continue;
-    const g = entry.id === currentGame.id ? currentGame : await getGame(entry.id);
-    for (const e of Object.values(g?.explanations || {})) { add(patterns, e?.pattern); add(concepts, e?.concept); }
+    if (entry.id === currentGame.id) continue;
+    for (const [k, n] of Object.entries(entry.patterns || {})) add(patterns, k, n);
+    for (const [k, n] of Object.entries(entry.concepts || {})) add(concepts, k, n);
   }
+  for (const e of Object.values(currentGame.explanations || {})) { add(patterns, e?.pattern); add(concepts, e?.concept); }
   const top = (map, n) => new Set([...map.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k).slice(0, n));
   return { patterns: top(patterns, 40), concepts: top(concepts, 25) };
+}
+
+/** The library's spelling of a pattern name when one matches up to case,
+ * spacing, and punctuation, so "hanging piece after exchanges" is stored as
+ * the existing "Hanging piece after exchange" and aggregates from the moment it
+ * is written, not only when the report normalises. Unknown names pass through. */
+export function canonicalPattern(name, known = []) {
+  if (typeof name !== 'string' || !name) return name;
+  const key = normalizeKey(name);
+  for (const k of known) if (normalizeKey(k) === key) return k;
+  return name;
 }

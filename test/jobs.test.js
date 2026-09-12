@@ -16,9 +16,10 @@ test('playerRatingFor: the game Elo header, then the roster rating, then the set
 test('sanitizeExplanation accepts only complete entries with known categories', () => {
   const good = { ply: 3, pattern: 'Wrong rook', category: 'calculation', time_pressure: 'yes', explanation: 'because', key_question: 'what?', concept: 'rook endings' };
   assert.deepEqual(sanitizeExplanation(good), {
-    pattern: 'Wrong rook', category: 'calculation', time_pressure: true,
+    pattern: 'Wrong rook', category: 'calculation',
     explanation: 'because', key_question: 'what?', concept: 'rook endings',
-  });
+  }, 'time_pressure is not taken from the model: the job stamps it from the clock');
+  assert.equal(sanitizeExplanation({ ...good, pattern: 'wrong  ROOK.' }, ['Wrong rook']).pattern, 'Wrong rook', 'a known name is folded onto the library spelling');
   assert.equal(sanitizeExplanation(null), null);
   assert.equal(sanitizeExplanation({ ...good, category: 'made-up' }), null, 'unknown category rejected');
   assert.equal(sanitizeExplanation({ ...good, explanation: '' }), null, 'empty field rejected');

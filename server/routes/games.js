@@ -6,13 +6,13 @@ import { parsePgnGames, splitPgn, detectPlayerColor, fideIdFromHeaders } from '.
 import { subjectFideId, predictionFor } from '../subjects.js';
 import { getSettings, saveSettings, listGames, listAllGames, getGame, saveGame, deleteGame, getDrills, DEFAULT_SETTINGS, DEFAULT_USER, DATA_DIR } from '../store.js';
 import { assocsFromHeaders, recordAssociations } from '../players.js';
-import { enqueue, listJobs, cancelJobs, knownPatterns } from '../jobs.js';
+import { enqueue, listJobs, cancelJobs, knownPatterns, canonicalPattern } from '../jobs.js';
 import { findStockfish, getSparringEngine } from '../engine.js';
 import { probeHosts, remoteHostList } from '../enginepool.js';
 import { checkClaudeCli, complete } from '../llm.js';
 import { scoreToCp, winProb, summarize } from '../analyze.js';
 import { removeDrillsForGame, syncDrillsForGame, syncAllDrills, recordGuess, recordFeedback, clearFeedback } from '../drills.js';
-import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, reExplainSuffix, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, CATEGORIES } from '../prompts.js';
+import { momentPrompt, systemPrompt, scoutMomentPrompt, scoutSystemPrompt, reExplainSuffix, timePressureOf, EXPLANATION_SCHEMA, SCOUT_EXPLANATION_SCHEMA, CATEGORIES } from '../prompts.js';
 import { currentUser } from '../auth.js';
 import { getUser, listMembers, isVisitor, publicUser } from '../users.js';
 import { READONLY, wrap, effectiveUser, requireAdmin, studentRating } from '../http.js';
@@ -297,7 +297,10 @@ export function registerGameRoutes(app) {
     // the body limit alone would allow a multi-megabyte paste.
     const clip = (s, n) => String(s).slice(0, n);
     game.explanations = game.explanations || {};
-    game.explanations[ply] = { pattern: clip(e.pattern, 120), category: e.category, time_pressure: !!e.time_pressure, explanation: clip(e.explanation, 2000), key_question: clip(e.key_question, 500), concept: clip(e.concept || '', 200), model: 'manual', createdAt: new Date().toISOString() };
+    // The pattern name is folded onto the library's spelling and time pressure
+    // comes from the clock, exactly as the explain job does it.
+    const known = await knownPatterns(game);
+    game.explanations[ply] = { pattern: canonicalPattern(clip(e.pattern, 120), known.patterns), category: e.category, time_pressure: timePressureOf(game, ply), explanation: clip(e.explanation, 2000), key_question: clip(e.key_question, 500), concept: clip(e.concept || '', 200), model: 'manual', createdAt: new Date().toISOString() };
     if (game.analysis.summary.moments.every(p => game.explanations[p])) game.status = 'explained';
     await saveGame(game);
     res.json({ game });
@@ -380,7 +383,7 @@ export function registerGameRoutes(app) {
     const fresh = await getGame(game.id);
     if (!fresh) return res.status(404).json({ error: 'game deleted' });
     fresh.explanations = fresh.explanations || {};
-    fresh.explanations[ply] = { ...output, model, costUsd, createdAt: new Date().toISOString(), redone: true };
+    fresh.explanations[ply] = { ...output, pattern: canonicalPattern(output.pattern, known.patterns), time_pressure: timePressureOf(fresh, ply), model, costUsd, createdAt: new Date().toISOString(), redone: true };
     await saveGame(fresh);
     await clearFeedback(game.id, ply, uid);
     await syncDrillsForGame(fresh, settings, uid);

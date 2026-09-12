@@ -115,7 +115,7 @@ test('prompt endpoint serves the scout framing for scout games', async () => {
   const r = await (await fetch(base + '/api/games/bbbbbbbbbb01/moments/1/prompt')).json();
   assert.ok(r.prompt.includes('Karpov, A'));
   assert.ok(r.system.includes('preparing'), 'system prompt prepares the student, not the mover');
-  assert.deepEqual(Object.keys(r.schema.properties), ['pattern', 'category', 'time_pressure', 'explanation', 'key_question', 'concept']);
+  assert.deepEqual(Object.keys(r.schema.properties), ['pattern', 'category', 'explanation', 'key_question', 'concept']);
 });
 
 test('prep sheet endpoint: 404 unknown subject, clean error in manual mode', async () => {

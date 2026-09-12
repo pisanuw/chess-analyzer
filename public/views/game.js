@@ -554,7 +554,7 @@ export async function gameView(root, id, startPly) {
         <p class="muted">Manual LLM mode. Copy the prompt into Claude (or any assistant), then paste the JSON answer below.</p>
         <div class="row"><button class="small" data-g="copyprompt">Copy prompt</button> <button class="small" data-g="showprompt">Show prompt</button></div>
         <pre class="prompt" id="prompt-${ply}" hidden></pre>
-        <textarea id="paste-${ply}" placeholder='{"pattern": "...", "category": "tactics-allowed", "time_pressure": false, "explanation": "...", "key_question": "...", "concept": "..."}' style="margin-top:8px"></textarea>
+        <textarea id="paste-${ply}" placeholder='{"pattern": "...", "category": "tactics-allowed", "explanation": "...", "key_question": "...", "concept": "..."}' style="margin-top:8px"></textarea>
         <button class="small primary" data-g="saveexp" style="margin-top:6px">Save explanation</button>
       </div>`;
     }
@@ -604,7 +604,7 @@ export async function gameView(root, id, startPly) {
       if (act === 'played') { showPly(guessPly + 1); }
       if (act === 'copyprompt' || act === 'showprompt') {
         const { system, prompt } = await api.prompt(id, g.ply);
-        const text = `SYSTEM:\n${system}\n\nUSER:\n${prompt}\n\nAnswer with JSON only, fields: pattern, category (one of tactics-allowed, tactics-missed, calculation, positional, opening, endgame-technique, conversion, defence), time_pressure (boolean), explanation, key_question, concept.`;
+        const text = `SYSTEM:\n${system}\n\nUSER:\n${prompt}\n\nAnswer with JSON only, fields: pattern, category (one of tactics-allowed, tactics-missed, calculation, positional, opening, endgame-technique, conversion, defence), explanation, key_question, concept.`;
         if (act === 'copyprompt') { await navigator.clipboard.writeText(text); toast('Prompt copied'); }
         else { const pre = gp.querySelector(`#prompt-${g.ply}`); pre.textContent = text; pre.hidden = false; }
       }
