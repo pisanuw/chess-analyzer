@@ -112,3 +112,8 @@ export function habitTiles(f) {
   </div>
   <p class="muted" style="margin:6px 0 0"><small>From the game records of ${f.games} games in the recency window, no engine: every rate carries its game count.</small></p>`;
 }
+
+/** A one-line key legend for the foot of a panel: [['Space', 'show answer'], ...]. */
+export function keymap(items) {
+  return `<p class="keymap"><small>Keys: ${items.map(([k, what]) => `<span class="kbd">${esc(k)}</span> ${esc(what)}`).join(' · ')}</small></p>`;
+}

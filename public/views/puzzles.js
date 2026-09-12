@@ -3,6 +3,7 @@
 // Drills): nothing is scheduled and nothing is written to the server, so this
 // view works unchanged on the read-only hosted mirror.
 import { api, esc, toast, formatEval } from '../api.js';
+import { keymap } from '../widgets.js';
 import { Board, applyMove, lineShapes } from '../board.js';
 
 const SOURCES = [
@@ -107,7 +108,7 @@ export async function puzzlesView(root, query) {
       <div id="ppanel"></div>
     </div>`;
     board?.destroy();
-    board = new Board(el.querySelector('#pboard'), { orientation: p.orientation, onMove });
+    board = new Board(el.querySelector('#pboard'), { orientation: p.orientation, onMove, input: true });
     board.set(p.fen, { movableFor: p.sideToMove });
     renderPanel();
   }
@@ -121,7 +122,8 @@ export async function puzzlesView(root, query) {
         <b>${side} to move. Find the best move.</b>
         <p class="muted">Puzzle ${idx + 1} of ${puzzles.length}${total > puzzles.length ? ` · ${total} in the pool` : ''}.</p>
         ${state.tryAgain ? `<div class="result bad">${esc(state.tryAgain)}</div>` : ''}
-        <button class="small" id="giveup">Show answer</button></div>`;
+        <button class="small" id="giveup">Show answer <span class="kbd">Space</span></button>
+        ${keymap([['Space', 'show answer'], ['f', 'flip board'], ['Enter', 'play the typed move']])}</div>`;
       pane.querySelector('#giveup').onclick = giveup;
       return;
     }
@@ -134,6 +136,7 @@ export async function puzzlesView(root, query) {
       <p class="muted" style="margin:6px 0">${playedNote}<small class="muted">${answeredIn}</small></p>
       <ul class="lines">${p.lines.map((l, i) => `<li class="${l.uci === p.playedUci ? 'played' : ''}"><span class="ev">${formatEval(l.cp)}</span><span>${esc(l.san.join(' '))}</span>${i === 0 ? '<span class="chip">best</span>' : ''}${l.uci === p.playedUci ? '<span class="chip">played</span>' : ''}</li>`).join('')}</ul>
       <div class="row" style="margin-top: 12px"><button class="primary" id="next">Next <span class="kbd">N</span></button></div>
+      ${keymap([['N', 'next'], ['Space', 'next'], ['f', 'flip board']])}
     </div>`;
     pane.querySelector('#next').onclick = next;
   }
@@ -161,7 +164,10 @@ export async function puzzlesView(root, query) {
   }
 
   const onKey = e => {
-    if (!state || state.status !== 'revealed' || e.target.matches('input, textarea')) return;
+    if (!state || e.target.matches('input, textarea')) return;
+    if (e.key === 'f' || e.key === 'F') { board?.flip(); return; }
+    if (state.status === 'solving' && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); el.querySelector('#giveup')?.click(); return; }
+    if (state.status !== 'revealed') return;
     if (e.key === 'n' || e.key === 'N' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); next(); }
   };
   document.addEventListener('keydown', onKey);

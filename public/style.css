@@ -14,6 +14,7 @@
   --series-2: #eb6834;
   --good: #0ca30c;
   --warning: #fab219;
+  --warning-text: #7a4f00;
   --serious: #ec835a;
   --critical: #d03b3b;
   --seq-250: #86b6ef;
@@ -36,6 +37,7 @@
     --border: rgba(255, 255, 255, 0.10);
     --accent: #3987e5;
     --accent-soft: #184f95;
+    --warning-text: #f3c35a;
     --series-1: #3987e5;
     --series-2: #d95926;
     --seq-250: #6da7ec;
@@ -51,7 +53,7 @@
   color-scheme: dark;
   --bg: #0d0d0d; --surface: #1a1a19; --surface-2: #262624; --text: #ffffff; --text-2: #c3c2b7;
   --muted: #898781; --grid: #2c2c2a; --border: rgba(255, 255, 255, 0.10); --accent: #3987e5;
-  --accent-soft: #184f95; --series-1: #3987e5; --series-2: #d95926; --seq-250: #6da7ec;
+  --accent-soft: #184f95; --warning-text: #f3c35a; --series-1: #3987e5; --series-2: #d95926; --seq-250: #6da7ec;
   --seq-400: #3987e5; --seq-550: #86b6ef; --prep-bg: #232320; --prep-text: #ececdf;
 }
 
@@ -131,7 +133,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 button.small { font-size: 12px; padding: 3px 8px; }
 button.link { background: none; border: none; color: var(--accent); padding: 0; }
 button:disabled { opacity: .5; cursor: default; }
-input[type=text], input[type=number], select, textarea {
+input[type=text], input[type=number], input[type=search], select, textarea {
   font: inherit; font-size: 14px; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text); width: 100%;
 }
@@ -160,12 +162,12 @@ tr.clickable:hover td { background: var(--surface-2); }
 .chip.black { background: #222; color: #fff; border-color: #222; }
 .chip.blunder { color: var(--critical); border-color: var(--critical); }
 .chip.mistake { color: var(--serious); border-color: var(--serious); }
-.chip.inaccuracy { color: #a06a00; border-color: var(--warning); }
+.chip.inaccuracy { color: var(--warning-text); border-color: var(--warning); }
 .chip.cat { background: var(--accent-soft); border-color: transparent; color: var(--text); }
 .chip.status-imported { color: var(--muted); }
 .chip.status-analysing { color: var(--accent); border-color: var(--accent); }
 .chip.status-explained { color: var(--good); border-color: var(--good); }
-.chip.warn { color: #a06a00; border-color: var(--warning); }
+.chip.warn { color: var(--warning-text); border-color: var(--warning); }
 /* Evidence ids on a prep sheet: small, quiet, and clickable when they link to a game. */
 .chip.ev { font-size: 11px; padding: 0 6px; margin-left: 2px; font-family: ui-monospace, Menlo, monospace; color: var(--accent); border-color: var(--accent-soft); background: var(--surface); text-decoration: none; }
 a.chip.ev:hover { background: var(--accent-soft); }
@@ -253,7 +255,7 @@ a.chip.ev:hover { background: var(--accent-soft); }
 .moves .mv .ev { color: var(--muted); font-size: 12px; }
 .moves .mv.blunder { color: var(--critical); font-weight: 600; }
 .moves .mv.mistake { color: var(--serious); font-weight: 600; }
-.moves .mv.inaccuracy { color: #a06a00; }
+.moves .mv.inaccuracy { color: var(--warning-text); }
 
 .moment { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; cursor: pointer; background: var(--surface); }
 .moment:hover { border-color: var(--muted); }
@@ -376,3 +378,34 @@ pre.prompt { white-space: pre-wrap; font-size: 12px; background: var(--surface-2
 .prep-sheet .prep-table td { padding: 8px 12px 8px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
 .prep-sheet .prep-table thead th { font-weight: 700; }
 .prep-sheet .prep-table tbody th { font-weight: 700; white-space: nowrap; width: 1%; }
+
+/* Keyboard users need to see where they are: an accent ring on whatever has
+   focus from the keyboard, none from a mouse click. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:focus:not(:focus-visible) { outline: none; }
+
+/* The typed-move box under a board (Board with input: true). */
+.san-input { margin-top: 6px; }
+.san-input input { width: 100%; max-width: 280px; font-family: ui-monospace, Menlo, monospace; }
+.san-input input.bad { border-color: var(--critical); animation: shake .3s; }
+@keyframes shake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+.keymap { margin: 10px 0 0; color: var(--muted); }
+.keymap .kbd { margin-right: 2px; }
+
+/* Utility classes for the spacing and sizes that used to be inline styles. */
+.mt-2 { margin-top: 8px; } .mt-3 { margin-top: 12px; } .mt-4 { margin-top: 16px; }
+.gap-2 { gap: 8px; } .input-sm { padding: 6px 10px; font-size: 14px; }
+
+/* The Players list as a sortable table. */
+.players-table th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
+.players-table th[data-sort].sorted::after { content: " ▾"; color: var(--muted); }
+.players-table th[data-sort].sorted.asc::after { content: " ▴"; }
+.players-table tr.current td { background: var(--accent-soft); }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; background: var(--grid); }
+.dot.green { background: rgb(70, 196, 106); } .dot.yellow { background: rgb(224, 180, 0); }
+
+/* Clash tree: the moves of the line currently on the board. */
+.clash-move.onboard { background: var(--accent-soft); border-radius: 3px; box-shadow: 0 0 0 2px var(--accent-soft); }
+/* A link styled as a small button (row actions in tables). */
+a.button-like { display: inline-block; padding: 2px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); font-size: 12px; line-height: 18px; }
+a.button-like:hover { background: var(--accent-soft); }

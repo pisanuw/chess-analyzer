@@ -27,14 +27,19 @@ function pickPromotion(color) {
   });
 }
 
+// A move typed as SAN already names its promotion piece; the input hands it to
+// the next applyMove so the overlay is not asked a second time.
+let hintedPromotion = null;
+
 /** Apply a move (orig, dest) to a FEN; asks which piece on promotion. Resolves { san, uci, fen } or null. */
 export async function applyMove(fen, orig, dest) {
   const chess = new Chess(fen);
+  const hinted = hintedPromotion; hintedPromotion = null;
   try {
     let promotion = 'q';
     const piece = chess.get(orig);
     if (piece?.type === 'p' && (dest[1] === '8' || dest[1] === '1')) {
-      promotion = await pickPromotion(piece.color);
+      promotion = hinted || await pickPromotion(piece.color);
       if (!promotion) return null; // dismissed: the caller re-sets the board
     }
     const m = chess.move({ from: orig, to: dest, promotion });
@@ -81,9 +86,16 @@ export function walkLine(fen, uciMoves) {
 }
 
 export class Board {
-  constructor(el, { orientation = 'white', onMove = null } = {}) {
+  /** `input: true` mounts a text box under the board where a move can be typed
+   * in algebraic notation (Nf3, exd5, O-O, e8=Q) and entered with the keyboard:
+   * faster for a strong player and the accessible alternative to dragging. */
+  constructor(el, { orientation = 'white', onMove = null, input = false } = {}) {
     this.el = el;
     this.onMove = onMove;
+    this.fen = null;
+    this.movable = null;
+    el.setAttribute('role', 'img');
+    el.setAttribute('aria-label', input ? 'Chess board. Type a move in the box below to play by keyboard.' : 'Chess board');
     this.cg = Chessground(el, {
       orientation,
       coordinates: true,
@@ -93,6 +105,37 @@ export class Board {
       drawable: { enabled: true, visible: true },
       highlight: { lastMove: true, check: true },
     });
+    if (input) this.mountInput();
+  }
+
+  mountInput() {
+    const wrap = document.createElement('div');
+    wrap.className = 'san-input';
+    wrap.innerHTML = '<input type="text" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Type a move in algebraic notation and press Enter" placeholder="Type a move, e.g. Nf3, then Enter" disabled>';
+    // Sit under the board's aspect box when there is one, else right after the board.
+    const anchor = this.el.parentElement?.classList.contains('board-wrap') ? this.el.parentElement : this.el;
+    anchor.insertAdjacentElement('afterend', wrap);
+    this.inputWrap = wrap;
+    this.input = wrap.querySelector('input');
+    this.input.addEventListener('keydown', e => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const text = this.input.value.trim();
+      if (!text || !this.fen || !this.movable) return;
+      let m = null;
+      try { m = new Chess(this.fen).move(text); } catch { m = null; }
+      if (!m) {
+        this.input.setAttribute('aria-invalid', 'true');
+        this.input.classList.add('bad');
+        setTimeout(() => this.input?.classList.remove('bad'), 600);
+        return;
+      }
+      this.input.value = '';
+      this.input.removeAttribute('aria-invalid');
+      hintedPromotion = m.promotion || null;
+      this.cg.move(m.from, m.to);
+      if (this.onMove) this.onMove(m.from, m.to);
+    });
   }
 
   /** Show a position. `movableFor` = 'white' | 'black' | null to allow input for that side. */
@@ -101,6 +144,9 @@ export class Board {
     // A caller asking to move for the side NOT to move yields a dead, unmovable
     // board with no other signal: surface a likely FEN/side or off-by-one bug.
     if (movableFor && movableFor !== turn) console.warn(`Board.set: movableFor "${movableFor}" but ${turn} is to move; board will be read-only`);
+    this.fen = fen;
+    this.movable = movableFor === turn ? movableFor : null;
+    if (this.input) this.input.disabled = !this.movable;
     this.cg.set({
       fen,
       turnColor: turn,
@@ -112,7 +158,7 @@ export class Board {
   }
 
   /** Unbind chessground's document/window listeners; boards leak them otherwise. */
-  destroy() { this.cg.destroy(); }
+  destroy() { this.cg.destroy(); this.inputWrap?.remove(); this.input = null; }
 
   shapes(shapes) { this.cg.setAutoShapes(shapes); }
   orient(color) { this.cg.set({ orientation: color }); }

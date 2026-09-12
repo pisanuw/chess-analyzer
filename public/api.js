@@ -1,5 +1,11 @@
 // Thin fetch wrapper for the local JSON API.
 async function req(method, url, body) {
+  // An admin "viewing as" a member: every GET under /api carries ?user=<id> so
+  // the server scopes reports, drills, and prep to that member. Writes never
+  // carry it: looking as someone must not act as them.
+  if (method === 'GET' && session.viewAs && url.startsWith('/api/') && !url.startsWith('/api/auth') && !url.startsWith('/api/users')) {
+    url += (url.includes('?') ? '&' : '?') + 'user=' + encodeURIComponent(session.viewAs);
+  }
   let res;
   try {
     res = await fetch(url, {
@@ -38,8 +44,14 @@ export async function busy(btn, fn) {
   try { return await fn(); } finally { btn.disabled = was; }
 }
 
-/** Populated once at startup from /api/auth/me; views read session.user?.role. */
-export const session = { user: null, authActive: false, providers: {} };
+/** Populated once at startup from /api/auth/me; views read session.user?.role.
+ * `viewAs` is the member an admin is looking at (see req), kept for the tab. */
+export const session = { user: null, authActive: false, providers: {}, viewAs: null };
+try { session.viewAs = sessionStorage.getItem('viewAs') || null; } catch { /* private mode */ }
+export function setViewAs(id) {
+  session.viewAs = id || null;
+  try { if (id) sessionStorage.setItem('viewAs', id); else sessionStorage.removeItem('viewAs'); } catch { /* private mode */ }
+}
 
 let loginShown = false;
 

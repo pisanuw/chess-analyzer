@@ -2,6 +2,18 @@
 
 Newest first.
 
+## 2026-09-12 (Frontend: typed moves, keyboard map, viewing as a member, charts that resize, contrast and focus, Players table, main lines only, offline drills)
+
+- Every board that takes a move (drills, puzzles, the prep deck, the game view's guess and play-out flows) has a text box under it: type a move in algebraic notation (Nf3, exd5, O-O, e8=Q) and press Enter. Faster for a strong player, keyboard-only, and the accessible alternative to dragging; an illegal move shakes the box and is flagged for screen readers. The board itself carries a label. (`Board` in `public/board.js`, option `input: true`.)
+- Keyboard: Space (or Enter) shows the answer in drills and puzzles and reveals or steps to the next moment in the game view; `f` flips the board everywhere; the confidence question and the grades take 1, 2, 3; each panel prints its key map in its footer (`keymap` in `public/widgets.js`).
+- Admin "Viewing as" in the top-right menu: pick a member and every GET carries `?user=<id>`, so the admin sees that member's report, drills, and prep as they see them. Writes never carry it (looking as someone must not act as them). Remembered for the tab.
+- Charts redraw when their container's width changes (a ResizeObserver per chart), so a rotated phone or a tab that was hidden at first render no longer keeps a squashed graph; the eval graph keeps its cursor across redraws.
+- Contrast and focus: the inaccuracy and warning chips use a per-theme `--warning-text` instead of one hard-coded brown that failed on dark surfaces; keyboard focus shows an accent ring (`:focus-visible`), mouse focus none. `input[type=search]` joins the base input rule; a few utility classes (`.mt-2`, `.mt-3`, `.gap-2`, `.input-sm`) replace repeated inline styles.
+- The Players list is a sortable table (opponent with the prep-readiness dot, federation and FIDE id, games, analysed, prep sheet status, and "as W / as B" Prepare links), sorted by games by default and remembered per browser, instead of a row of up to eighty buttons.
+- The opening clash tree has a "Main lines only" toggle (the top reply at every node, on by default at phone width, remembered), and the moves of the line currently on the board light up in the tree.
+- Offline drills: a service worker (`public/sw.js`, registered on https and localhost) keeps the app shell and the last drill deck available with no signal. Network first everywhere, so online behaviour and updates are unchanged; only the drill deck and the three small startup calls are cached from the API. Reviews made offline are not queued: the page reports the failed save.
+- Not done from the report's optional list: the game view's and the drills page's play-out code still live in their own files rather than on `public/playout.js`, and the guess verdict is still written per view. Both work and are covered by the smoke test; the refactor is cosmetic.
+
 ## 2026-09-12 (Training science: per-drill ease, confidence and calibration, explain-back, guess their move)
 
 - Per-drill ease (SM-2 lite, `ease` on each drill, default 2.5, bounded 1.3 to 3.2) scales the ladder's intervals: the 1, 3, 7, 14, 30, 60 days still hold for an untouched drill, but a drill graded easy, answered within five seconds, or called "sure" and got right spreads out, while a lapse, a slow answer, a lucky guess, or a "sure" miss brings it back sooner. Undo restores the ease with the ladder position. `nextEase` and `intervalDays` in `server/drills.js` carry the rule.

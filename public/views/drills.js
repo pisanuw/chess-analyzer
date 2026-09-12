@@ -2,6 +2,7 @@
 import { api, esc, toast, formatEval, fmtClock, winProb, WP_ACCEPT, session } from '../api.js';
 import { Board, applyMove, gameStatus, walkSans, lineShapes } from '../board.js';
 import { CATEGORY_LABEL } from '../labels.js';
+import { keymap } from '../widgets.js';
 
 const MAX_FOLLOWUPS = 2;      // player moves asked beyond the first, along the engine's PV
 const CALC_FOLLOWUPS = 4;     // calculation errors demand the full line
@@ -135,7 +136,7 @@ export async function drillsView(root, query) {
     board?.destroy();
     // Threat drills carry an orientation: the opponent moves, but the player
     // looks at the board from their own side, where threats must be spotted.
-    board = new Board(el.querySelector('#dboard'), { orientation: drill.orientation || drill.sideToMove, onMove });
+    board = new Board(el.querySelector('#dboard'), { orientation: drill.orientation || drill.sideToMove, onMove, input: true });
     board.set(drill.fen, { movableFor: drill.sideToMove });
     renderPanel();
     // From the second review on, offer the key question BEFORE the move: the
@@ -394,7 +395,8 @@ export async function drillsView(root, query) {
         <div class="row" style="gap:6px">
           <button data-conf="sure">Sure <span class="kbd">1</span></button>
           <button data-conf="likely">Likely <span class="kbd">2</span></button>
-          <button data-conf="guess">A guess <span class="kbd">3</span></button></div></div>`;
+          <button data-conf="guess">A guess <span class="kbd">3</span></button></div>
+        ${keymap([['1', 'sure'], ['2', 'likely'], ['3', 'a guess']])}</div>`;
       pane.querySelectorAll('button[data-conf]').forEach(b => b.onclick = () => setConfidence(b.dataset.conf));
       return;
     }
@@ -427,7 +429,8 @@ export async function drillsView(root, query) {
       pane.innerHTML = `<div class="guess"><b>${task}</b>
         <p class="muted">Drill ${idx + 1} of ${due.length}. ${guessChips}${d.clock != null ? ` · clock in the game: ${fmtClock(d.clock)}` : ''} ${timerBits}</p>
         ${hint}
-        <button class="small" id="giveup">Show answer</button></div>`;
+        <button class="small" id="giveup">Show answer <span class="kbd">Space</span></button>
+        ${keymap([['Space', 'show answer'], ['f', 'flip board'], ['Enter', 'play the typed move']])}</div>`;
       const sh = pane.querySelector('#showhint');
       if (sh) sh.onclick = () => { state.hintShown = true; renderPanel(); };
       const timed = pane.querySelector('#timed');
@@ -533,6 +536,7 @@ export async function drillsView(root, query) {
           <button class="small${feedback[`${d.gameId}:${d.ply}`]?.helpful === true ? ' primary' : ''}" data-fb="yes">Yes</button>
           <button class="small${feedback[`${d.gameId}:${d.ply}`]?.helpful === false ? ' primary' : ''}" data-fb="no">Not really</button></div></div>` : (state.game ? '<p class="muted">No explanation for this moment yet.</p>' : '')}
       <div class="row" style="margin-top: 12px">${gradeButtons}${decoy ? '' : `<span class="spacer"></span>${lapses >= 3 ? `<small class="muted" style="margin-right:6px">Missed ${lapses}x: a leech, consider parking it.</small>` : ''}<button class="small" data-suspend title="Park this drill out of every queue; restore from the end-of-queue screen">Suspend drill</button>`}</div>
+      ${keymap(decoy || !state.verdict.correct ? [['1', 'continue'], ['f', 'flip board']] : [['1', 'again'], ['2', 'good'], ['3', 'easy'], ['f', 'flip board']])}
     </div>`;
     pane.querySelectorAll('button[data-grade]').forEach(b => b.onclick = () => grade(b.dataset.grade));
     pane.querySelector('button[data-suspend]')?.addEventListener('click', async () => {
@@ -605,6 +609,8 @@ export async function drillsView(root, query) {
 
   const onKey = e => {
     if (!state || e.target.matches('input, textarea')) return;
+    if (e.key === 'f' || e.key === 'F') { board?.flip(); return; }
+    if (state.status === 'guessing' && (e.key === ' ' || e.key === 'Enter')) { e.preventDefault(); el.querySelector('#giveup')?.click(); return; }
     if (state.status === 'confidence') {
       const conf = { 1: 'sure', 2: 'likely', 3: 'guess' }[e.key];
       if (conf) setConfidence(conf);

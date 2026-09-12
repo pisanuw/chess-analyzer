@@ -28,7 +28,7 @@ export async function scoutView(root) {
       <h1>Players</h1>
       <input type="search" id="subject-search" placeholder="Find opponent…" style="padding: 6px 10px; font-size: 14px">
     </div>
-    <div class="row" id="subject-list" style="gap: 6px; flex-wrap: wrap; margin-bottom: 14px"></div>
+    <div id="subject-list" style="margin-bottom: 14px"></div>
     <div class="row" id="prep-request" style="gap: 6px; align-items: center; margin-bottom: 14px">
       <span class="muted"><small>Not listed? Request a prep sheet by FIDE id:</small></span>
       <input type="text" id="prep-fide" inputmode="numeric" placeholder="e.g. 39904881" style="padding: 6px 10px; font-size: 14px; width: 14ch">
@@ -47,29 +47,47 @@ export async function scoutView(root) {
     if ((s.bookGames || 0) > 0 || s.prep) return 'yellow';
     return '';
   };
-  const btnHtml = s => {
-    const n = s.bookGames || s.games;
+  const prepLabel = { green: 'ready', yellow: 'to do', '': '' };
+  const prepTipOf = s => { const st = prepStatus(s); return st === 'green' ? 'prep sheet ready' : st === 'yellow' ? (s.prep ? 'prep sheet stale, regenerate' : 'prep sheet not generated') : 'nothing to prepare yet'; };
+  // A sortable table rather than a row of buttons: name, federation, games,
+  // prep status, and a Prepare action per row, like the Games list.
+  let sort = { key: 'games', asc: false };
+  try { sort = JSON.parse(localStorage.getItem('playersSort')) || sort; } catch { /* keep default */ }
+  const sortVal = s => sort.key === 'name' ? s.subject.toLowerCase() : sort.key === 'fed' ? (s.fed || '') : sort.key === 'prep' ? ({ green: 2, yellow: 1, '': 0 })[prepStatus(s)] : sort.key === 'analysed' ? (s.analysed || 0) : (s.bookGames || s.games || 0);
+  const rowHtml = s => {
     const st = prepStatus(s);
     const isCur = s.subject === current;
-    const col = st === 'green' ? '70,196,106' : st === 'yellow' ? '224,180,0' : '';
-    const style = col ? `border-left:4px solid rgb(${col})${isCur ? '' : `;background:rgba(${col},.14)`}` : '';
-    const prepTip = st === 'green' ? '; prep sheet ready' : st === 'yellow' ? (s.prep ? '; prep sheet stale, regenerate' : '; prep sheet not generated') : '';
-    const tip = (s.fideId ? `FIDE ${s.fideId}${s.fed ? ` (${s.fed})` : ''}, ${n} game${n === 1 ? '' : 's'}` : `no FIDE id, ${n} game${n === 1 ? '' : 's'}`) + prepTip + (s.member ? '; app member' : '');
-    return `<button class="small${isCur ? ' primary' : ''}" data-subject="${esc(s.subject)}" style="${style}" title="${esc(tip)}">${esc(s.subject)}${s.fed ? ` <small class="muted">${esc(s.fed)}</small>` : ''} (${n})${s.bookGames ? ' \u{1F4D6}' : ''}${s.member ? ' \u{1F464}' : ''}</button>`;
+    const n = s.bookGames || s.games;
+    return `<tr class="clickable${isCur ? ' current' : ''}" data-subject="${esc(s.subject)}">
+      <td><span class="dot ${st}" title="${esc(prepTipOf(s))}"></span>${esc(s.subject)}${s.member ? ' <span class="chip" title="app member">member</span>' : ''}</td>
+      <td>${esc(s.fed || '')}${s.fideId ? ` <small class="muted" title="FIDE id">${esc(s.fideId)}</small>` : ''}</td>
+      <td class="num" title="${s.bookGames ? `${s.bookGames} in their book, ` : ''}${s.analysed || 0} analysed">${n}${s.bookGames ? ' \u{1F4D6}' : ''}</td>
+      <td class="num">${s.analysed || 0}</td>
+      <td>${prepLabel[st]}</td>
+      <td class="row" style="gap:4px"><a class="small button-like" href="#/prep/${encodeURIComponent(s.subject)}?color=white" title="Prepare to play them as White">as W</a> <a class="small button-like" href="#/prep/${encodeURIComponent(s.subject)}?color=black" title="Prepare to play them as Black">as B</a></td>
+    </tr>`;
   };
   const renderSubjects = q => {
     const needle = q.trim().toLowerCase();
     const matched = subjects.filter(s => !needle || s.subject.toLowerCase().includes(needle));
     if (!matched.length) { listEl.innerHTML = '<span class="muted">No opponents match.</span>'; return; }
+    matched.sort((a, b) => { const x = sortVal(a), y = sortVal(b); const c = typeof x === 'string' ? x.localeCompare(y) : x - y; return (sort.asc ? c : -c) || a.subject.localeCompare(b.subject); });
     const collapsed = !needle && !showAll && matched.length > COLLAPSE_AT;
     const shown = collapsed ? matched.slice(0, COLLAPSE_AT) : matched;
     if (collapsed && !shown.some(s => s.subject === current)) { const cur = matched.find(s => s.subject === current); if (cur) shown.push(cur); }
-    const toggle = collapsed ? `<button class="small" id="subj-more">Show all ${matched.length}</button>`
-      : (!needle && matched.length > COLLAPSE_AT ? '<button class="small" id="subj-fewer">Show fewer</button>' : '');
-    listEl.innerHTML = shown.map(btnHtml).join('') + toggle;
+    const toggle = collapsed ? `<button class="small mt-2" id="subj-more">Show all ${matched.length}</button>`
+      : (!needle && matched.length > COLLAPSE_AT ? '<button class="small mt-2" id="subj-fewer">Show fewer</button>' : '');
+    const th = (key, label, num = false) => `<th data-sort="${key}" class="${num ? 'num ' : ''}${sort.key === key ? `sorted${sort.asc ? ' asc' : ''}` : ''}" title="Sort by ${label.toLowerCase()}">${label}</th>`;
+    listEl.innerHTML = `<div style="overflow-x:auto"><table class="players-table"><thead><tr>${th('name', 'Opponent')}${th('fed', 'Federation')}${th('games', 'Games', true)}${th('analysed', 'Analysed', true)}${th('prep', 'Prep sheet')}<th>Prepare</th></tr></thead>
+      <tbody>${shown.map(rowHtml).join('')}</tbody></table></div>${toggle}`;
     listEl.querySelector('#subj-more')?.addEventListener('click', () => { showAll = true; renderSubjects(q); });
     listEl.querySelector('#subj-fewer')?.addEventListener('click', () => { showAll = false; renderSubjects(q); });
-    listEl.querySelectorAll('button[data-subject]').forEach(b => b.onclick = () => { location.hash = `#/scout/${encodeURIComponent(b.dataset.subject)}`; });
+    listEl.querySelectorAll('th[data-sort]').forEach(h => h.onclick = () => {
+      sort = { key: h.dataset.sort, asc: sort.key === h.dataset.sort ? !sort.asc : h.dataset.sort === 'name' || h.dataset.sort === 'fed' };
+      try { localStorage.setItem('playersSort', JSON.stringify(sort)); } catch { /* private mode */ }
+      renderSubjects(q);
+    });
+    listEl.querySelectorAll('tr[data-subject]').forEach(tr => tr.onclick = e => { if (e.target.closest('a')) return; location.hash = `#/scout/${encodeURIComponent(tr.dataset.subject)}`; });
   };
   renderSubjects('');
   root.querySelector('#subject-search').addEventListener('input', e => renderSubjects(e.target.value));
@@ -99,7 +117,9 @@ async function renderDossier(el, entry, readonly, boardRef = { board: null }) {
   // are independent: a freshly imported opponent has a book but no engine data.
   // The games list drives the "still processing" / "stale" prep-sheet flags.
   const [book, data, gamesRes] = await Promise.all([
-    entry.fideId ? api.scoutBook(entry.fideId, entry.tc || null).catch(() => null) : Promise.resolve(null),
+    // Only subjects with a book have one to fetch (a member with a FIDE id but no
+    // book used to trigger a 404 on every visit).
+    entry.fideId && entry.bookGames ? api.scoutBook(entry.fideId, entry.tc || null).catch(() => null) : Promise.resolve(null),
     api.scout(subject, entry.color || null).catch(() => null),
     api.games().catch(() => ({ games: [] })),
   ]);
@@ -504,13 +524,17 @@ function clashEdgeStats(node, e) {
 /** Recursive nested list. Each edge is one move; its child holds the reply tree.
  * data-path carries the whole SAN line to this move (so the board and the move
  * list under it show the sequence played); data-orient flips to the player's side. */
-function renderClashEdges(node, orient, path = []) {
+function renderClashEdges(node, orient, path = [], mainOnly = false) {
   if (!node.edges.length) return '';
-  return `<ul class="clash-tree">${node.edges.map(e => {
+  // Main lines only: the top reply at every node, one line per opening. What a
+  // phone can show, and what a player reads first on a laptop too.
+  const edges = mainOnly ? node.edges.slice(0, 1) : node.edges;
+  return `<ul class="clash-tree">${edges.map(e => {
     const label = `${movePrefix({ moveNumber: Math.floor(node.ply / 2) + 1, color: node.side })} ${esc(e.san)}`;
     const who = node.mover === 'student' ? 'Your move' : 'Their reply';
     const line = [...path, e.san];
-    return `<li><span class="clash-move ${node.mover}" data-path="${esc(line.join(' '))}" data-orient="${orient}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${clashLeafEngine(e.child, orient, line)}${renderClashEdges(e.child, orient, line)}</li>`;
+    const more = mainOnly && node.edges.length > 1 ? ` <small class="muted" title="Other replies are hidden by the main-lines toggle">+${node.edges.length - 1} more</small>` : '';
+    return `<li><span class="clash-move ${node.mover}" data-path="${esc(line.join(' '))}" data-orient="${orient}" title="${who}">${label}</span> ${clashEdgeStats(node, e)} ${clashFlag(e.child)}${more}${clashLeafEngine(e.child, orient, line)}${renderClashEdges(e.child, orient, line, mainOnly)}</li>`;
   }).join('')}</ul>`;
 }
 
@@ -535,6 +559,9 @@ function clashLeafEngine(node, orient, path = []) {
 // on the clash card and remembered in the browser.
 const clashFormat = () => { try { return localStorage.getItem('clashFormat') === 'lichess' ? 'lichess' : 'tree'; } catch { return 'tree'; } };
 const setClashFormat = v => { try { localStorage.setItem('clashFormat', v); } catch { /* private mode */ } };
+// Main lines only (tree format): remembered; on by default on a phone-width screen.
+const clashMainOnly = () => { try { const v = localStorage.getItem('clashMainOnly'); return v == null ? window.innerWidth < 600 : v === '1'; } catch { return false; } };
+const setClashMainOnly = v => { try { localStorage.setItem('clashMainOnly', v ? '1' : '0'); } catch { /* private mode */ } };
 
 // A compact single stat for the lichess view: their reply frequency, or the
 // engine eval on your moves, so the key number survives without the full band.
@@ -600,7 +627,7 @@ export function renderClashForest(clash, container, boardRef = { board: null }, 
     if (!root) return '';
     const n = clash.studentColorCounts[color] || 0;
     const body = root.edges.length
-      ? (clashFormat() === 'lichess' ? renderClashLichess(root, color) : renderClashEdges(root, color))
+      ? (clashFormat() === 'lichess' ? renderClashLichess(root, color) : renderClashEdges(root, color, [], clashMainOnly()))
       : '<div class="muted">Not enough of your games in this colour.</div>';
     return `<div class="card" style="margin-top:12px"><h3 style="margin-top:0">You as ${color} <span class="muted" style="font-size:13px">(${n} of your game${n === 1 ? '' : 's'})</span></h3>${body}</div>`;
   };
@@ -616,7 +643,8 @@ export function renderClashForest(clash, container, boardRef = { board: null }, 
     ? ''
     : `<button class="small" id="clash-narrate" title="Ask the coach model for one grounded note per predicted line">${clash.narration ? 'Regenerate explanation' : 'Explain the key lines'}</button>`;
   const fmt = clashFormat();
-  const fmtCtl = `<span class="clash-fmt" role="group" aria-label="Variation display"><button class="small${fmt === 'tree' ? ' primary' : ''}" data-fmt="tree" title="Indented branching tree">Tree</button><button class="small${fmt === 'lichess' ? ' primary' : ''}" data-fmt="lichess" title="Main line with inlined variations, lichess style">Lichess</button></span>`;
+  const fmtCtl = `<span class="clash-fmt" role="group" aria-label="Variation display"><button class="small${fmt === 'tree' ? ' primary' : ''}" data-fmt="tree" title="Indented branching tree">Tree</button><button class="small${fmt === 'lichess' ? ' primary' : ''}" data-fmt="lichess" title="Main line with inlined variations, lichess style">Lichess</button></span>
+    <label class="muted" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="clash-main"${clashMainOnly() ? ' checked' : ''}> <small>Main lines only</small></label>`;
   container.innerHTML = `
     <p class="muted">Your openings (bold) crossed with ${esc(clash.name)}'s games, showing their most likely replies weighted toward recent, on-strength games. Percentages are how often they chose that reply; "Ng" is the game count behind it. Click any move to follow the line on the board. Badges: <span class="chip warn">not faced</span> they never reached the position, <span class="chip warn">book thins out</span> too few games to trust, <span class="chip warn">your line ends</span> you have no games continuing.</p>
     <div class="row" style="gap:10px;align-items:center;margin-bottom:6px">${fmtCtl}${extendCtl}${narrateCtl}</div>
@@ -650,6 +678,10 @@ export function renderClashForest(clash, container, boardRef = { board: null }, 
     // selected ply, so stepping back links to that earlier position, not the whole line.
     const href = at < 0 ? 'https://lichess.org/analysis' : lichess(seq.slice(0, at + 1).map(m => m.san));
     lineEl.innerHTML = `${moves} <a class="clash-lichess" href="${href}" target="_blank" rel="noopener" title="Open this position on lichess">lichess ↗</a>`;
+    // Light up the tree nodes on the line currently on the board, up to the shown ply.
+    const onBoard = new Set();
+    for (let i = 0; i <= at; i++) onBoard.add(seq.slice(0, i + 1).map(m => m.san).join(' '));
+    container.querySelectorAll('.clash-move').forEach(el => el.classList.toggle('onboard', onBoard.has(el.dataset.path)));
   };
 
   // One delegated listener per region: a tree move sets the whole line; a move in
@@ -670,12 +702,17 @@ export function renderClashForest(clash, container, boardRef = { board: null }, 
 
   // Switch variation format in place: only the forests re-render, so the board
   // and the delegated click listener on #clash-forests are preserved.
+  const rerenderForests = () => {
+    forests.innerHTML = forestHtml();
+    if (current) showLine(current.sans, current.orient); // keep the highlight on the line shown
+  };
   container.querySelectorAll('[data-fmt]').forEach(b => b.onclick = () => {
     if (clashFormat() === b.dataset.fmt) return;
     setClashFormat(b.dataset.fmt);
     container.querySelectorAll('[data-fmt]').forEach(x => x.classList.toggle('primary', x.dataset.fmt === b.dataset.fmt));
-    forests.innerHTML = forestHtml();
+    rerenderForests();
   });
+  container.querySelector('#clash-main').onchange = e => { setClashMainOnly(e.target.checked); rerenderForests(); };
 
   const extendBtn = container.querySelector('#clash-extend');
   if (extendBtn) extendBtn.onclick = () => busy(extendBtn, async () => {

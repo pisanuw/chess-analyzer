@@ -63,9 +63,26 @@ await page.getByText('Showing Karpov, A as white', { exact: false }).first().wai
 await page.evaluate(() => { location.hash = '#/game/f1f1f1f1f101'; });
 await page.locator('.moment').first().click({ timeout: 8000 });
 await page.getByText('Find the best move', { exact: false }).first().waitFor({ timeout: 8000 });
-// Drills: giving up is a miss, so the explain-back line comes before the coach's
-// answer and the grade buttons; skipping it reaches "Continue".
+// Players: the list is a sortable table.
+await page.evaluate(() => { location.hash = '#/scout'; });
+await page.locator('th[data-sort="name"]').first().click({ timeout: 8000 });
+await page.locator('tr[data-subject]').first().waitFor({ timeout: 8000 });
+// Drills: a move typed into the box under the board plays (the fixture's drills
+// start from the initial position, best move d4), the confidence question comes
+// before the reveal, and a correct answer reaches the grade buttons.
 await page.evaluate(() => { location.hash = '#/drills'; });
+const san = page.locator('.san-input input').first();
+await san.waitFor({ timeout: 8000 });
+const blackToMove = (await page.locator('#dpanel').innerText()).includes('Black to move');
+await san.fill(blackToMove ? 'e5' : 'd4'); // the fixture's best move for either side
+await san.press('Enter');
+await page.getByText('How sure are you?', { exact: false }).first().waitFor({ timeout: 8000 });
+await page.keyboard.press('1');
+await page.locator('#stopfollow').click({ timeout: 8000 }); // the follow-up along the engine line: show it
+await page.getByText('How well did you know it?', { exact: false }).first().waitFor({ timeout: 8000 });
+await page.keyboard.press('2');
+// Giving up is a miss, so the explain-back line comes before the coach's
+// answer and the grade buttons; skipping it reaches "Continue".
 await page.getByText('Show answer').first().click({ timeout: 8000 });
 await page.locator('#explain-back').waitFor({ timeout: 8000 });
 await page.locator('#eb-skip').click({ timeout: 8000 });

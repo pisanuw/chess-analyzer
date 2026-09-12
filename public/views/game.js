@@ -61,7 +61,7 @@ export async function gameView(root, id, startPly) {
           <span class="eval-bar-text" id="evaltext"></span>
           <span class="muted" id="plytext" style="font-size:13px"></span>
           <span class="spacer"></span>
-          <button id="flip" title="Flip board">⇅</button>
+          <button id="flip" title="Flip board (f)">⇅</button>
         </div>
         <div id="graph" style="margin-top: 10px"></div>
       </div>
@@ -82,7 +82,7 @@ export async function gameView(root, id, startPly) {
   const seat = scout ? punisher : player; // the side the person at the keyboard plays
 
   const boardEl = root.querySelector('#board');
-  const board = new Board(boardEl, { orientation: seat || 'white', onMove: onUserMove });
+  const board = new Board(boardEl, { orientation: seat || 'white', onMove: onUserMove, input: true });
   const panel = root.querySelector('#panel');
   const moves = () => game.analysis ? game.analysis.moves : game.moves;
   let graph = null;
@@ -163,7 +163,15 @@ export async function gameView(root, id, startPly) {
   root.querySelector('#last').onclick = () => showPly(game.moves.length);
   root.querySelector('#flip').onclick = () => board.flip();
   const onKey = e => {
-    if (e.target.matches('input, textarea') || state.playout || (state.gtm && !state.gtm.done)) return;
+    if (e.target.matches('input, textarea')) return;
+    if (e.key === 'f' || e.key === 'F') { board.flip(); return; }
+    if (state.playout || (state.gtm && !state.gtm.done)) return;
+    // Space: reveal the answer of the open moment, or step to the next moment.
+    if (e.key === ' ') {
+      const btn = panel.querySelector('[data-g="reveal"]') || panel.querySelector('[data-g="next"]');
+      if (btn) { e.preventDefault(); btn.click(); }
+      return;
+    }
     if (e.key === 'ArrowLeft') { showPly(state.ply - 1); e.preventDefault(); }
     if (e.key === 'ArrowRight') { showPly(state.ply + 1); e.preventDefault(); }
   };

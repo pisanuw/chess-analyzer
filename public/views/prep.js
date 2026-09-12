@@ -135,7 +135,7 @@ export async function prepView(root, subjectEnc, query) {
 
   function mountBoard(orientation, onMove) {
     boards.deck?.destroy();
-    boards.deck = new Board(deckEl.querySelector('#deck-board'), { orientation, onMove });
+    boards.deck = new Board(deckEl.querySelector('#deck-board'), { orientation, onMove, input: true });
     return boards.deck;
   }
 

@@ -17,6 +17,15 @@ export function seedFixture() {
       category: i % 3 ? 'calculation' : 'tactics-allowed', pattern: i % 2 ? 'Hanging piece after exchange' : 'Passive rook',
     });
     if (i === 3) g.headers.Black = 'Karpov, A';
+    // makeGame puts the start position before every move; give Black's moves a
+    // position with Black to move and Black engine lines, so a Black drill's
+    // board is movable (mouse and typed) like a real one.
+    for (const m of g.moves) {
+      if (m.color !== 'black') continue;
+      m.fenBefore = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+      m.san = 'd6'; m.uci = 'd7d6'; m.bestUci = 'e7e5'; m.bestSan = 'e5';
+      m.lines = [{ multipv: 1, cp: 30, uci: 'e7e5', san: ['e5', 'Nf3', 'Nc6'] }, { multipv: 2, cp: 40, uci: 'c7c5', san: ['c5'] }];
+    }
     writeGame(dir, g);
   }
   writeGame(dir, makeGame({ id: 'f2f2f2f2f201', purpose: 'scout', subject: 'Karpov, A', moments: [{ ply: 1, loss: 35 }], plies: 6, category: 'endgame-technique', pattern: 'Grabs pawns under attack' }));
