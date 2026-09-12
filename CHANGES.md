@@ -2,6 +2,12 @@
 
 Newest first.
 
+## 2026-09-12 (Session close notes)
+
+- 2026-09-12 note USA federation set for Nikash (30960967) and Neeraj (30958130) in data/players.json (data repo, not code; syncs on the next push-data or publish).
+- 2026-09-12 note All 6 clash narrations generated (2 books x 3 members, 57 lines, $0.70 est) and the 74-game explain backlog queued through the Admin card; pattern notes now follow each explain job automatically.
+- 2026-09-12 note The 22 csslab VPN engine hosts were unreachable during the clash extensions (they ran on the local engine, results identical); all hosts answered again later in the session.
+
 ## 2026-09-12 (Readable messages when the claude CLI fails)
 
 - A claude CLI failure used to surface as raw stderr ("claude CLI failed: Command failed: ..."). `classifyCliFailure` in `server/llm.js` now maps the known shapes to messages the person at the screen can act on: a missing binary says install or switch to manual; a call killed at the timeout says how long it waited and that one retry is automatic; the subscription usage limit ("Claude AI usage limit reached|<epoch>", whether it arrives as a non-zero exit or an `is_error` envelope) names the reset time from the epoch, or the rolling schedule when there is none, and says the failed jobs can simply be retried after; a signed-out CLI says to run `claude` and sign in; a 529 overload is named as transient. Unrecognised failures keep their raw detail. These messages flow through the existing surfaces unchanged: job-failure toasts, the jobs list, and the error a button reports.
